@@ -174,8 +174,9 @@ export function App() {
 			if (other) setMessage(`⚠ ${thread.project} already has an active thread: #${other.id} ${other.title}`);
 		}
 		if (column === 'uitest') return void run(() => startUiTest(thread), 'checking out for UI testing');
-		if (thread.column === 'uitest') return void run(() => endUiTest(thread, column), 'leaving UI testing');
+		// From UI testing too: it only leaves once the PR is open.
 		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
+		if (thread.column === 'uitest') return void run(async () => void (await endUiTest(thread, column)), 'leaving UI testing');
 		setColumn(thread.id, column);
 		setCursor({ col, row: columnThreads(column).length });
 		run(() => syncWorktree({ ...thread, column }), 'updating worktree');
@@ -282,33 +283,40 @@ export function App() {
 		setMessage(`${project.name} checkout is on ${thread.branch}; claude works there until it leaves UI testing`);
 	};
 
-	/** Put the project's checkout back on its previous branch and move the thread back into its worktree. */
-	const endUiTest = async (thread: Thread, column: Column) => {
+	/**
+	 * Put the project's checkout back on its previous branch and move the thread back into its worktree,
+	 * in `column` with `patch` applied; returns whether it did.
+	 */
+	const endUiTest = async (thread: Thread, column: Column, patch: Partial<Thread> = {}): Promise<boolean> => {
+		const fail = (message: string) => {
+			setMessage(message);
+			return false;
+		};
 		const project = projectByName(thread.project);
-		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		if (!project) return fail(`✗ Unknown project "${thread.project}"`);
+		const showAt = () => setCursor({ col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]), row: columnThreads(column).length });
 		if (thread.cwd) {
-			if (column === 'pr') return openPr(thread);
-			setColumn(thread.id, column);
-			return setCursor({ col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]), row: columnThreads(column).length });
+			setColumn(thread.id, column, patch);
+			showAt();
+			return true;
 		}
-		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
+		if (statuses[thread.id] === 'working') return fail(`⚠ claude is still working on #${thread.id}`);
 		// Including untracked files: anything new there is the thread's work.
 		if (await isDirty(project.path)) {
-			return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+			return fail(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
 		}
 		const restoreRef = thread.restoreRef ?? thread.base;
-		if (!restoreRef) return setMessage(`✗ Don't know what ${project.path} was on before #${thread.id}`);
+		if (!restoreRef) return fail(`✗ Don't know what ${project.path} was on before #${thread.id}`);
 		const wasOpen = await closeClaude(thread);
 		await checkout(project.path, restoreRef);
-		const back: Thread = { ...thread, column: 'polish', restoreRef: undefined };
+		const back: Thread = { ...thread, ...patch, column, restoreRef: undefined };
 		const cwd = await createWorktree(project, back);
 		Object.assign(back, moveSession(thread, cwd));
-		// Polish first, so a cancelled PR leaves it there rather than in UI testing.
-		setColumn(thread.id, 'polish', back);
+		setColumn(thread.id, column, back);
 		if (wasOpen) await launchClaude(back, cwd);
-		if (column === 'pr') return openPr(back);
-		setCursor({ col: COLUMNS.indexOf('polish'), row: columnThreads('polish').length });
+		showAt();
 		setMessage(`${project.name} checkout is back on ${restoreRef}`);
+		return true;
 	};
 
 	/** Push the thread's branch and open its PR (unless it has one already), then move it to PR. */
@@ -328,8 +336,10 @@ export function App() {
 			}
 		}
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
-		// Reopens it if the thread is coming back from Done.
-		const cwd = thread.cwd ?? (await createWorktree(project, thread));
+		const uiTesting = thread.column === 'uitest';
+		if (uiTesting && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
+		// While UI testing the branch is checked out in the project itself; otherwise this reopens the worktree if the thread is coming back from Done.
+		const cwd = thread.cwd ?? (uiTesting ? project.path : await createWorktree(project, thread));
 		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
 		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
 		let pr = existing;
@@ -345,9 +355,18 @@ export function App() {
 			await pushBranch(cwd, thread.branch);
 			pr = await createPr(cwd, thread, draft.title, draft.body);
 		}
-		setColumn(thread.id, 'pr', { pr, branch: thread.branch, base: thread.base });
+		const patch = { pr, branch: thread.branch, base: thread.base };
+		const done = `${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`;
+		if (uiTesting) {
+			// Recorded first, so if leaving UI testing fails, trying again finds the PR instead of opening another.
+			updateThread(thread.id, patch);
+			// It stays in UI testing until the PR exists, so a cancel leaves it where it was.
+			if (await endUiTest({ ...thread, ...patch }, 'pr', patch)) setMessage(done);
+			return;
+		}
+		setColumn(thread.id, 'pr', patch);
 		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
-		setMessage(`${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`);
+		setMessage(done);
 	};
 
 	// Move threads whose PR has merged to Done (which also cleans up the worktree).
