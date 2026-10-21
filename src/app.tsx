@@ -45,6 +45,25 @@ function resumableSession(thread: Thread): string | undefined {
 	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
 }
 
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/** What the board is waiting on, with a spinner and, once it's taking a while, how long it's been. */
+function Busy({ label }: { label: string }) {
+	const [started] = useState(Date.now);
+	const [now, setNow] = useState(started);
+	useEffect(() => {
+		const timer = setInterval(() => setNow(Date.now()), 80);
+		return () => clearInterval(timer);
+	}, []);
+	const elapsed = Math.floor((now - started) / 1000);
+	return (
+		<Text color="cyan">
+			{SPINNER[Math.floor((now - started) / 80) % SPINNER.length]} {label}…
+			{elapsed >= 2 ? <Text dimColor> {elapsed}s</Text> : null}
+		</Text>
+	);
+}
+
 const LEGEND: [string, string | undefined, string][] = [
 	['⚙', 'yellow', 'working'],
 	['⏸', 'red', 'needs you'],
@@ -663,7 +682,9 @@ export function App() {
 	return (
 		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
-				<Text bold>output-orchestrator</Text>
+				<Text bold>
+					output-orchestrator{busy ? <Text color="cyan"> ● busy</Text> : null}
+				</Text>
 				<Text dimColor>filter: {filter ?? 'all'}</Text>
 			</Box>
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
