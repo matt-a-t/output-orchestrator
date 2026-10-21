@@ -30,7 +30,7 @@ export type HookEvent = {
 	ts: string;
 };
 
-/** working ⚙, waiting ⏸ (needs you), stopped ✓, idle (session open, nothing yet), ended. */
+/** working ⚙, waiting ⏸ (needs you), stopped ✓, idle (window open, nothing yet), ended. */
 export type Status = 'working' | 'waiting' | 'stopped' | 'idle' | 'ended';
 
 export function nextStatus(current: Status | undefined, e: HookEvent): Status | undefined {

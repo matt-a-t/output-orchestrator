@@ -44,7 +44,7 @@ tmux session
 - Isolation (M3): one git worktree + branch per thread, created on leaving
   Planned (or on first open), at `~/.local/share/output-orchestrator/worktrees/<project>/<id>`,
   on branch `oo/<id>-<title-slug>` from the repo's current branch (recorded as the thread's
-  base). claude runs in the worktree, so `--resume` finds its sessions. Removed on
+  base). claude runs in the worktree, so `--resume` finds its transcripts. Removed on
   Done/archive (branch kept; its claude window is closed) unless it has uncommitted changes;
   archiving refuses until they're committed or discarded.
 - PRs (M5): moving a card to PR pushes its branch and runs `gh pr create --head <branch>
@@ -52,11 +52,11 @@ tmux session
   back to the thread's title/plan). The PR is
   recorded on the thread; if one already exists it's just pushed again. Uncommitted changes
   block the move. The board polls `gh pr view` every minute and moves merged PRs to Done.
-- Import (#7): `i` lists the selected project's recent sessions from
-  `~/.claude/projects/<path with non-alphanumerics as ->/<session>.jsonl` (title, first prompt, last
+- Import (#7): `i` lists the selected project's recent threads from
+  `~/.claude/projects/<path with non-alphanumerics as ->/<session-id>.jsonl` (title, first prompt, last
   activity, linked thread). Picking one makes a Planned thread with its session ID, transcript and
   `cwd`; such threads skip worktrees and resume in that `cwd` (they have no branch, so no PR).
-  Resuming a session the board hasn't seen this run whose transcript changed in the last 2 minutes
+  Resuming a thread the board hasn't seen this run whose transcript changed in the last 2 minutes
   needs a second ⏎, since it's probably still open elsewhere.
 - State: JSON at `~/.local/share/output-orchestrator/state.json`, validated with zod.
 - Projects are added by hand: `oo project add <path> [name]`.
@@ -69,7 +69,7 @@ tmux session
 - `c` — comment: the diff (the step's, else the thread's) opens in vim; lines starting `>>`
   under a diff line become `file:line — note` (consecutive `>>` lines join into one note;
   under a file header they're about the file, before any file they're general), batched and
-  pasted into the thread's Claude session on save. `:cq` cancels. Needs the claude window open.
+  pasted into the thread's claude on save. `:cq` cancels. Needs the claude window open.
 - `a` — accept step: `git add -A` + `git commit -v` in a popup (message in git's editor).
 - `o` — vim with a quickfix list of the changed hunks (the step's, else the thread's).
 
@@ -87,7 +87,7 @@ tmux session
 | c         | comment on the diff → Claude        |
 | a         | accept step (commit)                |
 | o         | open changed hunks in vim           |
-| i         | import a claude session not started by the board |
+| i         | import a thread not started by the board |
 | C         | cycle card colour                   |
 | p         | cycle project filter                |
 | x         | archive                             |
