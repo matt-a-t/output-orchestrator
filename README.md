@@ -1,6 +1,6 @@
 # output-orchestrator
 
-Kanban TUI for Claude Code threads, running real `claude` sessions in tmux.
+Kanban TUI for Claude Code threads, each running a real `claude` in tmux.
 See [PLAN.md](PLAN.md) for the design and milestones.
 
 ## Setup
@@ -30,7 +30,7 @@ running.
 
 Keys are listed at the bottom of the board. `n` / `e` open `$EDITOR` (default vim)
 in a tmux popup; Enter opens or jumps to the thread's `claude` window, resuming
-the thread's last session if its window was closed (e.g. after a restart).
+the thread where it left off if its window was closed (e.g. after a restart).
 
 Leaving Planned (or opening a thread) gives it its own git worktree and branch
 (`oo/<id>-<title>`), under `~/.local/share/output-orchestrator/worktrees/`; claude runs
@@ -38,7 +38,8 @@ there. Review a step with `d` (diff since the last commit) or `D` (whole thread 
 branch it came from), shown through `delta`; `o` opens the changed hunks in vim as a
 quickfix list; `c` opens the diff in vim for comments — write notes on lines starting `>>`
 under the diff line they're about, and on save they're sent to the thread's claude as
-`file:line — note` feedback (`:cq` cancels); `a` accepts the step by committing everything (`git commit -v`).
+`file:line — note` feedback (`:cq` cancels); `a` accepts the step by committing everything (`git commit -v`), with claude drafting the
+message for you to edit (empty it to cancel).
 
 Moving a thread to PR pushes its branch and opens a PR with `gh pr create`. claude drafts the
 title and description from the thread's commits and diff, and they open in vim for you to
@@ -47,11 +48,11 @@ minute and moves merged ones to Done. Moving a thread to Done or archiving it re
 worktree and closes its claude window; the branch stays. Done keeps a worktree with
 uncommitted changes; archiving refuses until they're committed or discarded.
 
-`i` imports a claude session you started outside the board (e.g. plain `claude` in the
-project's directory): pick one from the project's recent sessions and it becomes a Planned
-thread that Enter resumes, with badges from then on. Imported threads keep running in the
-directory the session started in rather than a worktree, so diffs, comments and accept work
-there but they can't open a PR. If the session looks like it's still open somewhere else, Enter
+`i` imports a thread you started outside the board (e.g. plain `claude` in the
+project's directory): pick one from the project's recent threads and it lands in Planned,
+where Enter resumes it, with badges from then on. Imported threads keep running in the
+directory they started in rather than a worktree, so diffs, comments and accept work
+there but they can't open a PR. If the thread looks like it's still open somewhere else, Enter
 warns first; press it again to resume anyway.
 
 Card badges (with a legend at the bottom of the board): ⚙ working, ⏸ needs you

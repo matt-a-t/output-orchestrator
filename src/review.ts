@@ -2,7 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { diffArgs, head, hunkLocations, stageAll, type DiffKind } from './git.js';
+import { askClaude, truncateDiff } from './claude.js';
+import { diffArgs, head, hunkLocations, type DiffKind } from './git.js';
 import type { Thread } from './state.js';
 import { popup, shellQuote } from './tmux.js';
 
@@ -126,11 +127,51 @@ function formatComments(comments: Comment[]): string {
 	return ['Review comments on your changes:', '', ...items].join('\n');
 }
 
-/** Accept the step: stage everything and commit, with git opening the editor for the message. */
-export async function commitStep(cwd: string): Promise<'nothing' | 'committed' | 'aborted'> {
-	if (!(await stageAll(cwd))) return 'nothing';
+/**
+ * Have claude draft a commit message for the staged changes, in the style of the branch's recent
+ * commits. Returns undefined if claude fails or says nothing.
+ */
+export async function draftCommit(cwd: string, thread: Thread): Promise<string | undefined> {
+	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
+	const log = await git(['log', '-5', '--format=%B---']).catch(() => '');
+	const stat = await git(['diff', '--cached', '--stat']);
+	const diff = truncateDiff(await git(['diff', '--cached']));
+	const prompt = [
+		'Write a git commit message for the staged changes below.',
+		'Reply with only the message: a short imperative subject line, a blank line, then a body',
+		'saying what changed and why, unless the change is trivial. Match the style of the recent',
+		'commits. No preamble and no trailers.',
+		'',
+		`Thread title: ${thread.title}`,
+		thread.plan ? `Thread plan:\n${thread.plan}` : '',
+		'',
+		'Recent commits (each ends with ---):',
+		log,
+		'',
+		'Diff stat:',
+		stat,
+		'',
+		'Diff:',
+		diff,
+	].join('\n');
+	return (await askClaude(cwd, prompt)) || undefined;
+}
+
+/**
+ * Accept the step: commit what's staged, with git opening the editor on `message` (if any) and the
+ * diff. Emptying the message aborts.
+ */
+export async function commitStep(cwd: string, message?: string): Promise<'committed' | 'aborted'> {
+	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
+	const file = join(dir, 'COMMIT_MSG');
 	const before = await head(cwd);
-	// Keep the popup open on failure (e.g. a hook rejected it) so the error can be read.
-	await popup(`git commit -v || { echo; echo 'Press Enter to close'; read -r _; }`, { cwd, title: ' accept step ' });
+	try {
+		if (message) writeFileSync(file, `${message}\n`);
+		const from = message ? ` -e -F ${shellQuote(file)}` : '';
+		// Keep the popup open on failure (e.g. a hook rejected it) so the error can be read.
+		await popup(`git commit -v${from} || { echo; echo 'Press Enter to close'; read -r _; }`, { cwd, title: ' accept step ' });
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 	return (await head(cwd)) === before ? 'aborted' : 'committed';
 }
