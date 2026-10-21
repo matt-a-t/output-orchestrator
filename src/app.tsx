@@ -29,7 +29,7 @@ import {
 	type State,
 	type Thread,
 } from './state.js';
-import { copySession } from './sessions.js';
+import { copySession, listSessions, recentlyActive, timeAgo, type Session } from './sessions.js';
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
 
@@ -56,7 +56,7 @@ const LEGEND: [string, string | undefined, string][] = [
 type NewThreadPrompt = { step: 'project'; index: number } | { step: 'title'; project: string; title: string };
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  C colour  p filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  i import session  C colour  p filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -74,6 +74,10 @@ export function App() {
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
+	// The import list (i), replacing the columns while it's open.
+	const [picker, setPicker] = useState<{ project: string; sessions: Session[]; row: number } | null>(null);
+	// Thread whose resume was held back because its session looked busy elsewhere; ⏎ again goes ahead.
+	const resumeAnyway = useRef<string | null>(null);
 
 	const refreshWindows = () =>
 		windowNames()
@@ -215,7 +219,8 @@ export function App() {
 	const syncWorktree = async (thread: Thread) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		if (thread.column === 'planned') return;
+		// Imported threads stay where their session was started.
+		if (thread.column === 'planned' || thread.cwd) return;
 		if (thread.column !== 'done' && thread.column !== 'archived') return void (await createWorktree(project, thread));
 		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
 			return setMessage(`⚠ Kept #${thread.id}'s worktree: it has uncommitted changes`);
@@ -251,6 +256,11 @@ export function App() {
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
 		const other = stateRef.current.threads.find(t => t.column === 'uitest' && t.project === thread.project);
 		if (other) return setMessage(`✗ ${thread.project} is already UI testing #${other.id} ${other.title}`);
+		// Imported threads already run in their own directory, with no branch to move.
+		if (thread.cwd) {
+			setColumn(thread.id, 'uitest');
+			return setCursor({ col: COLUMNS.indexOf('uitest'), row: columnThreads('uitest').length });
+		}
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
 		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
@@ -275,6 +285,11 @@ export function App() {
 	const endUiTest = async (thread: Thread, column: Column) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		if (thread.cwd) {
+			if (column === 'pr') return openPr(thread);
+			setColumn(thread.id, column);
+			return setCursor({ col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]), row: columnThreads(column).length });
+		}
 		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		// Including untracked files: anything new there is the thread's work.
 		if (await isDirty(project.path)) {
@@ -299,6 +314,7 @@ export function App() {
 	const openPr = async (thread: Thread) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		if (thread.cwd) return setMessage(`#${thread.id} was imported and runs in ${thread.cwd}, so it has no branch to open a PR from`);
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
 		// Reopens it if the thread is coming back from Done.
 		const cwd = await createWorktree(project, thread);
@@ -349,9 +365,10 @@ export function App() {
 		return () => clearInterval(timer);
 	}, []);
 
-	/** Run fn in the thread's worktree, if it has one. */
+	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one. */
 	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>) =>
 		run(async () => {
+			if (thread.cwd) return await fn(thread.cwd);
 			if (thread.column === 'uitest') {
 				const project = projectByName(thread.project);
 				if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
@@ -410,9 +427,23 @@ export function App() {
 	/** Jump to the thread's claude window, starting claude in `cwd` (resuming its session if it can) if needed. */
 	const launchClaude = async (thread: Thread, cwd: string) => {
 		// No branch yet means the worktree was just created, so there's nothing to resume in it.
-		const sessionId = thread.branch ? resumableSession(thread) : undefined;
+		const sessionId = thread.branch || thread.cwd ? resumableSession(thread) : undefined;
+		const window = threadWindowName(thread.id);
+		// A session the board hasn't heard from this run but that was written to just now is
+		// probably still open in another terminal; two claudes on one session would clash.
+		if (
+			sessionId &&
+			!liveWindows.has(window) &&
+			statuses[thread.id] === undefined &&
+			recentlyActive(thread.transcriptPath!) &&
+			resumeAnyway.current !== thread.id
+		) {
+			resumeAnyway.current = thread.id;
+			return setMessage(`⚠ #${thread.id}'s session was active in the last few minutes — close it elsewhere, then ⏎ (or ⏎ again to resume anyway)`);
+		}
+		resumeAnyway.current = null;
 		const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
-		const result = await openWindow(threadWindowName(thread.id), cwd, command, { OO_THREAD_ID: thread.id });
+		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id });
 		await refreshWindows();
 		if (result === 'selected') setMessage('');
 		else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
@@ -422,14 +453,73 @@ export function App() {
 		run(async () => {
 			const project = projectByName(thread.project);
 			if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-			const cwd = thread.column === 'uitest' ? project.path : await createWorktree(project, thread);
+			const cwd = thread.cwd ?? (thread.column === 'uitest' ? project.path : await createWorktree(project, thread));
 			await launchClaude(thread, cwd);
 		});
+
+	const openPicker = () =>
+		run(async () => {
+			if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
+			const project = projectByName(filter ?? selected?.project ?? state.projects[0]!.name)!;
+			const sessions = await listSessions(project.path);
+			if (sessions.length === 0) return setMessage(`No claude sessions found in ${project.path}`);
+			setPicker({ project: project.name, sessions, row: 0 });
+		}, 'looking for sessions');
+
+	const linkedThread = (session: Session) => state.threads.find(t => t.sessionId === session.id);
+
+	/** Jump to the column/row a thread is shown at, clearing the filter if it hides it. */
+	const showThread = (thread: Thread) => {
+		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
+		if (col < 0) return false;
+		const visible = filter && filter !== thread.project ? null : filter;
+		setFilter(visible);
+		const rowIn = state.threads.filter(t => t.column === thread.column && (!visible || t.project === visible));
+		setCursor({ col, row: rowIn.indexOf(thread) });
+		return true;
+	};
+
+	const importSession = (project: string, session: Session) => {
+		setPicker(null);
+		const linked = linkedThread(session);
+		if (linked) {
+			if (!showThread(linked)) setMessage(`That session is already archived thread #${linked.id}`);
+			return;
+		}
+		const now = new Date().toISOString();
+		const thread: Thread = {
+			id: newThreadId(state),
+			title: session.title,
+			plan: session.title === session.firstPrompt ? '' : session.firstPrompt,
+			project,
+			column: 'planned',
+			sessionId: session.id,
+			transcriptPath: session.transcriptPath,
+			cwd: session.cwd,
+			createdAt: now,
+			updatedAt: now,
+		};
+		setState(s => ({ ...s, threads: [...s.threads, thread] }));
+		setCursor({ col: 0, row: columnThreads('planned').length });
+		setMessage(
+			recentlyActive(session.transcriptPath)
+				? `⚠ Imported #${thread.id}, but its session looks active elsewhere — close it there before ⏎`
+				: `Imported #${thread.id} — ⏎ resumes it`,
+		);
+	};
 
 	useInput((input, key) => {
 		if (busy || showProjects) return;
 		setMessage('');
 		if (prompt) return promptInput(prompt, input, key);
+		if (picker) {
+			const last = picker.sessions.length - 1;
+			if (input === 'q' || key.escape) return setPicker(null);
+			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: Math.min(last, picker.row + 1) });
+			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: Math.max(0, picker.row - 1) });
+			if (key.return) return importSession(picker.project, picker.sessions[picker.row]!);
+			return;
+		}
 		if (input === 'q') return exit();
 		if (input === 'h' || key.leftArrow) return setCursor({ col: Math.max(0, cursor.col - 1), row });
 		if (input === 'l' || key.rightArrow) return setCursor({ col: Math.min(COLUMNS.length - 1, cursor.col + 1), row });
@@ -437,6 +527,7 @@ export function App() {
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: Math.max(0, row - 1) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
+		if (input === 'i') return openPicker();
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
 			setFilter(names[(names.indexOf(filter) + 1) % names.length]!);
@@ -511,40 +602,70 @@ export function App() {
 				<Text bold>output-orchestrator</Text>
 				<Text dimColor>filter: {filter ?? 'all'}</Text>
 			</Box>
-			{showProjects ? <ProjectsView state={state} setState={setState} onClose={() => setShowProjects(false)} /> : null}
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
-			<Box flexGrow={1} overflow="hidden" display={showProjects ? 'none' : 'flex'}>
-				{COLUMNS.map((column, c) => (
-					<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-						<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-							{COLUMN_LABELS[column]} ({columnThreads(column).length})
-						</Text>
-						<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-						{columnThreads(column).map((t, r) => {
-							const isSelected = c === cursor.col && r === row;
-							const color = t.color ?? projectByName(t.project)?.color;
-							const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
-								? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
-								: resumableSession(t)
-									? ['↻', 'gray']
-									: [' ', undefined];
-							return (
-								<Box key={t.id} flexDirection="column">
-									<Text wrap="truncate" inverse={isSelected}>
-										<Text color={badgeColor}>{badge} </Text>
-										<Text color={color}>{t.project}</Text>
-										<Text dimColor> #{t.id}</Text>
+			{showProjects ? (
+				<ProjectsView state={state} setState={setState} onClose={() => setShowProjects(false)} />
+			) : picker ? (
+				<Box flexGrow={1} overflow="hidden" flexDirection="column">
+					<Text bold>
+						Import a {picker.project} session <Text dimColor>(j/k move  ⏎ import  esc cancel)</Text>
+					</Text>
+					<Text dimColor>{'─'.repeat(Math.max(0, width - 1))}</Text>
+					{picker.sessions.map((s, r) => {
+						const linked = linkedThread(s);
+						const active = recentlyActive(s.transcriptPath);
+						return (
+							<Box key={s.id} flexDirection="column">
+								<Text wrap="truncate" inverse={r === picker.row}>
+									<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
+									{linked ? <Text color="cyan">#{linked.id} </Text> : null}
+									{active ? <Text color="yellow">● active </Text> : null}
+									{s.title}
+								</Text>
+								{s.title !== s.firstPrompt ? (
+									<Text wrap="truncate" dimColor>
+										{'         '}
+										{s.firstPrompt}
 									</Text>
-									<Text wrap="truncate" inverse={isSelected}>
-										{'  '}
-										{t.title}
-									</Text>
-								</Box>
-							);
-						})}
-					</Box>
-				))}
-			</Box>
+								) : null}
+							</Box>
+						);
+					})}
+				</Box>
+			) : (
+				<Box flexGrow={1} overflow="hidden">
+					{COLUMNS.map((column, c) => (
+						<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
+							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+								{COLUMN_LABELS[column]} ({columnThreads(column).length})
+							</Text>
+							<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
+							{columnThreads(column).map((t, r) => {
+								const isSelected = c === cursor.col && r === row;
+								const color = t.color ?? projectByName(t.project)?.color;
+								const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
+									? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
+									: resumableSession(t)
+										? ['↻', 'gray']
+										: [' ', undefined];
+								return (
+									<Box key={t.id} flexDirection="column">
+										<Text wrap="truncate" inverse={isSelected}>
+											<Text color={badgeColor}>{badge} </Text>
+											<Text color={color}>{t.project}</Text>
+											<Text dimColor> #{t.id}</Text>
+										</Text>
+										<Text wrap="truncate" inverse={isSelected}>
+											{'  '}
+											{t.title}
+										</Text>
+									</Box>
+								);
+							})}
+						</Box>
+					))}
+				</Box>
+			)}
 			<Box marginTop={1} flexDirection="column" display={showProjects ? 'none' : 'flex'}>
 				{selected?.plan ? (
 					<Text dimColor wrap="truncate-end">

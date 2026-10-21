@@ -52,6 +52,12 @@ tmux session
   back to the thread's title/plan). The PR is
   recorded on the thread; if one already exists it's just pushed again. Uncommitted changes
   block the move. The board polls `gh pr view` every minute and moves merged PRs to Done.
+- Import (#7): `i` lists the selected project's recent sessions from
+  `~/.claude/projects/<path with non-alphanumerics as ->/<session>.jsonl` (title, first prompt, last
+  activity, linked thread). Picking one makes a Planned thread with its session ID, transcript and
+  `cwd`; such threads skip worktrees and resume in that `cwd` (they have no branch, so no PR).
+  Resuming a session the board hasn't seen this run whose transcript changed in the last 2 minutes
+  needs a second ⏎, since it's probably still open elsewhere.
 - State: JSON at `~/.local/share/output-orchestrator/state.json`, validated with zod.
 - Projects are added by hand: `oo project add <path> [name]`.
 
@@ -81,6 +87,7 @@ tmux session
 | c         | comment on the diff → Claude        |
 | a         | accept step (commit)                |
 | o         | open changed hunks in vim           |
+| i         | import a claude session not started by the board |
 | C         | cycle card colour                   |
 | p         | cycle project filter                |
 | x         | archive                             |

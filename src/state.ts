@@ -37,6 +37,8 @@ const ThreadSchema = z.object({
 	// Latest claude session for this thread, reported by the SessionStart hook; used to resume.
 	sessionId: z.string().optional(),
 	transcriptPath: z.string().optional(),
+	// Imported sessions (see sessions.ts) keep running where they were started instead of in a worktree.
+	cwd: z.string().optional(),
 	// Set when the thread's worktree is first created (see git.ts); the branch outlives the worktree.
 	branch: z.string().optional(),
 	// What the branch was created from; the thread diff is against its merge-base.
