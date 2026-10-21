@@ -45,7 +45,7 @@ const HELP =
 
 export function App() {
 	const { exit } = useApp();
-	const { columns: width } = useWindowSize();
+	const { columns: width, rows: height } = useWindowSize();
 	const [state, setState] = useState<State>(loadState);
 	// For callbacks that outlive a render (the PR poll).
 	const stateRef = useRef(state);
@@ -389,12 +389,13 @@ export function App() {
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
 	return (
-		<Box flexDirection="column">
+		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
 				<Text bold>output-orchestrator</Text>
 				<Text dimColor>filter: {filter ?? 'all'}</Text>
 			</Box>
-			<Box>
+			{/* Grows to fill the window, which keeps the info below at the bottom. */}
+			<Box flexGrow={1} overflow="hidden">
 				{COLUMNS.map((column, c) => (
 					<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
 						<Text bold color={c === cursor.col ? 'white' : 'gray'}>
