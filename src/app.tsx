@@ -5,6 +5,7 @@ import { editPr, editThread } from './editor.js';
 import {
 	checkout,
 	currentRef,
+	defaultBranch,
 	ensureWorktree,
 	hasWorktree,
 	isDirty,
@@ -314,10 +315,21 @@ export function App() {
 	const openPr = async (thread: Thread) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		if (thread.cwd) return setMessage(`#${thread.id} was imported and runs in ${thread.cwd}, so it has no branch to open a PR from`);
+		if (thread.cwd) {
+			if (!existsSync(thread.cwd)) return setMessage(`✗ ${thread.cwd} no longer exists`);
+			// An imported thread has no branch of its own until now: it's whatever its directory is on.
+			if (!thread.branch) {
+				const branch = await currentRef(thread.cwd);
+				const base = await defaultBranch(thread.cwd);
+				if (/^[0-9a-f]{40}$/.test(branch) || branch === base) {
+					return setMessage(`⚠ ${thread.cwd} is on ${branch} — switch #${thread.id}'s work onto a branch there first`);
+				}
+				thread = { ...thread, branch, base };
+			}
+		}
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
 		// Reopens it if the thread is coming back from Done.
-		const cwd = await createWorktree(project, thread);
+		const cwd = thread.cwd ?? (await createWorktree(project, thread));
 		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
 		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
 		let pr = existing;
@@ -333,7 +345,7 @@ export function App() {
 			await pushBranch(cwd, thread.branch);
 			pr = await createPr(cwd, thread, draft.title, draft.body);
 		}
-		setColumn(thread.id, 'pr', { pr });
+		setColumn(thread.id, 'pr', { pr, branch: thread.branch, base: thread.base });
 		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
 		setMessage(`${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`);
 	};

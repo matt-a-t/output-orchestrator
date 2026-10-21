@@ -49,6 +49,12 @@ export async function currentRef(repo: string): Promise<string> {
 	return symbolic.stdout || (await git(repo, ['rev-parse', 'HEAD'])).stdout;
 }
 
+/** The remote's default branch (e.g. `main`), if origin has told us one. */
+export async function defaultBranch(repo: string): Promise<string | undefined> {
+	const result = await execa('git', ['-C', repo, 'symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD'], { reject: false });
+	return result.stdout.replace(/^origin\//, '') || undefined;
+}
+
 export async function checkout(repo: string, ref: string): Promise<void> {
 	await git(repo, ['checkout', ref]);
 }
