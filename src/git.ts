@@ -105,3 +105,7 @@ export async function stageAll(cwd: string): Promise<boolean> {
 	const staged = await execa('git', ['-C', cwd, 'diff', '--cached', '--quiet'], { reject: false });
 	return staged.exitCode !== 0;
 }
+
+export async function pushBranch(cwd: string, branch: string): Promise<void> {
+	await git(cwd, ['push', '-u', 'origin', branch]);
+}

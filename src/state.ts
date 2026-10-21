@@ -38,6 +38,8 @@ const ThreadSchema = z.object({
 	branch: z.string().optional(),
 	// What the branch was created from; the thread diff is against its merge-base.
 	base: z.string().optional(),
+	// Opened on moving to PR; polled so the thread moves to Done once it's merged.
+	pr: z.object({ number: z.number(), url: z.string() }).optional(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });
