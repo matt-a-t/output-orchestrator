@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
-import { diffArgs, head, hunkLocations, type DiffKind } from './git.js';
+import { diffArgs, hunkLocations, type DiffKind } from './git.js';
 import type { Thread } from './state.js';
 import { popup, shellQuote } from './tmux.js';
 
@@ -155,23 +155,4 @@ export async function draftCommit(cwd: string, thread: Thread): Promise<string |
 		diff,
 	].join('\n');
 	return (await askClaude(cwd, prompt)) || undefined;
-}
-
-/**
- * Accept the step: commit what's staged, with git opening the editor on `message` (if any) and the
- * diff. Emptying the message aborts.
- */
-export async function commitStep(cwd: string, message?: string): Promise<'committed' | 'aborted'> {
-	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
-	const file = join(dir, 'COMMIT_MSG');
-	const before = await head(cwd);
-	try {
-		if (message) writeFileSync(file, `${message}\n`);
-		const from = message ? ` -e -F ${shellQuote(file)}` : '';
-		// Keep the popup open on failure (e.g. a hook rejected it) so the error can be read.
-		await popup(`git commit -v${from} || { echo; echo 'Press Enter to close'; read -r _; }`, { cwd, title: ' accept step ' });
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-	return (await head(cwd)) === before ? 'aborted' : 'committed';
 }

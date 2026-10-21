@@ -111,8 +111,8 @@ export async function hunkLocations(cwd: string, args: string[]): Promise<string
 	return locations;
 }
 
-export async function head(cwd: string): Promise<string> {
-	return (await git(cwd, ['rev-parse', 'HEAD'])).stdout;
+export async function commit(cwd: string, message: string): Promise<void> {
+	await execa('git', ['-C', cwd, 'commit', '-F', '-'], { input: message });
 }
 
 /** Stage everything; returns false if there's nothing to commit. */

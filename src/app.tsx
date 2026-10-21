@@ -9,6 +9,7 @@ import {
 	ensureWorktree,
 	hasWorktree,
 	isDirty,
+	commit,
 	pushBranch,
 	removeWorktree,
 	stageAll,
@@ -17,7 +18,7 @@ import {
 import { createPr, draftPr, findPr, prState } from './github.js';
 import { editText } from './input.js';
 import { ProjectsView } from './projects.js';
-import { commitStep, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
+import { draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
@@ -73,11 +74,18 @@ const LEGEND: [string, string | undefined, string][] = [
 	['↻', 'gray', 'closed, resumable'],
 ];
 
-/** The `n` flow: pick a project, then type the title. */
-type NewThreadPrompt = { step: 'project'; index: number } | { step: 'title'; project: string; title: string };
+/**
+ * The `n` flow (pick a project, then type the title), or accepting a step after its diff (`d`):
+ * confirm, then edit the subject of the commit message claude drafted (its body is kept as is).
+ */
+type Prompt =
+	| { step: 'project'; index: number }
+	| { step: 'title'; project: string; title: string }
+	| { step: 'accept'; thread: Thread; cwd: string }
+	| { step: 'commit'; thread: Thread; cwd: string; subject: string; body: string };
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  i import thread  C colour  p filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff (then a accept)  c comment  o open changes  i import thread  C colour  p filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -90,7 +98,7 @@ export function App() {
 	const [filter, setFilter] = useState<string | null>(null);
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
-	const [prompt, setPrompt] = useState<NewThreadPrompt | null>(null);
+	const [prompt, setPrompt] = useState<Prompt | null>(null);
 	const [showProjects, setShowProjects] = useState(false);
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
@@ -286,7 +294,7 @@ export function App() {
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
 		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
-			return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+			return setMessage(`⚠ #${thread.id} has uncommitted changes — accept them (d, then a) or discard them first`);
 		}
 		// Untracked files there are yours and get in the way only if the branch has them too, which checkout catches.
 		if (await isDirty(project.path, { untracked: false })) {
@@ -323,7 +331,7 @@ export function App() {
 		if (statuses[thread.id] === 'working') return fail(`⚠ claude is still working on #${thread.id}`);
 		// Including untracked files: anything new there is the thread's work.
 		if (await isDirty(project.path)) {
-			return fail(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+			return fail(`⚠ #${thread.id} has uncommitted changes — accept them (d, then a) or discard them first`);
 		}
 		const restoreRef = thread.restoreRef ?? thread.base;
 		if (!restoreRef) return fail(`✗ Don't know what ${project.path} was on before #${thread.id}`);
@@ -360,7 +368,7 @@ export function App() {
 		if (uiTesting && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		// While UI testing the branch is checked out in the project itself; otherwise this reopens the worktree if the thread is coming back from Done.
 		const cwd = thread.cwd ?? (uiTesting ? project.path : await createWorktree(project, thread));
-		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — accept them (d, then a) or discard them first`);
 		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
 		let pr = existing;
 		if (pr) {
@@ -445,10 +453,39 @@ export function App() {
 		setMessage(`Created #${thread.id} — e to add a plan`);
 	};
 
-	const promptInput = (prompt: NewThreadPrompt, input: string, key: Key) => {
+	/** Stage everything in `cwd` and have claude draft the message to edit in the commit prompt. */
+	const acceptStep = (thread: Thread, cwd: string) =>
+		run(async () => {
+			if (!(await stageAll(cwd))) return setMessage('Nothing to commit');
+			setBusy('claude is writing the commit message');
+			const message = await draftCommit(cwd, thread);
+			if (!message) setMessage('⚠ claude couldn\'t write a commit message; type one');
+			const [subject = '', ...body] = (message ?? '').split('\n');
+			setPrompt({ step: 'commit', thread, cwd, subject, body: body.join('\n').trim() });
+		});
+
+	const promptInput = (prompt: Prompt, input: string, key: Key) => {
+		if (prompt.step === 'accept') {
+			setPrompt(null);
+			return void (input === 'a' && acceptStep(prompt.thread, prompt.cwd));
+		}
 		if (key.escape) {
 			setPrompt(null);
-			return setMessage('Cancelled');
+			return setMessage(prompt.step === 'commit' ? '⚠ Commit cancelled (changes left staged)' : 'Cancelled');
+		}
+		if (prompt.step === 'commit') {
+			if (key.return) {
+				const subject = prompt.subject.trim();
+				if (!subject) return;
+				setPrompt(null);
+				return void run(async () => {
+					await commit(prompt.cwd, prompt.body ? `${subject}\n\n${prompt.body}\n` : `${subject}\n`);
+					setMessage(`Committed step on ${prompt.thread.branch ?? prompt.cwd}`);
+				}, 'committing');
+			}
+			const subject = editText(prompt.subject, input, key);
+			if (subject !== undefined) setPrompt({ ...prompt, subject });
+			return;
 		}
 		if (prompt.step === 'project') {
 			const count = state.projects.length;
@@ -603,7 +640,7 @@ export function App() {
 				if (selected.column === 'uitest') return setMessage(`⚠ Move #${selected.id} out of UI testing before archiving`);
 				// Archived threads are hidden, so don't leave uncommitted work behind in one.
 				if (hasWorktree(selected) && (await isDirty(worktreePath(selected)))) {
-					return setMessage(`⚠ #${selected.id} has uncommitted changes — accept (a) or discard them before archiving`);
+					return setMessage(`⚠ #${selected.id} has uncommitted changes — accept them (d, then a) or discard them before archiving`);
 				}
 				updateThread(selected.id, { column: 'archived' });
 				await syncWorktree({ ...selected, column: 'archived' });
@@ -613,7 +650,9 @@ export function App() {
 		if (input === 'd' || input === 'D') {
 			const kind = input === 'd' ? 'step' : 'thread';
 			return inWorktree(selected, async cwd => {
-				if (!(await showDiff(cwd, kind, selected))) setMessage(`No ${kind} changes`);
+				if (!(await showDiff(cwd, kind, selected))) return setMessage(`No ${kind} changes`);
+				// Accepting happens here, having just looked at what's being committed.
+				if (kind === 'step') setPrompt({ step: 'accept', thread: selected, cwd });
 			});
 		}
 		if (input === 'c') {
@@ -632,22 +671,6 @@ export function App() {
 		if (input === 'o') {
 			return inWorktree(selected, async cwd => {
 				if (!(await openChanges(cwd, selected))) setMessage('No changes');
-			});
-		}
-		if (input === 'a') {
-			return inWorktree(selected, async cwd => {
-				if (!(await stageAll(cwd))) return setMessage('Nothing to commit');
-				setBusy('claude is writing the commit message');
-				const message = await draftCommit(cwd, selected);
-				setBusy('waiting for popup');
-				const result = await commitStep(cwd, message);
-				const note = message ? '' : ' (claude couldn\'t write a message)';
-				setMessage(
-					{
-						committed: `Committed step on ${selected.branch}${note}`,
-						aborted: '⚠ Commit aborted (changes left staged)',
-					}[result],
-				);
 			});
 		}
 	});
@@ -758,6 +781,27 @@ export function App() {
 						<Text inverse> </Text>
 						<Text dimColor>  (⏎ create, esc cancel)</Text>
 					</Text>
+				) : null}
+				{prompt?.step === 'accept' ? (
+					<Text>
+						<Text bold>Accept #{prompt.thread.id}'s step? </Text>
+						<Text dimColor>(a accept and commit, any other key back)</Text>
+					</Text>
+				) : null}
+				{prompt?.step === 'commit' ? (
+					<Box flexDirection="column">
+						<Text>
+							<Text bold>Commit #{prompt.thread.id}: </Text>
+							{prompt.subject}
+							<Text inverse> </Text>
+							<Text dimColor>  (⏎ commit, esc cancel)</Text>
+						</Text>
+						{prompt.body ? (
+							<Text dimColor wrap="truncate-end">
+								{prompt.body.split('\n').filter(Boolean).slice(0, 3).join(' · ')}
+							</Text>
+						) : null}
+					</Box>
 				) : null}
 				{busy ? (
 					<Busy label={busy} />
