@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
-import { editThread } from './editor.js';
-import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
+import { editPr, editThread } from './editor.js';
+import { ensureWorktree, hasWorktree, isDirty, pushBranch, removeWorktree, worktreePath } from './git.js';
+import { createPr, draftPr, findPr, prState } from './github.js';
 import { commitStep, openChanges, reviewDiff, showDiff } from './review.js';
 import {
 	COLORS,
@@ -17,6 +18,7 @@ import {
 	type State,
 	type Thread,
 } from './state.js';
+import { listSessions, recentlyActive, timeAgo, type Session } from './sessions.js';
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
 
@@ -31,13 +33,24 @@ function resumableSession(thread: Thread): string | undefined {
 	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
 }
 
+const LEGEND: [string, string | undefined, string][] = [
+	['⚙', 'yellow', 'working'],
+	['⏸', 'red', 'needs you'],
+	['✓', 'green', 'stopped'],
+	['○', 'gray', 'open, no activity yet'],
+	['↻', 'gray', 'closed, resumable'],
+];
+
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  C colour  p filter  x archive  q quit';
+	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  i import session  C colour  p filter  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
-	const { columns: width } = useWindowSize();
+	const { columns: width, rows: height } = useWindowSize();
 	const [state, setState] = useState<State>(loadState);
+	// For callbacks that outlive a render (the PR poll).
+	const stateRef = useRef(state);
+	stateRef.current = state;
 	const [cursor, setCursor] = useState({ col: 0, row: 0 });
 	const [filter, setFilter] = useState<string | null>(null);
 	const [message, setMessage] = useState('');
@@ -45,6 +58,10 @@ export function App() {
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
+	// The import list (i), replacing the columns while it's open.
+	const [picker, setPicker] = useState<{ project: string; sessions: Session[]; row: number } | null>(null);
+	// Thread whose resume was held back because its session looked busy elsewhere; ⏎ again goes ahead.
+	const resumeAnyway = useRef<string | null>(null);
 
 	const refreshWindows = () =>
 		windowNames()
@@ -107,7 +124,7 @@ export function App() {
 		return () => clearInterval(timer);
 	}, []);
 
-	const projectByName = (name: string) => state.projects.find(p => p.name === name);
+	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 	const columnThreads = (column: Column) =>
 		state.threads.filter(t => t.column === column && (!filter || t.project === filter));
 
@@ -121,6 +138,16 @@ export function App() {
 			threads: s.threads.map(t => (t.id === id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t)),
 		}));
 
+	/** Move the thread to the bottom of the column. */
+	const setColumn = (id: string, column: Column, patch: Partial<Thread> = {}) =>
+		setState(s => {
+			const thread = s.threads.find(t => t.id === id);
+			if (!thread) return s;
+			const moved = { ...thread, ...patch, column, updatedAt: new Date().toISOString() };
+			// Moving to the end of the array puts it at the bottom of the target column.
+			return { ...s, threads: [...s.threads.filter(t => t.id !== id), moved] };
+		});
+
 	const moveColumn = (thread: Thread, delta: number) => {
 		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 		if (col < 0 || col >= COLUMNS.length) return;
@@ -129,11 +156,10 @@ export function App() {
 			const other = state.threads.find(t => t.column === 'active' && t.project === thread.project);
 			if (other) setMessage(`⚠ ${thread.project} already has an active thread: #${other.id} ${other.title}`);
 		}
-		const moved = { ...thread, column, updatedAt: new Date().toISOString() };
-		// Moving to the end of the array puts it at the bottom of the target column.
-		setState(s => ({ ...s, threads: [...s.threads.filter(t => t.id !== thread.id), moved] }));
+		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
+		setColumn(thread.id, column);
 		setCursor({ col, row: columnThreads(column).length });
-		run(() => syncWorktree(moved), 'updating worktree');
+		run(() => syncWorktree({ ...thread, column }), 'updating worktree');
 	};
 
 	const reorder = (thread: Thread, delta: number) => {
@@ -175,22 +201,79 @@ export function App() {
 	const syncWorktree = async (thread: Thread) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		if (thread.column === 'planned') return;
+		// Imported threads stay where their session was started.
+		if (thread.column === 'planned' || thread.cwd) return;
 		if (thread.column !== 'done' && thread.column !== 'archived') return void (await createWorktree(project, thread));
-		if (!hasWorktree(thread)) return;
-		if (await isDirty(worktreePath(thread))) {
+		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
 			return setMessage(`⚠ Kept #${thread.id}'s worktree: it has uncommitted changes`);
 		}
 		// claude can't carry on in a deleted directory.
 		await killWindow(threadWindowName(thread.id));
-		await removeWorktree(project.path, thread);
 		await refreshWindows();
+		if (!hasWorktree(thread)) return;
+		await removeWorktree(project.path, thread);
 		setMessage(`Removed #${thread.id}'s worktree (kept branch ${thread.branch})`);
 	};
 
-	/** Run fn in the thread's worktree, if it has one. */
+	/** Push the thread's branch and open its PR (unless it has one already), then move it to PR. */
+	const openPr = async (thread: Thread) => {
+		const project = projectByName(thread.project);
+		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		if (thread.cwd) return setMessage(`#${thread.id} was imported and runs in ${thread.cwd}, so it has no branch to open a PR from`);
+		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
+		// Reopens it if the thread is coming back from Done.
+		const cwd = await createWorktree(project, thread);
+		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
+		let pr = existing;
+		if (pr) {
+			await pushBranch(cwd, thread.branch);
+		} else {
+			setBusy('claude is writing the PR description');
+			const written = await draftPr(cwd, thread);
+			if (!written) setMessage('⚠ claude couldn\'t write the PR description; starting from the thread');
+			setBusy('opening PR');
+			const draft = await editPr(written ?? { title: thread.title, body: thread.plan }, thread.branch);
+			if (!draft) return setMessage('Cancelled');
+			await pushBranch(cwd, thread.branch);
+			pr = await createPr(cwd, thread, draft.title, draft.body);
+		}
+		setColumn(thread.id, 'pr', { pr });
+		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
+		setMessage(`${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`);
+	};
+
+	// Move threads whose PR has merged to Done (which also cleans up the worktree).
+	useEffect(() => {
+		let polling = false;
+		const poll = async () => {
+			if (polling) return;
+			polling = true;
+			try {
+				for (const thread of stateRef.current.threads) {
+					const project = projectByName(thread.project);
+					if (thread.column !== 'pr' || !thread.pr || !project) continue;
+					// gh failing (offline, logged out) just means trying again next time.
+					if ((await prState(project.path, thread.pr).catch(() => undefined)) !== 'MERGED') continue;
+					setColumn(thread.id, 'done');
+					setMessage(`#${thread.id}'s PR #${thread.pr.number} merged → Done`);
+					await syncWorktree({ ...thread, column: 'done' }).catch(err =>
+						setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`),
+					);
+				}
+			} finally {
+				polling = false;
+			}
+		};
+		poll();
+		const timer = setInterval(poll, 60_000);
+		return () => clearInterval(timer);
+	}, []);
+
+	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one. */
 	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>) =>
 		run(async () => {
+			if (thread.cwd) return await fn(thread.cwd);
 			if (!hasWorktree(thread)) return setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
 			await fn(worktreePath(thread));
 		});
@@ -227,25 +310,99 @@ export function App() {
 		run(async () => {
 			const project = projectByName(thread.project);
 			if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-			const cwd = await createWorktree(project, thread);
+			const cwd = thread.cwd ?? (await createWorktree(project, thread));
 			// No branch yet means the worktree was just created, so there's nothing to resume in it.
-			const sessionId = thread.branch ? resumableSession(thread) : undefined;
+			const sessionId = thread.branch || thread.cwd ? resumableSession(thread) : undefined;
+			const window = threadWindowName(thread.id);
+			// A session the board hasn't heard from this run but that was written to just now is
+			// probably still open in another terminal; two claudes on one session would clash.
+			if (
+				sessionId &&
+				!liveWindows.has(window) &&
+				statuses[thread.id] === undefined &&
+				recentlyActive(thread.transcriptPath!) &&
+				resumeAnyway.current !== thread.id
+			) {
+				resumeAnyway.current = thread.id;
+				return setMessage(`⚠ #${thread.id}'s session was active in the last few minutes — close it elsewhere, then ⏎ (or ⏎ again to resume anyway)`);
+			}
+			resumeAnyway.current = null;
 			const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
-			const result = await openWindow(threadWindowName(thread.id), cwd, command, { OO_THREAD_ID: thread.id });
+			const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id });
 			await refreshWindows();
 			if (result === 'selected') setMessage('');
 			else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
 		});
 
+	const openPicker = () =>
+		run(async () => {
+			if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
+			const project = projectByName(filter ?? selected?.project ?? state.projects[0]!.name)!;
+			const sessions = await listSessions(project.path);
+			if (sessions.length === 0) return setMessage(`No claude sessions found in ${project.path}`);
+			setPicker({ project: project.name, sessions, row: 0 });
+		}, 'looking for sessions');
+
+	const linkedThread = (session: Session) => state.threads.find(t => t.sessionId === session.id);
+
+	/** Jump to the column/row a thread is shown at, clearing the filter if it hides it. */
+	const showThread = (thread: Thread) => {
+		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
+		if (col < 0) return false;
+		const visible = filter && filter !== thread.project ? null : filter;
+		setFilter(visible);
+		const rowIn = state.threads.filter(t => t.column === thread.column && (!visible || t.project === visible));
+		setCursor({ col, row: rowIn.indexOf(thread) });
+		return true;
+	};
+
+	const importSession = (project: string, session: Session) => {
+		setPicker(null);
+		const linked = linkedThread(session);
+		if (linked) {
+			if (!showThread(linked)) setMessage(`That session is already archived thread #${linked.id}`);
+			return;
+		}
+		const now = new Date().toISOString();
+		const thread: Thread = {
+			id: newThreadId(state),
+			title: session.title,
+			plan: session.title === session.firstPrompt ? '' : session.firstPrompt,
+			project,
+			column: 'planned',
+			sessionId: session.id,
+			transcriptPath: session.transcriptPath,
+			cwd: session.cwd,
+			createdAt: now,
+			updatedAt: now,
+		};
+		setState(s => ({ ...s, threads: [...s.threads, thread] }));
+		setCursor({ col: 0, row: columnThreads('planned').length });
+		setMessage(
+			recentlyActive(session.transcriptPath)
+				? `⚠ Imported #${thread.id}, but its session looks active elsewhere — close it there before ⏎`
+				: `Imported #${thread.id} — ⏎ resumes it`,
+		);
+	};
+
 	useInput((input, key) => {
 		if (busy) return;
 		setMessage('');
+		if (picker) {
+			const last = picker.sessions.length - 1;
+			if (input === 'q' || key.escape) return setPicker(null);
+			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: Math.min(last, picker.row + 1) });
+			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: Math.max(0, picker.row - 1) });
+			if (key.return) return importSession(picker.project, picker.sessions[picker.row]!);
+			return;
+		}
 		if (input === 'q') return exit();
 		if (input === 'h' || key.leftArrow) return setCursor({ col: Math.max(0, cursor.col - 1), row });
 		if (input === 'l' || key.rightArrow) return setCursor({ col: Math.min(COLUMNS.length - 1, cursor.col + 1), row });
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: Math.min(colThreads.length - 1, row + 1) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: Math.max(0, row - 1) });
 		if (input === 'n') return newThread();
+		if (input === 'i') return openPicker();
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
 			setFilter(names[(names.indexOf(filter) + 1) % names.length]!);
@@ -263,9 +420,15 @@ export function App() {
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
 		}
 		if (input === 'x') {
-			updateThread(selected.id, { column: 'archived' });
-			setMessage(`Archived #${selected.id}`);
-			return run(() => syncWorktree({ ...selected, column: 'archived' }), 'updating worktree');
+			return run(async () => {
+				// Archived threads are hidden, so don't leave uncommitted work behind in one.
+				if (hasWorktree(selected) && (await isDirty(worktreePath(selected)))) {
+					return setMessage(`⚠ #${selected.id} has uncommitted changes — accept (a) or discard them before archiving`);
+				}
+				updateThread(selected.id, { column: 'archived' });
+				await syncWorktree({ ...selected, column: 'archived' });
+				setMessage(`Archived #${selected.id}`);
+			}, 'archiving');
 		}
 		if (input === 'd' || input === 'D') {
 			const kind = input === 'd' ? 'step' : 'thread';
@@ -308,46 +471,94 @@ export function App() {
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
 	return (
-		<Box flexDirection="column">
+		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
 				<Text bold>output-orchestrator</Text>
 				<Text dimColor>filter: {filter ?? 'all'}</Text>
 			</Box>
-			<Box>
-				{COLUMNS.map((column, c) => (
-					<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-						<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-							{COLUMN_LABELS[column]} ({columnThreads(column).length})
-						</Text>
-						<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-						{columnThreads(column).map((t, r) => {
-							const isSelected = c === cursor.col && r === row;
-							const color = t.color ?? projectByName(t.project)?.color;
-							const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
-								? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
-								: resumableSession(t)
-									? ['↻', 'gray']
-									: [' ', undefined];
-							return (
-								<Text key={t.id} wrap="truncate" inverse={isSelected}>
-									<Text color={badgeColor}>{badge} </Text>
-									<Text color={color}>{t.project}</Text>
-									<Text dimColor> #{t.id} </Text>
-									{t.title}
+			{/* Grows to fill the window, which keeps the info below at the bottom. */}
+			{picker ? (
+				<Box flexGrow={1} overflow="hidden" flexDirection="column">
+					<Text bold>
+						Import a {picker.project} session <Text dimColor>(j/k move  ⏎ import  esc cancel)</Text>
+					</Text>
+					<Text dimColor>{'─'.repeat(Math.max(0, width - 1))}</Text>
+					{picker.sessions.map((s, r) => {
+						const linked = linkedThread(s);
+						const active = recentlyActive(s.transcriptPath);
+						return (
+							<Box key={s.id} flexDirection="column">
+								<Text wrap="truncate" inverse={r === picker.row}>
+									<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
+									{linked ? <Text color="cyan">#{linked.id} </Text> : null}
+									{active ? <Text color="yellow">● active </Text> : null}
+									{s.title}
 								</Text>
-							);
-						})}
-					</Box>
-				))}
-			</Box>
+								{s.title !== s.firstPrompt ? (
+									<Text wrap="truncate" dimColor>
+										{'         '}
+										{s.firstPrompt}
+									</Text>
+								) : null}
+							</Box>
+						);
+					})}
+				</Box>
+			) : (
+				<Box flexGrow={1} overflow="hidden">
+					{COLUMNS.map((column, c) => (
+						<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
+							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+								{COLUMN_LABELS[column]} ({columnThreads(column).length})
+							</Text>
+							<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
+							{columnThreads(column).map((t, r) => {
+								const isSelected = c === cursor.col && r === row;
+								const color = t.color ?? projectByName(t.project)?.color;
+								const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
+									? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
+									: resumableSession(t)
+										? ['↻', 'gray']
+										: [' ', undefined];
+								return (
+									<Box key={t.id} flexDirection="column">
+										<Text wrap="truncate" inverse={isSelected}>
+											<Text color={badgeColor}>{badge} </Text>
+											<Text color={color}>{t.project}</Text>
+											<Text dimColor> #{t.id}</Text>
+										</Text>
+										<Text wrap="truncate" inverse={isSelected}>
+											{'  '}
+											{t.title}
+										</Text>
+									</Box>
+								);
+							})}
+						</Box>
+					))}
+				</Box>
+			)}
 			<Box marginTop={1} flexDirection="column">
 				{selected?.plan ? (
 					<Text dimColor wrap="truncate-end">
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
 					</Text>
 				) : null}
+				{selected?.pr ? (
+					<Text dimColor>
+						PR #{selected.pr.number} {selected.pr.url}
+					</Text>
+				) : null}
 				<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
 					{busy ? `… ${busy}` : message}
+				</Text>
+				<Text>
+					{LEGEND.map(([badge, color, label]) => (
+						<Text key={label}>
+							<Text color={color}>{badge}</Text>
+							<Text dimColor> {label}   </Text>
+						</Text>
+					))}
 				</Text>
 				<Text dimColor>{HELP}</Text>
 			</Box>

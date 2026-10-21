@@ -45,7 +45,19 @@ tmux session
   Planned (or on first open), at `~/.local/share/output-orchestrator/worktrees/<project>/<id>`,
   on branch `oo/<id>-<title-slug>` from the repo's current branch (recorded as the thread's
   base). claude runs in the worktree, so `--resume` finds its sessions. Removed on
-  Done/archive (branch kept; its claude window is closed) unless it has uncommitted changes.
+  Done/archive (branch kept; its claude window is closed) unless it has uncommitted changes;
+  archiving refuses until they're committed or discarded.
+- PRs (M5): moving a card to PR pushes its branch and runs `gh pr create --head <branch>
+  --base <base>`, title/body drafted by `claude -p` from the commits and diff, then edited in vim (falls
+  back to the thread's title/plan). The PR is
+  recorded on the thread; if one already exists it's just pushed again. Uncommitted changes
+  block the move. The board polls `gh pr view` every minute and moves merged PRs to Done.
+- Import (#7): `i` lists the selected project's recent sessions from
+  `~/.claude/projects/<path with non-alphanumerics as ->/<session>.jsonl` (title, first prompt, last
+  activity, linked thread). Picking one makes a Planned thread with its session ID, transcript and
+  `cwd`; such threads skip worktrees and resume in that `cwd` (they have no branch, so no PR).
+  Resuming a session the board hasn't seen this run whose transcript changed in the last 2 minutes
+  needs a second ⏎, since it's probably still open elsewhere.
 - State: JSON at `~/.local/share/output-orchestrator/state.json`, validated with zod.
 - Projects are added by hand: `oo project add <path> [name]`.
 
@@ -75,6 +87,7 @@ tmux session
 | c         | comment on the diff → Claude        |
 | a         | accept step (commit)                |
 | o         | open changed hunks in vim           |
+| i         | import a claude session not started by the board |
 | C         | cycle card colour                   |
 | p         | cycle project filter                |
 | x         | archive                             |
@@ -86,8 +99,8 @@ tmux session
   state, launch/jump to a `claude` tmux window, vim for new/edit.
 - **M2** — Hook-driven status badges (⚙ working, ⏸ needs you, ✓ stopped), resume after restart.
 - **M3** — Worktree per thread, delta diff popups, `a` accept = commit.
-- **M4** — Vim comments → feedback pasted into Claude. ← current
-- **M5** — `gh pr create`, auto-move to Done on merge, archive cleanup.
+- **M4** — Vim comments → feedback pasted into Claude.
+- **M5** — `gh pr create`, auto-move to Done on merge, archive cleanup. ← current
 
 ## Prerequisites
 
