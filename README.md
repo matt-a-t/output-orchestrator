@@ -44,6 +44,13 @@ minute and moves merged ones to Done. Moving a thread to Done or archiving it re
 worktree and closes its claude window; the branch stays. Done keeps a worktree with
 uncommitted changes; archiving refuses until they're committed or discarded.
 
+`i` imports a claude session you started outside the board (e.g. plain `claude` in the
+project's directory): pick one from the project's recent sessions and it becomes a Planned
+thread that Enter resumes, with badges from then on. Imported threads keep running in the
+directory the session started in rather than a worktree, so diffs, comments and accept work
+there but they can't open a PR. If the session looks like it's still open somewhere else, Enter
+warns first; press it again to resume anyway.
+
 Card badges (with a legend at the bottom of the board): ⚙ working, ⏸ needs you
 (permission prompt), ✓ stopped, ○ window open with no activity yet, ↻ no window but
 resumable. Each card shows the project and thread number, with the title beneath.
