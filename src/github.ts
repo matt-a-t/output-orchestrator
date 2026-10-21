@@ -12,6 +12,52 @@ export async function findPr(cwd: string, branch: string): Promise<Pr | undefine
 	return { number, url };
 }
 
+// Enough for claude to see the changes without blowing up the prompt on huge diffs.
+const MAX_DIFF = 60_000;
+
+/**
+ * Have claude draft the PR's title and description from the thread's commits and diff against its
+ * base. Returns undefined if claude fails or says nothing usable.
+ */
+export async function draftPr(cwd: string, thread: Thread): Promise<{ title: string; body: string } | undefined> {
+	const base = thread.base ?? 'HEAD';
+	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
+	const log = await git(['log', '--reverse', '--format=commit %h%n%B', `${base}..HEAD`]);
+	const stat = await git(['diff', '--stat', `${base}...HEAD`]);
+	let diff = await git(['diff', `${base}...HEAD`]);
+	if (diff.length > MAX_DIFF) diff = `${diff.slice(0, MAX_DIFF)}\n[diff truncated]`;
+	const prompt = [
+		'Write the title and description for a GitHub pull request of the changes below.',
+		'Reply with only the title on the first line, a blank line, then the description in Markdown:',
+		'what changed and why, in short paragraphs or bullets a reviewer can skim. No preamble.',
+		'',
+		`Thread title: ${thread.title}`,
+		thread.plan ? `Thread plan:\n${thread.plan}` : '',
+		'',
+		'Commits:',
+		log,
+		'',
+		'Diff stat:',
+		stat,
+		'',
+		'Diff:',
+		diff,
+	].join('\n');
+	const result = await execa('claude', ['-p', '--no-session-persistence', '--tools', 'Read,Grep,Glob'], {
+		cwd,
+		input: prompt,
+		reject: false,
+	});
+	if (result.exitCode !== 0) return;
+	const [title, ...rest] = result.stdout
+		.trim()
+		.replace(/^```\w*\n|\n```$/g, '')
+		.split('\n');
+	const cleanTitle = title?.replace(/^#+\s*/, '').trim();
+	if (!cleanTitle) return;
+	return { title: cleanTitle, body: rest.join('\n').trim() };
+}
+
 /** Open a PR for the thread's branch, which must already be pushed. */
 export async function createPr(cwd: string, thread: Thread, title: string, body: string): Promise<Pr> {
 	const branch = thread.branch!;

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import { editPr, editThread } from './editor.js';
 import { ensureWorktree, hasWorktree, isDirty, pushBranch, removeWorktree, worktreePath } from './git.js';
-import { createPr, findPr, prState } from './github.js';
+import { createPr, draftPr, findPr, prState } from './github.js';
 import { commitStep, openChanges, reviewDiff, showDiff } from './review.js';
 import {
 	COLORS,
@@ -222,7 +222,11 @@ export function App() {
 		if (pr) {
 			await pushBranch(cwd, thread.branch);
 		} else {
-			const draft = await editPr({ title: thread.title, body: thread.plan }, thread.branch);
+			setBusy('claude is writing the PR description');
+			const written = await draftPr(cwd, thread);
+			if (!written) setMessage('⚠ claude couldn\'t write the PR description; starting from the thread');
+			setBusy('opening PR');
+			const draft = await editPr(written ?? { title: thread.title, body: thread.plan }, thread.branch);
 			if (!draft) return setMessage('Cancelled');
 			await pushBranch(cwd, thread.branch);
 			pr = await createPr(cwd, thread, draft.title, draft.body);

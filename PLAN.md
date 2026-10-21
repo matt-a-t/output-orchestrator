@@ -48,7 +48,8 @@ tmux session
   Done/archive (branch kept; its claude window is closed) unless it has uncommitted changes;
   archiving refuses until they're committed or discarded.
 - PRs (M5): moving a card to PR pushes its branch and runs `gh pr create --head <branch>
-  --base <base>`, title/body edited in vim first (prefilled from the thread). The PR is
+  --base <base>`, title/body drafted by `claude -p` from the commits and diff, then edited in vim (falls
+  back to the thread's title/plan). The PR is
   recorded on the thread; if one already exists it's just pushed again. Uncommitted changes
   block the move. The board polls `gh pr view` every minute and moves merged PRs to Done.
 - State: JSON at `~/.local/share/output-orchestrator/state.json`, validated with zod.
