@@ -2,6 +2,8 @@ import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import { editThread } from './editor.js';
+import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
+import { commitStep, openChanges, showDiff } from './review.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
@@ -11,11 +13,12 @@ import {
 	newThreadId,
 	saveState,
 	type Column,
+	type Project,
 	type State,
 	type Thread,
 } from './state.js';
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
-import { openWindow, threadWindowName, windowNames } from './tmux.js';
+import { killWindow, openWindow, threadWindowName, windowNames } from './tmux.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
@@ -28,7 +31,8 @@ function resumableSession(thread: Thread): string | undefined {
 	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
 }
 
-const HELP = 'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  C colour  p filter  x archive  q quit';
+const HELP =
+	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  a accept  o open changes  C colour  p filter  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -37,7 +41,7 @@ export function App() {
 	const [cursor, setCursor] = useState({ col: 0, row: 0 });
 	const [filter, setFilter] = useState<string | null>(null);
 	const [message, setMessage] = useState('');
-	const [busy, setBusy] = useState(false);
+	const [busy, setBusy] = useState<string | null>(null);
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
@@ -129,6 +133,7 @@ export function App() {
 		// Moving to the end of the array puts it at the bottom of the target column.
 		setState(s => ({ ...s, threads: [...s.threads.filter(t => t.id !== thread.id), moved] }));
 		setCursor({ col, row: columnThreads(column).length });
+		run(() => syncWorktree(moved), 'updating worktree');
 	};
 
 	const reorder = (thread: Thread, delta: number) => {
@@ -144,16 +149,51 @@ export function App() {
 		setCursor({ col: cursor.col, row: row + delta });
 	};
 
-	const run = async (fn: () => Promise<void>) => {
-		setBusy(true);
+	const run = async (fn: () => Promise<void>, label = 'waiting for popup') => {
+		setBusy(label);
 		try {
 			await fn();
 		} catch (err) {
 			setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
 		} finally {
-			setBusy(false);
+			setBusy(null);
 		}
 	};
+
+	/** Create the thread's worktree if it's missing; returns its path. */
+	const createWorktree = async (project: Project, thread: Thread): Promise<string> => {
+		const created = await ensureWorktree(project.path, thread);
+		if (created) {
+			// Earlier sessions ran in the main checkout, so `claude --resume` wouldn't find them from here.
+			updateThread(thread.id, { ...created, sessionId: undefined, transcriptPath: undefined });
+			setMessage(`Created worktree for #${thread.id} on ${created.branch}`);
+		}
+		return worktreePath(thread);
+	};
+
+	/** Keep the worktree in step with the column: there from Active on, removed (branch kept) once Done/archived. */
+	const syncWorktree = async (thread: Thread) => {
+		const project = projectByName(thread.project);
+		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		if (thread.column === 'planned') return;
+		if (thread.column !== 'done' && thread.column !== 'archived') return void (await createWorktree(project, thread));
+		if (!hasWorktree(thread)) return;
+		if (await isDirty(worktreePath(thread))) {
+			return setMessage(`⚠ Kept #${thread.id}'s worktree: it has uncommitted changes`);
+		}
+		// claude can't carry on in a deleted directory.
+		await killWindow(threadWindowName(thread.id));
+		await removeWorktree(project.path, thread);
+		await refreshWindows();
+		setMessage(`Removed #${thread.id}'s worktree (kept branch ${thread.branch})`);
+	};
+
+	/** Run fn in the thread's worktree, if it has one. */
+	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>) =>
+		run(async () => {
+			if (!hasWorktree(thread)) return setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
+			await fn(worktreePath(thread));
+		});
 
 	const newThread = () =>
 		run(async () => {
@@ -187,9 +227,11 @@ export function App() {
 		run(async () => {
 			const project = projectByName(thread.project);
 			if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-			const sessionId = resumableSession(thread);
+			const cwd = await createWorktree(project, thread);
+			// No branch yet means the worktree was just created, so there's nothing to resume in it.
+			const sessionId = thread.branch ? resumableSession(thread) : undefined;
 			const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
-			const result = await openWindow(threadWindowName(thread.id), project.path, command, { OO_THREAD_ID: thread.id });
+			const result = await openWindow(threadWindowName(thread.id), cwd, command, { OO_THREAD_ID: thread.id });
 			await refreshWindows();
 			if (result === 'selected') setMessage('');
 			else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
@@ -222,7 +264,31 @@ export function App() {
 		}
 		if (input === 'x') {
 			updateThread(selected.id, { column: 'archived' });
-			return setMessage(`Archived #${selected.id}`);
+			setMessage(`Archived #${selected.id}`);
+			return run(() => syncWorktree({ ...selected, column: 'archived' }), 'updating worktree');
+		}
+		if (input === 'd' || input === 'D') {
+			const kind = input === 'd' ? 'step' : 'thread';
+			return inWorktree(selected, async cwd => {
+				if (!(await showDiff(cwd, kind, selected))) setMessage(`No ${kind} changes`);
+			});
+		}
+		if (input === 'o') {
+			return inWorktree(selected, async cwd => {
+				if (!(await openChanges(cwd, selected))) setMessage('No changes');
+			});
+		}
+		if (input === 'a') {
+			return inWorktree(selected, async cwd => {
+				const result = await commitStep(cwd);
+				setMessage(
+					{
+						nothing: 'Nothing to commit',
+						committed: `Committed step on ${selected.branch}`,
+						aborted: '⚠ Commit aborted (changes left staged)',
+					}[result],
+				);
+			});
 		}
 	});
 
@@ -268,7 +334,7 @@ export function App() {
 					</Text>
 				) : null}
 				<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
-					{busy ? '… waiting for popup' : message}
+					{busy ? `… ${busy}` : message}
 				</Text>
 				<Text dimColor>{HELP}</Text>
 			</Box>
