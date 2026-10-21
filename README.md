@@ -21,8 +21,12 @@ bind b select-window -t oo-board
 
 ```bash
 oo project add ~/code/my-repo [name]
-tmux new -A -s oo oo
+oo
 ```
+
+`oo` starts (or reattaches to) a tmux session called `oo` with the board in it. Run
+inside tmux, it opens the board in the current window, or jumps to it if it's already
+running.
 
 Keys are listed at the bottom of the board. `n` / `e` open `$EDITOR` (default vim)
 in a tmux popup; Enter opens or jumps to the thread's `claude` window, resuming

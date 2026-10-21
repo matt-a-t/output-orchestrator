@@ -5,10 +5,10 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { COLORS, loadState, saveState } from './state.js';
 import { writeClaudeSettings } from './status.js';
-import { BOARD_WINDOW, insideTmux, renameCurrentWindow } from './tmux.js';
+import { BOARD_WINDOW, attachBoard, insideTmux, renameCurrentWindow, selectExistingBoard } from './tmux.js';
 
 const USAGE = `usage:
-  oo                          open the board (inside tmux)
+  oo                          open the board (starts/attaches the "oo" tmux session if needed)
   oo project add <path> [name]
   oo project list
   oo project rm <name>`;
@@ -56,9 +56,10 @@ if (cmd === 'project') {
 	process.exit(1);
 } else {
 	if (!insideTmux()) {
-		console.error('oo must run inside tmux. Try:  tmux new -A -s oo oo');
-		process.exit(1);
+		// Re-run this same script (dist or tsx) as the board inside tmux.
+		process.exit(await attachBoard([process.execPath, ...process.execArgv, process.argv[1]!]));
 	}
+	if (await selectExistingBoard()) process.exit(0);
 	await renameCurrentWindow(BOARD_WINDOW);
 	writeClaudeSettings();
 	render(<App />);
