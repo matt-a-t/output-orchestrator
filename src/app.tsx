@@ -279,7 +279,7 @@ export function App() {
 		const moved: Thread = { ...thread, column: 'uitest', restoreRef, ...moveSession(thread, project.path) };
 		setColumn(thread.id, 'uitest', moved);
 		setCursor({ col: COLUMNS.indexOf('uitest'), row: columnThreads('uitest').length });
-		if (wasOpen) await launchClaude(moved, project.path);
+		if (wasOpen) await launchClaude(moved, project.path, { background: true });
 		setMessage(`${project.name} checkout is on ${thread.branch}; claude works there until it leaves UI testing`);
 	};
 
@@ -313,7 +313,7 @@ export function App() {
 		const cwd = await createWorktree(project, back);
 		Object.assign(back, moveSession(thread, cwd));
 		setColumn(thread.id, column, back);
-		if (wasOpen) await launchClaude(back, cwd);
+		if (wasOpen) await launchClaude(back, cwd, { background: true });
 		showAt();
 		setMessage(`${project.name} checkout is back on ${restoreRef}`);
 		return true;
@@ -455,8 +455,11 @@ export function App() {
 			updateThread(thread.id, draft);
 		});
 
-	/** Jump to the thread's claude window, starting claude in `cwd` (resuming its session if it can) if needed. */
-	const launchClaude = async (thread: Thread, cwd: string) => {
+	/**
+	 * Jump to the thread's claude window, starting claude in `cwd` (resuming its session if it can) if needed.
+	 * `background` starts it without leaving the board.
+	 */
+	const launchClaude = async (thread: Thread, cwd: string, { background = false } = {}) => {
 		// No branch yet means the worktree was just created, so there's nothing to resume in it.
 		const sessionId = thread.branch || thread.cwd ? resumableSession(thread) : undefined;
 		const window = threadWindowName(thread.id);
@@ -474,7 +477,7 @@ export function App() {
 		}
 		resumeAnyway.current = null;
 		const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
-		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id });
+		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id }, { background });
 		await refreshWindows();
 		if (result === 'selected') setMessage('');
 		else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);

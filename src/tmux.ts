@@ -26,19 +26,20 @@ export async function killWindow(name: string): Promise<void> {
 	if ((await windowNames()).includes(name)) await execa('tmux', ['kill-window', '-t', `:${name}`]);
 }
 
-/** Jump to the thread's window, creating it (running `command` in `cwd`) if needed. */
+/** Jump to the thread's window, creating it (running `command` in `cwd`) if needed; `background` creates it without jumping. */
 export async function openWindow(
 	name: string,
 	cwd: string,
 	command: string[],
 	env: Record<string, string> = {},
+	{ background = false } = {},
 ): Promise<'created' | 'selected'> {
 	if ((await windowNames()).includes(name)) {
-		await execa('tmux', ['select-window', '-t', `:${name}`]);
+		if (!background) await execa('tmux', ['select-window', '-t', `:${name}`]);
 		return 'selected';
 	}
 	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-	await execa('tmux', ['new-window', '-n', name, '-c', cwd, ...envArgs, ...command]);
+	await execa('tmux', ['new-window', ...(background ? ['-d'] : []), '-n', name, '-c', cwd, ...envArgs, ...command]);
 	return 'created';
 }
 
