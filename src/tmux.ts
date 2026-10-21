@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
 
 export const BOARD_WINDOW = 'oo-board';
+export const SESSION = 'oo';
 
 export function insideTmux(): boolean {
 	return Boolean(process.env.TMUX);
@@ -15,19 +16,55 @@ export async function renameCurrentWindow(name: string): Promise<void> {
 	await execa('tmux', ['rename-window', name]);
 }
 
-async function windowNames(): Promise<string[]> {
+export async function windowNames(): Promise<string[]> {
 	const { stdout } = await execa('tmux', ['list-windows', '-F', '#{window_name}']);
 	return stdout.split('\n');
 }
 
 /** Jump to the thread's window, creating it (running `command` in `cwd`) if needed. */
-export async function openWindow(name: string, cwd: string, command: string[]): Promise<'created' | 'selected'> {
+export async function openWindow(
+	name: string,
+	cwd: string,
+	command: string[],
+	env: Record<string, string> = {},
+): Promise<'created' | 'selected'> {
 	if ((await windowNames()).includes(name)) {
 		await execa('tmux', ['select-window', '-t', `:${name}`]);
 		return 'selected';
 	}
-	await execa('tmux', ['new-window', '-n', name, '-c', cwd, ...command]);
+	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+	await execa('tmux', ['new-window', '-n', name, '-c', cwd, ...envArgs, ...command]);
 	return 'created';
+}
+
+/**
+ * From outside tmux: attach to the `oo` session, starting it (or a board window in it) with
+ * `command` if needed. Resolves with tmux's exit code once detached.
+ */
+export async function attachBoard(command: string[]): Promise<number> {
+	const hasSession = await execa('tmux', ['has-session', '-t', `=${SESSION}`], { reject: false });
+	if (hasSession.exitCode !== 0) {
+		const result = await execa('tmux', ['new-session', '-s', SESSION, ...command], { stdio: 'inherit', reject: false });
+		return result.exitCode ?? 1;
+	}
+	const { stdout } = await execa('tmux', ['list-windows', '-t', `=${SESSION}`, '-F', '#{window_name}']);
+	if (!stdout.split('\n').includes(BOARD_WINDOW)) {
+		await execa('tmux', ['new-window', '-d', '-t', `=${SESSION}:`, '-n', BOARD_WINDOW, ...command]);
+	}
+	await execa('tmux', ['select-window', '-t', `=${SESSION}:${BOARD_WINDOW}`]);
+	const result = await execa('tmux', ['attach-session', '-t', `=${SESSION}`], { stdio: 'inherit', reject: false });
+	return result.exitCode ?? 1;
+}
+
+/** Inside tmux: jump to a board already running in another window of this session, if any. */
+export async function selectExistingBoard(): Promise<boolean> {
+	const { stdout } = await execa('tmux', ['list-panes', '-s', '-F', '#{window_name}\t#{pane_id}']);
+	const other = stdout
+		.split('\n')
+		.map(line => line.split('\t'))
+		.some(([name, pane]) => name === BOARD_WINDOW && pane !== process.env.TMUX_PANE);
+	if (other) await execa('tmux', ['select-window', '-t', `:${BOARD_WINDOW}`]);
+	return other;
 }
 
 /** Run a command in a tmux popup and resolve once it exits. */

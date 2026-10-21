@@ -34,10 +34,12 @@ tmux session
 - Return to board: tmux binding `bind b select-window -t oo-board`.
 - Editors / diffs open in `tmux display-popup -E`, synchronised with `tmux wait-for`.
 - Send text into a session: `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + Enter.
-- Status (M2): Claude Code hooks (`SessionStart`, `UserPromptSubmit`, `Stop`,
-  `Notification`) passed per launch via `claude --settings <file>`; they append
-  events to a file the board watches. `SessionStart` gives the session ID for
-  `claude --resume`.
+- Status (M2): Claude Code hooks (`SessionStart`, `UserPromptSubmit`, `PostToolUse`,
+  `Notification`, `Stop`, `SessionEnd`) passed per launch via `claude --settings
+  <data>/claude-settings.json` (rewritten at board start). The thread ID reaches the
+  hook as `OO_THREAD_ID` (`tmux new-window -e`); `src/hook.ts` appends a line per
+  event to `<data>/events.jsonl`, which the board tails. `SessionStart` gives the
+  session ID + transcript path, stored on the thread for `claude --resume`.
 - Isolation (M3): one git worktree + branch per thread, created on leaving
   Planned, at `~/.local/share/output-orchestrator/worktrees/<project>/<id>`.
   Removed on Done/archive (branch kept).
@@ -71,8 +73,8 @@ tmux session
 ## Milestones
 
 - **M1** — Board: projects, threads, columns, move/reorder, colours, persisted
-  state, launch/jump to a `claude` tmux window, vim for new/edit. ← current
-- **M2** — Hook-driven status badges (⚙ working, ⏸ needs you, ✓ stopped), resume after restart.
+  state, launch/jump to a `claude` tmux window, vim for new/edit.
+- **M2** — Hook-driven status badges (⚙ working, ⏸ needs you, ✓ stopped), resume after restart. ← current
 - **M3** — Worktree per thread, delta diff popups, `a` accept = commit.
 - **M4** — Vim comments → feedback pasted into Claude.
 - **M5** — `gh pr create`, auto-move to Done on merge, archive cleanup.

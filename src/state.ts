@@ -31,6 +31,9 @@ const ThreadSchema = z.object({
 	project: z.string(),
 	column: ColumnSchema,
 	color: z.enum(COLORS).optional(),
+	// Latest claude session for this thread, reported by the SessionStart hook; used to resume.
+	sessionId: z.string().optional(),
+	transcriptPath: z.string().optional(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });
