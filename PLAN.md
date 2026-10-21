@@ -31,7 +31,8 @@ tmux session
 
 - Board must run inside tmux (simplest; may relax later).
 - Launch: `tmux new-window -n oo-<id> -c <dir> claude`.
-- Return to board: tmux binding `bind b select-window -t oo-board`.
+- Return to board: `prefix b`, bound by the board at start (`bind b select-window -t oo-board`)
+  unless `b` is already bound to something else.
 - Editors / diffs open in `tmux display-popup -E`, synchronised with `tmux wait-for`.
 - Send text into a session: `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + Enter.
 - Status (M2): Claude Code hooks (`SessionStart`, `UserPromptSubmit`, `PostToolUse`,
@@ -53,8 +54,10 @@ tmux session
 - `d` — step diff: `git diff HEAD | delta` in a popup.
 - `D` — thread diff: `git diff --merge-base <base>` (`<base>...` incl. working tree).
   Both diffs mark new files intent-to-add (`git add -N`) so they show up.
-- `c` — comment: diff opens in vim; lines starting `>>` under a diff line become
-  `file:line — note`, batched and pasted into the thread's Claude session.
+- `c` — comment: the diff (the step's, else the thread's) opens in vim; lines starting `>>`
+  under a diff line become `file:line — note` (consecutive `>>` lines join into one note;
+  under a file header they're about the file, before any file they're general), batched and
+  pasted into the thread's Claude session on save. `:cq` cancels. Needs the claude window open.
 - `a` — accept step: `git add -A` + `git commit -v` in a popup (message in git's editor).
 - `o` — vim with a quickfix list of the changed hunks (the step's, else the thread's).
 
@@ -69,6 +72,7 @@ tmux session
 | e         | edit thread title/plan in vim       |
 | Enter     | open / jump to thread's claude      |
 | d / D     | step / thread diff (delta popup)    |
+| c         | comment on the diff → Claude        |
 | a         | accept step (commit)                |
 | o         | open changed hunks in vim           |
 | C         | cycle card colour                   |
@@ -81,8 +85,8 @@ tmux session
 - **M1** — Board: projects, threads, columns, move/reorder, colours, persisted
   state, launch/jump to a `claude` tmux window, vim for new/edit.
 - **M2** — Hook-driven status badges (⚙ working, ⏸ needs you, ✓ stopped), resume after restart.
-- **M3** — Worktree per thread, delta diff popups, `a` accept = commit. ← current
-- **M4** — Vim comments → feedback pasted into Claude.
+- **M3** — Worktree per thread, delta diff popups, `a` accept = commit.
+- **M4** — Vim comments → feedback pasted into Claude. ← current
 - **M5** — `gh pr create`, auto-move to Done on merge, archive cleanup.
 
 ## Prerequisites

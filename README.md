@@ -11,13 +11,8 @@ npm run build
 npm link            # puts `oo` on your PATH
 ```
 
-Add to `~/.tmux.conf` to jump back to the board from any thread:
-
-```
-bind b select-window -t oo-board
-```
-
-Then reload it with `tmux source-file ~/.tmux.conf` (or restart tmux).
+The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread,
+unless you've already bound `b` to something else.
 
 ## Use
 
@@ -38,7 +33,9 @@ Leaving Planned (or opening a thread) gives it its own git worktree and branch
 (`oo/<id>-<title>`), under `~/.local/share/output-orchestrator/worktrees/`; claude runs
 there. Review a step with `d` (diff since the last commit) or `D` (whole thread vs the
 branch it came from), shown through `delta`; `o` opens the changed hunks in vim as a
-quickfix list; `a` accepts the step by committing everything (`git commit -v`). Moving a
+quickfix list; `c` opens the diff in vim for comments — write notes on lines starting `>>`
+under the diff line they're about, and on save they're sent to the thread's claude as
+`file:line — note` feedback (`:cq` cancels); `a` accepts the step by committing everything (`git commit -v`). Moving a
 thread to Done or archiving it removes the worktree (kept if it has uncommitted changes)
 and closes its claude window; the branch stays.
 

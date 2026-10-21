@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout } from 'node:timers/promises';
 import { execa } from 'execa';
 
 export const BOARD_WINDOW = 'oo-board';
@@ -69,6 +70,23 @@ export async function selectExistingBoard(): Promise<boolean> {
 		.some(([name, pane]) => name === BOARD_WINDOW && pane !== process.env.TMUX_PANE);
 	if (other) await execa('tmux', ['select-window', '-t', `:${BOARD_WINDOW}`]);
 	return other;
+}
+
+/** Type `text` into a window as a bracketed paste, then press Enter to submit it. */
+export async function pasteInto(name: string, text: string): Promise<void> {
+	const buffer = `oo-${randomUUID()}`;
+	await execa('tmux', ['load-buffer', '-b', buffer, '-'], { input: text });
+	await execa('tmux', ['paste-buffer', '-p', '-d', '-b', buffer, '-t', `:${name}`]);
+	// An Enter arriving with the paste can be swallowed by it rather than submitting.
+	await setTimeout(200);
+	await execa('tmux', ['send-keys', '-t', `:${name}`, 'Enter']);
+}
+
+/** Bind `prefix b` to jump back to the board, unless the user has bound `b` to something themselves. */
+export async function bindBoardKey(): Promise<void> {
+	const existing = await execa('tmux', ['list-keys', '-T', 'prefix', 'b'], { reject: false });
+	if (existing.exitCode === 0 && !existing.stdout.includes(BOARD_WINDOW)) return;
+	await execa('tmux', ['bind-key', 'b', 'select-window', '-t', BOARD_WINDOW]);
 }
 
 /** Run a command in a tmux popup and resolve once it exits. */
