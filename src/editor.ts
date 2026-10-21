@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { popup, shellQuote } from './tmux.js';
 
-const EDITOR = process.env.EDITOR || 'vim';
+const EDITOR = process.env.VISUAL || process.env.EDITOR || 'vim';
 
 export type ThreadDraft = { project: string; title: string; plan: string };
 

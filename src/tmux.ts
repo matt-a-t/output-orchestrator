@@ -21,6 +21,10 @@ export async function windowNames(): Promise<string[]> {
 	return stdout.split('\n');
 }
 
+export async function killWindow(name: string): Promise<void> {
+	if ((await windowNames()).includes(name)) await execa('tmux', ['kill-window', '-t', `:${name}`]);
+}
+
 /** Jump to the thread's window, creating it (running `command` in `cwd`) if needed. */
 export async function openWindow(
 	name: string,
