@@ -5,6 +5,21 @@ import { popup, shellQuote } from './tmux.js';
 
 const EDITOR = process.env.VISUAL || process.env.EDITOR || 'vim';
 
+/** Edit `text` in $EDITOR in a popup; returns its lines minus those starting with `# `. */
+async function editLines(text: string, title: string): Promise<string[]> {
+	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
+	const file = join(dir, 'edit.md');
+	writeFileSync(file, text);
+	try {
+		await popup(`${EDITOR} ${shellQuote(file)}`, { title });
+		return readFileSync(file, 'utf8')
+			.split('\n')
+			.filter(l => !l.startsWith('# '));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 export type ThreadDraft = { project: string; title: string; plan: string };
 
 /**
@@ -16,10 +31,7 @@ export type ThreadDraft = { project: string; title: string; plan: string };
  * Lines starting with `# ` are ignored. Returns null if the title is left empty.
  */
 export async function editThread(draft: ThreadDraft, projectNames: string[]): Promise<ThreadDraft | null> {
-	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
-	const file = join(dir, 'thread.md');
-	writeFileSync(
-		file,
+	const lines = await editLines(
 		[
 			`project: ${draft.project}`,
 			draft.title,
@@ -31,18 +43,32 @@ export async function editThread(draft: ThreadDraft, projectNames: string[]): Pr
 			'# Leave the title empty to cancel.',
 			'',
 		].join('\n'),
+		' thread ',
 	);
-	try {
-		await popup(`${EDITOR} ${shellQuote(file)}`, { title: ' thread ' });
-		const lines = readFileSync(file, 'utf8')
-			.split('\n')
-			.filter(l => !l.startsWith('# '));
-		const project = lines.shift()?.replace(/^project:\s*/, '').trim() ?? '';
-		const title = lines.shift()?.trim() ?? '';
-		if (!title) return null;
-		const plan = lines.join('\n').trim();
-		return { project, title, plan };
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
+	const project = lines.shift()?.replace(/^project:\s*/, '').trim() ?? '';
+	const title = lines.shift()?.trim() ?? '';
+	if (!title) return null;
+	const plan = lines.join('\n').trim();
+	return { project, title, plan };
+}
+
+export type PrDraft = { title: string; body: string };
+
+/** Edit a PR's title (first line) and body (the rest). Returns null if the title is left empty. */
+export async function editPr(draft: PrDraft, branch: string): Promise<PrDraft | null> {
+	const lines = await editLines(
+		[
+			draft.title,
+			'',
+			draft.body,
+			'',
+			`# Line 1: PR title. Everything after: body. The branch ${branch} is pushed on save.`,
+			'# Leave the title empty to cancel.',
+			'',
+		].join('\n'),
+		' pull request ',
+	);
+	const title = lines.shift()?.trim() ?? '';
+	if (!title) return null;
+	return { title, body: lines.join('\n').trim() };
 }

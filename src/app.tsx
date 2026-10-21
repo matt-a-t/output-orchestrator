@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
-import { editThread } from './editor.js';
-import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
+import { editPr, editThread } from './editor.js';
+import { ensureWorktree, hasWorktree, isDirty, pushBranch, removeWorktree, worktreePath } from './git.js';
+import { createPr, draftPr, findPr, prState } from './github.js';
 import { commitStep, openChanges, reviewDiff, showDiff } from './review.js';
 import {
 	COLORS,
@@ -31,13 +32,24 @@ function resumableSession(thread: Thread): string | undefined {
 	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
 }
 
+const LEGEND: [string, string | undefined, string][] = [
+	['⚙', 'yellow', 'working'],
+	['⏸', 'red', 'needs you'],
+	['✓', 'green', 'stopped'],
+	['○', 'gray', 'open, no activity yet'],
+	['↻', 'gray', 'closed, resumable'],
+];
+
 const HELP =
 	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  C colour  p filter  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
-	const { columns: width } = useWindowSize();
+	const { columns: width, rows: height } = useWindowSize();
 	const [state, setState] = useState<State>(loadState);
+	// For callbacks that outlive a render (the PR poll).
+	const stateRef = useRef(state);
+	stateRef.current = state;
 	const [cursor, setCursor] = useState({ col: 0, row: 0 });
 	const [filter, setFilter] = useState<string | null>(null);
 	const [message, setMessage] = useState('');
@@ -107,7 +119,7 @@ export function App() {
 		return () => clearInterval(timer);
 	}, []);
 
-	const projectByName = (name: string) => state.projects.find(p => p.name === name);
+	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 	const columnThreads = (column: Column) =>
 		state.threads.filter(t => t.column === column && (!filter || t.project === filter));
 
@@ -121,6 +133,16 @@ export function App() {
 			threads: s.threads.map(t => (t.id === id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t)),
 		}));
 
+	/** Move the thread to the bottom of the column. */
+	const setColumn = (id: string, column: Column, patch: Partial<Thread> = {}) =>
+		setState(s => {
+			const thread = s.threads.find(t => t.id === id);
+			if (!thread) return s;
+			const moved = { ...thread, ...patch, column, updatedAt: new Date().toISOString() };
+			// Moving to the end of the array puts it at the bottom of the target column.
+			return { ...s, threads: [...s.threads.filter(t => t.id !== id), moved] };
+		});
+
 	const moveColumn = (thread: Thread, delta: number) => {
 		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 		if (col < 0 || col >= COLUMNS.length) return;
@@ -129,11 +151,10 @@ export function App() {
 			const other = state.threads.find(t => t.column === 'active' && t.project === thread.project);
 			if (other) setMessage(`⚠ ${thread.project} already has an active thread: #${other.id} ${other.title}`);
 		}
-		const moved = { ...thread, column, updatedAt: new Date().toISOString() };
-		// Moving to the end of the array puts it at the bottom of the target column.
-		setState(s => ({ ...s, threads: [...s.threads.filter(t => t.id !== thread.id), moved] }));
+		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
+		setColumn(thread.id, column);
 		setCursor({ col, row: columnThreads(column).length });
-		run(() => syncWorktree(moved), 'updating worktree');
+		run(() => syncWorktree({ ...thread, column }), 'updating worktree');
 	};
 
 	const reorder = (thread: Thread, delta: number) => {
@@ -177,16 +198,70 @@ export function App() {
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
 		if (thread.column === 'planned') return;
 		if (thread.column !== 'done' && thread.column !== 'archived') return void (await createWorktree(project, thread));
-		if (!hasWorktree(thread)) return;
-		if (await isDirty(worktreePath(thread))) {
+		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
 			return setMessage(`⚠ Kept #${thread.id}'s worktree: it has uncommitted changes`);
 		}
 		// claude can't carry on in a deleted directory.
 		await killWindow(threadWindowName(thread.id));
-		await removeWorktree(project.path, thread);
 		await refreshWindows();
+		if (!hasWorktree(thread)) return;
+		await removeWorktree(project.path, thread);
 		setMessage(`Removed #${thread.id}'s worktree (kept branch ${thread.branch})`);
 	};
+
+	/** Push the thread's branch and open its PR (unless it has one already), then move it to PR. */
+	const openPr = async (thread: Thread) => {
+		const project = projectByName(thread.project);
+		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
+		// Reopens it if the thread is coming back from Done.
+		const cwd = await createWorktree(project, thread);
+		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
+		let pr = existing;
+		if (pr) {
+			await pushBranch(cwd, thread.branch);
+		} else {
+			setBusy('claude is writing the PR description');
+			const written = await draftPr(cwd, thread);
+			if (!written) setMessage('⚠ claude couldn\'t write the PR description; starting from the thread');
+			setBusy('opening PR');
+			const draft = await editPr(written ?? { title: thread.title, body: thread.plan }, thread.branch);
+			if (!draft) return setMessage('Cancelled');
+			await pushBranch(cwd, thread.branch);
+			pr = await createPr(cwd, thread, draft.title, draft.body);
+		}
+		setColumn(thread.id, 'pr', { pr });
+		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
+		setMessage(`${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`);
+	};
+
+	// Move threads whose PR has merged to Done (which also cleans up the worktree).
+	useEffect(() => {
+		let polling = false;
+		const poll = async () => {
+			if (polling) return;
+			polling = true;
+			try {
+				for (const thread of stateRef.current.threads) {
+					const project = projectByName(thread.project);
+					if (thread.column !== 'pr' || !thread.pr || !project) continue;
+					// gh failing (offline, logged out) just means trying again next time.
+					if ((await prState(project.path, thread.pr).catch(() => undefined)) !== 'MERGED') continue;
+					setColumn(thread.id, 'done');
+					setMessage(`#${thread.id}'s PR #${thread.pr.number} merged → Done`);
+					await syncWorktree({ ...thread, column: 'done' }).catch(err =>
+						setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`),
+					);
+				}
+			} finally {
+				polling = false;
+			}
+		};
+		poll();
+		const timer = setInterval(poll, 60_000);
+		return () => clearInterval(timer);
+	}, []);
 
 	/** Run fn in the thread's worktree, if it has one. */
 	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>) =>
@@ -263,9 +338,15 @@ export function App() {
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
 		}
 		if (input === 'x') {
-			updateThread(selected.id, { column: 'archived' });
-			setMessage(`Archived #${selected.id}`);
-			return run(() => syncWorktree({ ...selected, column: 'archived' }), 'updating worktree');
+			return run(async () => {
+				// Archived threads are hidden, so don't leave uncommitted work behind in one.
+				if (hasWorktree(selected) && (await isDirty(worktreePath(selected)))) {
+					return setMessage(`⚠ #${selected.id} has uncommitted changes — accept (a) or discard them before archiving`);
+				}
+				updateThread(selected.id, { column: 'archived' });
+				await syncWorktree({ ...selected, column: 'archived' });
+				setMessage(`Archived #${selected.id}`);
+			}, 'archiving');
 		}
 		if (input === 'd' || input === 'D') {
 			const kind = input === 'd' ? 'step' : 'thread';
@@ -308,12 +389,13 @@ export function App() {
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
 	return (
-		<Box flexDirection="column">
+		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
 				<Text bold>output-orchestrator</Text>
 				<Text dimColor>filter: {filter ?? 'all'}</Text>
 			</Box>
-			<Box>
+			{/* Grows to fill the window, which keeps the info below at the bottom. */}
+			<Box flexGrow={1} overflow="hidden">
 				{COLUMNS.map((column, c) => (
 					<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
 						<Text bold color={c === cursor.col ? 'white' : 'gray'}>
@@ -329,12 +411,17 @@ export function App() {
 									? ['↻', 'gray']
 									: [' ', undefined];
 							return (
-								<Text key={t.id} wrap="truncate" inverse={isSelected}>
-									<Text color={badgeColor}>{badge} </Text>
-									<Text color={color}>{t.project}</Text>
-									<Text dimColor> #{t.id} </Text>
-									{t.title}
-								</Text>
+								<Box key={t.id} flexDirection="column">
+									<Text wrap="truncate" inverse={isSelected}>
+										<Text color={badgeColor}>{badge} </Text>
+										<Text color={color}>{t.project}</Text>
+										<Text dimColor> #{t.id}</Text>
+									</Text>
+									<Text wrap="truncate" inverse={isSelected}>
+										{'  '}
+										{t.title}
+									</Text>
+								</Box>
 							);
 						})}
 					</Box>
@@ -346,8 +433,21 @@ export function App() {
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
 					</Text>
 				) : null}
+				{selected?.pr ? (
+					<Text dimColor>
+						PR #{selected.pr.number} {selected.pr.url}
+					</Text>
+				) : null}
 				<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
 					{busy ? `… ${busy}` : message}
+				</Text>
+				<Text>
+					{LEGEND.map(([badge, color, label]) => (
+						<Text key={label}>
+							<Text color={color}>{badge}</Text>
+							<Text dimColor> {label}   </Text>
+						</Text>
+					))}
 				</Text>
 				<Text dimColor>{HELP}</Text>
 			</Box>
