@@ -10,6 +10,12 @@ export function worktreePath(thread: Thread): string {
 	return thread.worktree ?? join(DATA_DIR, 'worktrees', thread.project, thread.id);
 }
 
+/** The top of the git checkout containing `cwd`, or `cwd` itself if it isn't in one. */
+export async function repoRoot(cwd: string): Promise<string> {
+	const result = await execa('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { reject: false });
+	return result.exitCode === 0 ? result.stdout : cwd;
+}
+
 export function hasWorktree(thread: Thread): boolean {
 	return existsSync(worktreePath(thread));
 }

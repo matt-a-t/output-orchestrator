@@ -1,4 +1,6 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join, relative, sep } from 'node:path';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
 import { editPr, editThread } from './editor.js';
@@ -10,6 +12,7 @@ import {
 	isDirty,
 	pushBranch,
 	removeWorktree,
+	repoRoot,
 	worktreePath,
 } from './git.js';
 import { createPr, draftPr, findPr, prState } from './github.js';
@@ -20,6 +23,7 @@ import {
 	COLORS,
 	COLUMN_LABELS,
 	COLUMNS,
+	DATA_DIR,
 	STATE_FILE,
 	loadState,
 	newThreadId,
@@ -55,6 +59,17 @@ const LEGEND: [string, string | undefined, string][] = [
 /** The `n` flow: pick a project, then type the title. */
 type NewThreadPrompt = { step: 'project'; index: number } | { step: 'title'; project: string; title: string };
 
+const PICKER_HELP = 'j/k move  ⏎ import  esc cancel';
+
+
+/** `path` is `dir` or somewhere inside it. */
+function within(path: string, dir: string): boolean {
+	const rel = relative(dir, path);
+	return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep));
+}
+
+const tildify = (path: string) => (within(path, homedir()) ? join('~', relative(homedir(), path)) : path);
+
 const HELP =
 	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  i import session  C colour  p filter  P projects  x archive  q quit';
 
@@ -75,7 +90,7 @@ export function App() {
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
 	// The import list (i), replacing the columns while it's open.
-	const [picker, setPicker] = useState<{ project: string; sessions: Session[]; row: number } | null>(null);
+	const [picker, setPicker] = useState<{ sessions: Session[]; row: number } | null>(null);
 	// Thread whose resume was held back because its session looked busy elsewhere; ⏎ again goes ahead.
 	const resumeAnyway = useRef<string | null>(null);
 
@@ -141,6 +156,9 @@ export function App() {
 	}, []);
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
+	/** The project a directory belongs to: its checkout or one of its threads' worktrees. */
+	const projectForDir = (dir: string) =>
+		state.projects.find(p => within(dir, p.path) || within(dir, join(DATA_DIR, 'worktrees', p.name)));
 	const columnThreads = (column: Column) =>
 		state.threads.filter(t => t.column === column && (!filter || t.project === filter));
 
@@ -459,11 +477,9 @@ export function App() {
 
 	const openPicker = () =>
 		run(async () => {
-			if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
-			const project = projectByName(filter ?? selected?.project ?? state.projects[0]!.name)!;
-			const sessions = await listSessions(project.path);
-			if (sessions.length === 0) return setMessage(`No claude sessions found in ${project.path}`);
-			setPicker({ project: project.name, sessions, row: 0 });
+			const sessions = await listSessions();
+			if (sessions.length === 0) return setMessage('No claude sessions found in ~/.claude/projects');
+			setPicker({ sessions, row: 0 });
 		}, 'looking for sessions');
 
 	const linkedThread = (session: Session) => state.threads.find(t => t.sessionId === session.id);
@@ -479,34 +495,56 @@ export function App() {
 		return true;
 	};
 
-	const importSession = (project: string, session: Session) => {
-		setPicker(null);
-		const linked = linkedThread(session);
-		if (linked) {
-			if (!showThread(linked)) setMessage(`That session is already archived thread #${linked.id}`);
-			return;
-		}
-		const now = new Date().toISOString();
-		const thread: Thread = {
-			id: newThreadId(state),
-			title: session.title,
-			plan: session.title === session.firstPrompt ? '' : session.firstPrompt,
-			project,
-			column: 'planned',
-			sessionId: session.id,
-			transcriptPath: session.transcriptPath,
-			cwd: session.cwd,
-			createdAt: now,
-			updatedAt: now,
-		};
-		setState(s => ({ ...s, threads: [...s.threads, thread] }));
-		setCursor({ col: 0, row: columnThreads('planned').length });
-		setMessage(
-			recentlyActive(session.transcriptPath)
-				? `⚠ Imported #${thread.id}, but its session looks active elsewhere — close it there before ⏎`
-				: `Imported #${thread.id} — ⏎ resumes it`,
-		);
-	};
+	/** Turn a session into a Planned thread, after confirming its project and title in $EDITOR. */
+	const importSession = (session: Session) =>
+		run(async () => {
+			setPicker(null);
+			const linked = linkedThread(session);
+			if (linked) {
+				if (!showThread(linked)) setMessage(`That session is already archived thread #${linked.id}`);
+				return;
+			}
+			if (!existsSync(session.cwd)) return setMessage(`✗ ${session.cwd} no longer exists, so the session can't be resumed`);
+			const known = projectForDir(session.cwd);
+			const root = known ? known.path : await repoRoot(session.cwd);
+			const draft = await editThread(
+				{
+					project: known?.name ?? basename(root),
+					title: session.title,
+					plan: session.title === session.firstPrompt ? '' : session.firstPrompt,
+				},
+				state.projects.map(p => p.name),
+				`Started in ${tildify(session.cwd)}.${known ? '' : ` The project is added with ${tildify(root)} as its path.`}`,
+			);
+			if (!draft) return setMessage('Cancelled');
+			const s = stateRef.current;
+			const added = !s.projects.some(p => p.name === draft.project);
+			const projects = added
+				? [...s.projects, { name: draft.project, abbrev: '', path: root, color: COLORS[s.projects.length % COLORS.length]! }]
+				: s.projects;
+			const now = new Date().toISOString();
+			const thread: Thread = {
+				id: newThreadId(s),
+				...draft,
+				column: 'planned',
+				sessionId: session.id,
+				transcriptPath: session.transcriptPath,
+				cwd: session.cwd,
+				createdAt: now,
+				updatedAt: now,
+			};
+			setState(s => ({ ...s, projects, threads: [...s.threads, thread] }));
+			// Clear a filter that would hide it; it lands at the bottom of Planned.
+			const visible = filter === thread.project ? filter : null;
+			setFilter(visible);
+			setCursor({ col: 0, row: s.threads.filter(t => t.column === 'planned' && (!visible || t.project === visible)).length });
+			const note = added ? ` (added project ${thread.project} → ${tildify(root)})` : '';
+			setMessage(
+				recentlyActive(session.transcriptPath)
+					? `⚠ Imported #${thread.id}${note}, but its session looks active elsewhere — close it there before ⏎`
+					: `Imported #${thread.id}${note} — ⏎ resumes it`,
+			);
+		}, 'importing');
 
 	useInput((input, key) => {
 		if (busy || showProjects) return;
@@ -517,7 +555,7 @@ export function App() {
 			if (input === 'q' || key.escape) return setPicker(null);
 			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: Math.min(last, picker.row + 1) });
 			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: Math.max(0, picker.row - 1) });
-			if (key.return) return importSession(picker.project, picker.sessions[picker.row]!);
+			if (key.return) return importSession(picker.sessions[picker.row]!);
 			return;
 		}
 		if (input === 'q') return exit();
@@ -595,6 +633,15 @@ export function App() {
 	});
 
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
+	// Two lines per session, around the title bar, list header, and the message and help below; scrolled to keep the cursor in view.
+	const pickerRows = Math.max(1, Math.floor((height - 6) / 2));
+	const pickerTop = picker ? Math.max(0, Math.min(picker.row - Math.floor(pickerRows / 2), picker.sessions.length - pickerRows)) : 0;
+	const status = (
+		<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
+			{busy ? `… ${busy}` : message}
+		</Text>
+	);
+	const pickerPage = picker ? picker.sessions.slice(pickerTop, pickerTop + pickerRows) : [];
 
 	return (
 		<Box flexDirection="column" height={height}>
@@ -608,12 +655,17 @@ export function App() {
 			) : picker ? (
 				<Box flexGrow={1} overflow="hidden" flexDirection="column">
 					<Text bold>
-						Import a {picker.project} session <Text dimColor>(j/k move  ⏎ import  esc cancel)</Text>
+						Import a claude session{' '}
+						<Text dimColor>
+							({picker.row + 1}/{picker.sessions.length})
+						</Text>
 					</Text>
 					<Text dimColor>{'─'.repeat(Math.max(0, width - 1))}</Text>
-					{picker.sessions.map((s, r) => {
+					{pickerPage.map((s, i) => {
+						const r = pickerTop + i;
 						const linked = linkedThread(s);
 						const active = recentlyActive(s.transcriptPath);
+						const project = projectForDir(s.cwd);
 						return (
 							<Box key={s.id} flexDirection="column">
 								<Text wrap="truncate" inverse={r === picker.row}>
@@ -622,12 +674,11 @@ export function App() {
 									{active ? <Text color="yellow">● active </Text> : null}
 									{s.title}
 								</Text>
-								{s.title !== s.firstPrompt ? (
-									<Text wrap="truncate" dimColor>
-										{'         '}
-										{s.firstPrompt}
-									</Text>
-								) : null}
+								<Text wrap="truncate">
+									{'         '}
+									{project ? <Text color={project.color}>{project.name}</Text> : <Text dimColor>{tildify(s.cwd)}</Text>}
+									{s.title !== s.firstPrompt ? <Text dimColor> · {s.firstPrompt}</Text> : null}
+								</Text>
 							</Box>
 						);
 					})}
@@ -666,52 +717,57 @@ export function App() {
 					))}
 				</Box>
 			)}
-			<Box marginTop={1} flexDirection="column" display={showProjects ? 'none' : 'flex'}>
-				{selected?.plan ? (
-					<Text dimColor wrap="truncate-end">
-						{selected.plan.split('\n').slice(0, 3).join(' · ')}
-					</Text>
-				) : null}
-				{selected?.pr ? (
-					<Text dimColor>
-						PR #{selected.pr.number} {selected.pr.url}
-					</Text>
-				) : null}
-				{prompt?.step === 'project' ? (
-					<Box flexDirection="column">
-						<Text bold>New thread — project? (j/k move, ⏎ choose, esc cancel)</Text>
-						{state.projects.map((p, i) => (
-							<Text key={p.name} inverse={i === prompt.index}>
-								{'  '}
-								<Text color={p.color}>{p.name}</Text>
-								<Text dimColor> {p.path}</Text>
+			{picker && !showProjects ? (
+				<Box marginTop={1} flexDirection="column">
+					{status}
+					<Text dimColor>{PICKER_HELP}</Text>
+				</Box>
+			) : (
+				<Box marginTop={1} flexDirection="column" display={showProjects ? 'none' : 'flex'}>
+					{selected?.plan ? (
+						<Text dimColor wrap="truncate-end">
+							{selected.plan.split('\n').slice(0, 3).join(' · ')}
+						</Text>
+					) : null}
+					{selected?.pr ? (
+						<Text dimColor>
+							PR #{selected.pr.number} {selected.pr.url}
+						</Text>
+					) : null}
+					{prompt?.step === 'project' ? (
+						<Box flexDirection="column">
+							<Text bold>New thread — project? (j/k move, ⏎ choose, esc cancel)</Text>
+							{state.projects.map((p, i) => (
+								<Text key={p.name} inverse={i === prompt.index}>
+									{'  '}
+									<Text color={p.color}>{p.name}</Text>
+									<Text dimColor> {p.path}</Text>
+								</Text>
+							))}
+						</Box>
+					) : null}
+					{prompt?.step === 'title' ? (
+						<Text>
+							<Text bold>New thread in </Text>
+							<Text color={projectByName(prompt.project)?.color}>{prompt.project}</Text>
+							<Text bold> — title: </Text>
+							{prompt.title}
+							<Text inverse> </Text>
+							<Text dimColor>  (⏎ create, esc cancel)</Text>
+						</Text>
+					) : null}
+					{status}
+					<Text>
+						{LEGEND.map(([badge, color, label]) => (
+							<Text key={label}>
+								<Text color={color}>{badge}</Text>
+								<Text dimColor> {label}   </Text>
 							</Text>
 						))}
-					</Box>
-				) : null}
-				{prompt?.step === 'title' ? (
-					<Text>
-						<Text bold>New thread in </Text>
-						<Text color={projectByName(prompt.project)?.color}>{prompt.project}</Text>
-						<Text bold> — title: </Text>
-						{prompt.title}
-						<Text inverse> </Text>
-						<Text dimColor>  (⏎ create, esc cancel)</Text>
 					</Text>
-				) : null}
-				<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
-					{busy ? `… ${busy}` : message}
-				</Text>
-				<Text>
-					{LEGEND.map(([badge, color, label]) => (
-						<Text key={label}>
-							<Text color={color}>{badge}</Text>
-							<Text dimColor> {label}   </Text>
-						</Text>
-					))}
-				</Text>
-				<Text dimColor>{HELP}</Text>
-			</Box>
+					<Text dimColor>{HELP}</Text>
+				</Box>
+			)}
 		</Box>
 	);
 }

@@ -74,25 +74,35 @@ function summarise(id: string, transcriptPath: string, text: string, lastActivit
 	return { id, transcriptPath, cwd, title: customTitle ?? aiTitle ?? firstPrompt, firstPrompt, lastActivity };
 }
 
-/** The most recent sessions started in `cwd`, newest first. */
-export async function listSessions(cwd: string, limit = 20): Promise<Session[]> {
-	const dir = transcriptDir(cwd);
-	let names: string[];
+/** The most recent sessions from any directory, newest first. */
+export async function listSessions(limit = 30): Promise<Session[]> {
+	let dirs: string[];
 	try {
-		names = (await readdir(dir)).filter(name => name.endsWith('.jsonl'));
+		dirs = await readdir(PROJECTS_DIR);
 	} catch {
 		return [];
 	}
-	const files = await Promise.all(
-		names.map(async name => ({ name, path: join(dir, name), mtime: (await stat(join(dir, name))).mtime })),
-	);
+	const files = (
+		await Promise.all(
+			dirs.map(async dir => {
+				const names = await readdir(join(PROJECTS_DIR, dir)).catch(() => []);
+				return Promise.all(
+					names
+						.filter(name => name.endsWith('.jsonl'))
+						.map(async name => {
+							const path = join(PROJECTS_DIR, dir, name);
+							return { name, path, mtime: (await stat(path)).mtime };
+						}),
+				);
+			}),
+		)
+	).flat();
 	files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 	const sessions: Session[] = [];
 	// Read a few spare in case some turn out empty.
 	for (const file of files.slice(0, limit * 2)) {
 		const session = summarise(file.name.slice(0, -'.jsonl'.length), file.path, await readFile(file.path, 'utf8'), file.mtime);
-		// The encoding isn't reversible, so make sure it's really this directory's.
-		if (session && resolve(session.cwd) === resolve(cwd)) sessions.push(session);
+		if (session) sessions.push(session);
 		if (sessions.length === limit) break;
 	}
 	return sessions;
