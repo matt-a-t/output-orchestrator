@@ -10,12 +10,13 @@ import {
 	isDirty,
 	pushBranch,
 	removeWorktree,
+	stageAll,
 	worktreePath,
 } from './git.js';
 import { createPr, draftPr, findPr, prState } from './github.js';
 import { editText } from './input.js';
 import { ProjectsView } from './projects.js';
-import { commitStep, openChanges, reviewDiff, showDiff } from './review.js';
+import { commitStep, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
@@ -582,11 +583,15 @@ export function App() {
 		}
 		if (input === 'a') {
 			return inWorktree(selected, async cwd => {
-				const result = await commitStep(cwd);
+				if (!(await stageAll(cwd))) return setMessage('Nothing to commit');
+				setBusy('claude is writing the commit message');
+				const message = await draftCommit(cwd, selected);
+				setBusy('waiting for popup');
+				const result = await commitStep(cwd, message);
+				const note = message ? '' : ' (claude couldn\'t write a message)';
 				setMessage(
 					{
-						nothing: 'Nothing to commit',
-						committed: `Committed step on ${selected.branch}`,
+						committed: `Committed step on ${selected.branch}${note}`,
 						aborted: '⚠ Commit aborted (changes left staged)',
 					}[result],
 				);

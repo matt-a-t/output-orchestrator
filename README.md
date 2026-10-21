@@ -38,7 +38,8 @@ there. Review a step with `d` (diff since the last commit) or `D` (whole thread 
 branch it came from), shown through `delta`; `o` opens the changed hunks in vim as a
 quickfix list; `c` opens the diff in vim for comments — write notes on lines starting `>>`
 under the diff line they're about, and on save they're sent to the thread's claude as
-`file:line — note` feedback (`:cq` cancels); `a` accepts the step by committing everything (`git commit -v`).
+`file:line — note` feedback (`:cq` cancels); `a` accepts the step by committing everything (`git commit -v`), with claude drafting the
+message for you to edit (empty it to cancel).
 
 Moving a thread to PR pushes its branch and opens a PR with `gh pr create`. claude drafts the
 title and description from the thread's commits and diff, and they open in vim for you to
