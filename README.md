@@ -11,13 +11,8 @@ npm run build
 npm link            # puts `oo` on your PATH
 ```
 
-Add to `~/.tmux.conf` to jump back to the board from any thread:
-
-```
-bind b select-window -t oo-board
-```
-
-Then reload it with `tmux source-file ~/.tmux.conf` (or restart tmux).
+The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread,
+unless you've already bound `b` to something else.
 
 ## Use
 

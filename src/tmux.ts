@@ -82,6 +82,13 @@ export async function pasteInto(name: string, text: string): Promise<void> {
 	await execa('tmux', ['send-keys', '-t', `:${name}`, 'Enter']);
 }
 
+/** Bind `prefix b` to jump back to the board, unless the user has bound `b` to something themselves. */
+export async function bindBoardKey(): Promise<void> {
+	const existing = await execa('tmux', ['list-keys', '-T', 'prefix', 'b'], { reject: false });
+	if (existing.exitCode === 0 && !existing.stdout.includes(BOARD_WINDOW)) return;
+	await execa('tmux', ['bind-key', 'b', 'select-window', '-t', BOARD_WINDOW]);
+}
+
 /** Run a command in a tmux popup and resolve once it exits. */
 export async function popup(command: string, opts: { cwd?: string; title?: string } = {}): Promise<void> {
 	const channel = `oo-${randomUUID()}`;
