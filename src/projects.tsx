@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
-import { editText } from './input.js';
+import { editText, loop } from './input.js';
 import { COLORS, projectProblem, type Project, type State } from './state.js';
 
 const FIELDS = ['name', 'abbrev', 'color', 'path'] as const;
@@ -82,9 +82,9 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			return setMessage(`Removed ${current.name}`);
 		}
 		if (key.escape || input === 'q' || input === 'P') return onClose();
-		if (input === 'j' || key.downArrow) return setIndex(Math.min(state.projects.length - 1, row + 1));
-		if (input === 'k' || key.upArrow) return setIndex(Math.max(0, row - 1));
-		if (input === 'a') {
+		if (input === 'j' || key.downArrow) return setIndex(loop(row, 1, state.projects.length));
+		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
+		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
 			return setForm({ project: { name: '', abbrev: '', color, path: '' }, field: 0 });
 		}
@@ -112,7 +112,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				{pad('abbrev', abbrevWidth)}
 				{pad('colour', 9)}path
 			</Text>
-			{state.projects.length === 0 ? <Text dimColor>  No projects yet — a to add one</Text> : null}
+			{state.projects.length === 0 ? <Text dimColor>  No projects yet — n to add one</Text> : null}
 			{state.projects.map((p, i) => (
 				<Text key={p.name} wrap="truncate" inverse={!form && i === row}>
 					{'  '}
@@ -151,7 +151,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			<Text dimColor>
 				{form
 					? '↑/↓ or tab field  ←/→ colour  ⏎ save  esc cancel'
-					: 'j/k move  e/⏎ edit  a add  x remove  esc/q back to board'}
+					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>
 	);
