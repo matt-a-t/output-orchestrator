@@ -47,8 +47,8 @@ tmux session
   base). claude runs in the worktree, so `--resume` finds its transcripts. Removed on
   Done/archive (branch kept; its claude window is closed) unless it has uncommitted changes;
   archiving refuses until they're committed or discarded.
-- PRs (M5): moving a card to PR pushes its branch and runs `gh pr create --head <branch>
-  --base <base>`, title/body drafted by `claude -p` from the commits and diff, then edited in vim (falls
+- PRs (M5): moving a card to PR pushes its branch and runs `gh pr create --head <branch>`
+  into the repo's default branch (whatever the thread branched from), title/body drafted by `claude -p` from the commits and diff, then edited in vim (falls
   back to the thread's title/plan). The PR is
   recorded on the thread; if one already exists it's just pushed again. Uncommitted changes
   block the move. The board polls `gh pr view` every minute and moves merged PRs to Done.

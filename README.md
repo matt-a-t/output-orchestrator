@@ -42,7 +42,7 @@ under the diff line they're about, and on save they're sent to the thread's clau
 everything is committed with a message claude drafts, whose subject you edit on the board
 (esc cancels, leaving the changes staged; the drafted body is kept as is).
 
-Moving a thread to PR pushes its branch and opens a PR with `gh pr create`. claude drafts the
+Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with `gh pr create`, whatever branch the thread started from. claude drafts the
 title and description from the thread's commits and diff, and they open in vim for you to
 change first (an empty title cancels). The board checks open PRs every
 minute and moves merged ones to Done. Moving a thread to Done or archiving it removes the

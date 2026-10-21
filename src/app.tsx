@@ -375,7 +375,9 @@ export function App() {
 			await pushBranch(cwd, thread.branch);
 		} else {
 			setBusy('claude is writing the PR description');
-			const written = await draftPr(cwd, thread);
+			// The PR goes into the default branch (see createPr), so describe the changes against that.
+			const target = await defaultBranch(cwd);
+			const written = await draftPr(cwd, thread, target ? `origin/${target}` : (thread.base ?? 'HEAD'));
 			if (!written) setMessage('⚠ claude couldn\'t write the PR description; starting from the thread');
 			setBusy('opening PR');
 			const draft = await editPr(written ?? { title: thread.title, body: thread.plan }, thread.branch);
