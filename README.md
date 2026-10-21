@@ -25,6 +25,10 @@ tmux new -A -s oo oo
 ```
 
 Keys are listed at the bottom of the board. `n` / `e` open `$EDITOR` (default vim)
-in a tmux popup; Enter opens or jumps to the thread's `claude` window.
+in a tmux popup; Enter opens or jumps to the thread's `claude` window, resuming
+the thread's last session if its window was closed (e.g. after a restart).
+
+Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open
+with no activity yet, ↻ no window but resumable.
 
 State lives in `~/.local/share/output-orchestrator/state.json`.

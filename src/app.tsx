@@ -1,4 +1,4 @@
-import { readFileSync, watchFile, unwatchFile } from 'node:fs';
+import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import { editThread } from './editor.js';
@@ -14,7 +14,19 @@ import {
 	type State,
 	type Thread,
 } from './state.js';
-import { openWindow, threadWindowName } from './tmux.js';
+import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
+import { openWindow, threadWindowName, windowNames } from './tmux.js';
+
+const BADGES: Partial<Record<Status, [string, string]>> = {
+	working: ['⚙', 'yellow'],
+	waiting: ['⏸', 'red'],
+	stopped: ['✓', 'green'],
+};
+
+/** Session ID to resume, if the thread has one whose transcript still exists. */
+function resumableSession(thread: Thread): string | undefined {
+	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
+}
 
 const HELP = 'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  C colour  p filter  x archive  q quit';
 
@@ -27,6 +39,13 @@ export function App() {
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState(false);
 	const lastWritten = useRef<string | null>(null);
+	const [statuses, setStatuses] = useState<Record<string, Status>>({});
+	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
+
+	const refreshWindows = () =>
+		windowNames()
+			.then(names => setLiveWindows(new Set(names)))
+			.catch(() => {});
 
 	useEffect(() => {
 		lastWritten.current = saveState(state);
@@ -40,6 +59,48 @@ export function App() {
 			} catch {}
 		});
 		return () => unwatchFile(STATE_FILE);
+	}, []);
+
+	// Fold hook events (see status.ts) into per-thread status and the latest session ID.
+	useEffect(() => {
+		const reader = new EventReader();
+		const poll = () => {
+			const events = reader.read();
+			if (events.length === 0) return;
+			setStatuses(prev => {
+				const next = { ...prev };
+				for (const e of events) {
+					const status = nextStatus(next[e.thread], e);
+					if (status) next[e.thread] = status;
+				}
+				return next;
+			});
+			const sessions = new Map<string, { sessionId: string; transcriptPath?: string }>();
+			for (const e of events) {
+				if (e.event === 'SessionStart' && e.session) {
+					sessions.set(e.thread, { sessionId: e.session, transcriptPath: e.transcript });
+				}
+			}
+			if (sessions.size === 0) return;
+			setState(s => {
+				const changed = s.threads.some(t => {
+					const session = sessions.get(t.id);
+					return session && (session.sessionId !== t.sessionId || session.transcriptPath !== t.transcriptPath);
+				});
+				if (!changed) return s;
+				return { ...s, threads: s.threads.map(t => ({ ...t, ...sessions.get(t.id) })) };
+			});
+		};
+		poll();
+		watchFile(EVENTS_FILE, { interval: 500 }, poll);
+		return () => unwatchFile(EVENTS_FILE, poll);
+	}, []);
+
+	// Badges only mean something while the thread's window is open.
+	useEffect(() => {
+		refreshWindows();
+		const timer = setInterval(refreshWindows, 2000);
+		return () => clearInterval(timer);
 	}, []);
 
 	const projectByName = (name: string) => state.projects.find(p => p.name === name);
@@ -126,8 +187,12 @@ export function App() {
 		run(async () => {
 			const project = projectByName(thread.project);
 			if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-			const result = await openWindow(threadWindowName(thread.id), project.path, ['claude']);
-			setMessage(result === 'created' ? `Started claude for #${thread.id}` : '');
+			const sessionId = resumableSession(thread);
+			const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
+			const result = await openWindow(threadWindowName(thread.id), project.path, command, { OO_THREAD_ID: thread.id });
+			await refreshWindows();
+			if (result === 'selected') setMessage('');
+			else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
 		});
 
 	useInput((input, key) => {
@@ -179,8 +244,14 @@ export function App() {
 						{columnThreads(column).map((t, r) => {
 							const isSelected = c === cursor.col && r === row;
 							const color = t.color ?? projectByName(t.project)?.color;
+							const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
+								? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
+								: resumableSession(t)
+									? ['↻', 'gray']
+									: [' ', undefined];
 							return (
 								<Text key={t.id} wrap="truncate" inverse={isSelected}>
+									<Text color={badgeColor}>{badge} </Text>
 									<Text color={color}>{t.project}</Text>
 									<Text dimColor> #{t.id} </Text>
 									{t.title}

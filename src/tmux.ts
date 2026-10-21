@@ -15,18 +15,24 @@ export async function renameCurrentWindow(name: string): Promise<void> {
 	await execa('tmux', ['rename-window', name]);
 }
 
-async function windowNames(): Promise<string[]> {
+export async function windowNames(): Promise<string[]> {
 	const { stdout } = await execa('tmux', ['list-windows', '-F', '#{window_name}']);
 	return stdout.split('\n');
 }
 
 /** Jump to the thread's window, creating it (running `command` in `cwd`) if needed. */
-export async function openWindow(name: string, cwd: string, command: string[]): Promise<'created' | 'selected'> {
+export async function openWindow(
+	name: string,
+	cwd: string,
+	command: string[],
+	env: Record<string, string> = {},
+): Promise<'created' | 'selected'> {
 	if ((await windowNames()).includes(name)) {
 		await execa('tmux', ['select-window', '-t', `:${name}`]);
 		return 'selected';
 	}
-	await execa('tmux', ['new-window', '-n', name, '-c', cwd, ...command]);
+	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+	await execa('tmux', ['new-window', '-n', name, '-c', cwd, ...envArgs, ...command]);
 	return 'created';
 }
 

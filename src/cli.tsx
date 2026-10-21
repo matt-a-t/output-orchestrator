@@ -4,6 +4,7 @@ import { basename, resolve } from 'node:path';
 import { render } from 'ink';
 import { App } from './app.js';
 import { COLORS, loadState, saveState } from './state.js';
+import { writeClaudeSettings } from './status.js';
 import { BOARD_WINDOW, insideTmux, renameCurrentWindow } from './tmux.js';
 
 const USAGE = `usage:
@@ -59,5 +60,6 @@ if (cmd === 'project') {
 		process.exit(1);
 	}
 	await renameCurrentWindow(BOARD_WINDOW);
+	writeClaudeSettings();
 	render(<App />);
 }
