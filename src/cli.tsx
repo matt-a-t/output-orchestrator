@@ -4,7 +4,7 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
 import { writeClaudeSettings } from './status.js';
-import { BOARD_WINDOW, attachBoard, bindBoardKey, insideTmux, renameCurrentWindow, selectExistingBoard } from './tmux.js';
+import { BOARD_WINDOW, attachBoard, bindBoardKeys, insideTmux, renameCurrentWindow, selectExistingBoard } from './tmux.js';
 
 const USAGE = `usage:
   oo                          open the board (starts/attaches the "oo" tmux session if needed)
@@ -56,7 +56,7 @@ if (cmd === 'project') {
 	}
 	if (await selectExistingBoard()) process.exit(0);
 	await renameCurrentWindow(BOARD_WINDOW);
-	await bindBoardKey();
+	await bindBoardKeys();
 	writeClaudeSettings();
 	render(<App />);
 }

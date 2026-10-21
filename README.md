@@ -11,8 +11,11 @@ npm run build
 npm link            # puts `oo` on your PATH
 ```
 
-The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread,
-unless you've already bound `b` to something else.
+The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread, and
+`prefix Ctrl-b` too for when you're still holding ctrl, plus `Alt-b` with no prefix in thread
+windows (where it no longer moves back a word), unless you've already bound those keys
+to something else. `prefix Ctrl-b` normally sends a literal `Ctrl-b` (send-prefix), which this
+replaces.
 
 ## Use
 

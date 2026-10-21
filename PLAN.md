@@ -31,8 +31,8 @@ tmux session
 
 - Board must run inside tmux (simplest; may relax later).
 - Launch: `tmux new-window -n oo-<id> -c <dir> claude`.
-- Return to board: `prefix b`, bound by the board at start (`bind b select-window -t oo-board`)
-  unless `b` is already bound to something else.
+- Return to board: `prefix b`, `prefix C-b` or `M-b` (thread windows only), bound by the board at start (`bind b select-window -t oo-board`)
+  unless the key is already bound to something else (C-b's default send-prefix is replaced).
 - Editors / diffs open in `tmux display-popup -E`, synchronised with `tmux wait-for`.
 - Send text into a session: `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + Enter.
 - Status (M2): Claude Code hooks (`SessionStart`, `UserPromptSubmit`, `PostToolUse`,
