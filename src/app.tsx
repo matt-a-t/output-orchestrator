@@ -68,6 +68,15 @@ function within(path: string, dir: string): boolean {
 	return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep));
 }
 
+/** How far a movement key moves; a held-down key can arrive as one "jjj" chunk. */
+function steps(input: string, back: string, forward: string, backArrow: boolean, forwardArrow: boolean): number {
+	if (backArrow) return -1;
+	if (forwardArrow) return 1;
+	if (input && [...input].every(c => c === back)) return -input.length;
+	if (input && [...input].every(c => c === forward)) return input.length;
+	return 0;
+}
+
 const tildify = (path: string) => (within(path, homedir()) ? join('~', relative(homedir(), path)) : path);
 
 const HELP =
@@ -546,23 +555,32 @@ export function App() {
 			);
 		}, 'importing');
 
+	// Functional updates so keys pressed faster than a render all count.
+	const moveCursor = (across: number, down: number) =>
+		setCursor(c => {
+			const col = Math.max(0, Math.min(COLUMNS.length - 1, c.col + across));
+			const lastRow = Math.max(0, columnThreads(COLUMNS[col]!).length - 1);
+			return { col, row: Math.max(0, Math.min(lastRow, Math.min(c.row, lastRow) + down)) };
+		});
+	const movePicker = (down: number) =>
+		setPicker(p => p && { ...p, row: Math.max(0, Math.min(p.sessions.length - 1, p.row + down)) });
+
 	useInput((input, key) => {
 		if (busy || showProjects) return;
 		setMessage('');
 		if (prompt) return promptInput(prompt, input, key);
 		if (picker) {
-			const last = picker.sessions.length - 1;
 			if (input === 'q' || key.escape) return setPicker(null);
-			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: Math.min(last, picker.row + 1) });
-			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: Math.max(0, picker.row - 1) });
+			const step = steps(input, 'k', 'j', key.upArrow, key.downArrow);
+			if (step) return movePicker(step);
 			if (key.return) return importSession(picker.sessions[picker.row]!);
 			return;
 		}
 		if (input === 'q') return exit();
-		if (input === 'h' || key.leftArrow) return setCursor({ col: Math.max(0, cursor.col - 1), row });
-		if (input === 'l' || key.rightArrow) return setCursor({ col: Math.min(COLUMNS.length - 1, cursor.col + 1), row });
-		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: Math.min(colThreads.length - 1, row + 1) });
-		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: Math.max(0, row - 1) });
+		const across = steps(input, 'h', 'l', key.leftArrow, key.rightArrow);
+		if (across) return moveCursor(across, 0);
+		const down = steps(input, 'k', 'j', key.upArrow, key.downArrow);
+		if (down) return moveCursor(0, down);
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
 		if (input === 'i') return openPicker();
