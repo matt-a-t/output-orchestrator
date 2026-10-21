@@ -4,15 +4,37 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { diffArgs, head, hunkLocations, stageAll, type DiffKind } from './git.js';
 import type { Thread } from './state.js';
-import { popup, shellQuote } from './tmux.js';
+import { confirmPopup, popup, shellQuote } from './tmux.js';
 
-/** Show a diff of the worktree through delta in a popup. Returns false if it's empty. */
-export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Promise<boolean> {
+// less quits with the first character of the extra string as its status: 'A' is 65.
+const APPROVE_KEYS = '#command\na quit A\n';
+const APPROVE_STATUS = 65;
+// What delta's --navigate labels files and hunks with.
+const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:)';
+
+/**
+ * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
+ * can be approved from there with `a` (and a confirm). delta's paging would swallow less's exit
+ * status, so it's piped into less here instead.
+ */
+export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Promise<'empty' | 'closed' | 'approved'> {
 	const args = await diffArgs(cwd, kind, thread);
-	if (!args) return false;
-	const title = kind === 'step' ? ' step diff ' : ` thread diff vs ${thread.base ?? 'HEAD'} `;
-	await popup(`git ${args.map(shellQuote).join(' ')} | delta --paging=always`, { cwd, title });
-	return true;
+	if (!args) return 'empty';
+	const approvable = kind === 'step';
+	const less = ['less', '-R', `--pattern=${NAVIGATE_PATTERN}`];
+	if (approvable) {
+		const keys = join(tmpdir(), 'oo-approve.lesskey');
+		writeFileSync(keys, APPROVE_KEYS);
+		less.push(`--lesskey-src=${keys}`);
+	}
+	const label = kind === 'step' ? 'step diff' : `thread diff vs ${thread.base ?? 'HEAD'}`;
+	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}q close `;
+	const command = `git ${args.map(shellQuote).join(' ')} | delta --paging=never --navigate | ${less.map(shellQuote).join(' ')}`;
+	for (;;) {
+		if ((await popup(command, { cwd, title })) !== APPROVE_STATUS) return 'closed';
+		// Anything but y goes back to the diff.
+		if (await confirmPopup(`Approve #${thread.id}'s step?`)) return 'approved';
+	}
 }
 
 /**
@@ -126,11 +148,11 @@ function formatComments(comments: Comment[]): string {
 	return ['Review comments on your changes:', '', ...items].join('\n');
 }
 
-/** Accept the step: stage everything and commit, with git opening the editor for the message. */
+/** Approve the step: stage everything and commit, with git opening the editor for the message. */
 export async function commitStep(cwd: string): Promise<'nothing' | 'committed' | 'aborted'> {
 	if (!(await stageAll(cwd))) return 'nothing';
 	const before = await head(cwd);
 	// Keep the popup open on failure (e.g. a hook rejected it) so the error can be read.
-	await popup(`git commit -v || { echo; echo 'Press Enter to close'; read -r _; }`, { cwd, title: ' accept step ' });
+	await popup(`git commit -v || { echo; echo 'Press Enter to close'; read -r _; }`, { cwd, title: ' approve step ' });
 	return (await head(cwd)) === before ? 'aborted' : 'committed';
 }

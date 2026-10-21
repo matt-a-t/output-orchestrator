@@ -14,7 +14,7 @@ import {
 	worktreePath,
 } from './git.js';
 import { createPr, draftPr, findPr, prState } from './github.js';
-import { editText } from './input.js';
+import { editText, loop } from './input.js';
 import { ProjectsView } from './projects.js';
 import { commitStep, openChanges, reviewDiff, showDiff } from './review.js';
 import {
@@ -51,13 +51,14 @@ const LEGEND: [string, string | undefined, string][] = [
 	['✓', 'green', 'stopped'],
 	['○', 'gray', 'open, no activity yet'],
 	['↻', 'gray', 'closed, resumable'],
+	['±', 'magenta', 'changes to review'],
 ];
 
 /** The `n` flow: pick a project, then type the title. */
 type NewThreadPrompt = { step: 'project'; index: number } | { step: 'title'; project: string; title: string };
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  i import session  C colour  p filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a approve  o open changes  i import session  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -75,10 +76,16 @@ export function App() {
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
+	// Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved.
+	const [unreviewed, setUnreviewed] = useState<Set<string>>(new Set());
 	// The import list (i), replacing the columns while it's open.
 	const [picker, setPicker] = useState<{ project: string; sessions: Session[]; row: number } | null>(null);
-	// Thread whose resume was held back because its session looked busy elsewhere; ⏎ again goes ahead.
-	const resumeAnyway = useRef<string | null>(null);
+	// An action waiting on y (any other key cancels); its question is shown as the message.
+	const [confirm, setConfirm] = useState<(() => void) | null>(null);
+	const ask = (question: string, action: () => void) => {
+		setConfirm(() => action);
+		setMessage(`${question} y to confirm`);
+	};
 
 	const refreshWindows = () =>
 		windowNames()
@@ -142,6 +149,37 @@ export function App() {
 	}, []);
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
+
+	/** Where the thread's work happens, if it has anywhere yet. */
+	const threadDir = (thread: Thread): string | undefined => {
+		if (thread.cwd) return thread.cwd;
+		if (thread.column === 'uitest') return projectByName(thread.project)?.path;
+		if (hasWorktree(thread)) return worktreePath(thread);
+	};
+
+	useEffect(() => {
+		let checking = false;
+		const check = async () => {
+			if (checking) return;
+			checking = true;
+			try {
+				const dirty = new Set<string>();
+				const threads = stateRef.current.threads.filter(t => t.column !== 'archived');
+				await Promise.all(
+					threads.map(async t => {
+						const dir = threadDir(t);
+						if (dir && (await isDirty(dir).catch(() => false))) dirty.add(t.id);
+					}),
+				);
+				setUnreviewed(prev => (prev.size === dirty.size && [...dirty].every(id => prev.has(id)) ? prev : dirty));
+			} finally {
+				checking = false;
+			}
+		};
+		check();
+		const timer = setInterval(check, 3000);
+		return () => clearInterval(timer);
+	}, []);
 	const columnThreads = (column: Column) =>
 		state.threads.filter(t => t.column === column && (!filter || t.project === filter));
 
@@ -265,7 +303,7 @@ export function App() {
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
 		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
-			return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+			return setMessage(`⚠ #${thread.id} has uncommitted changes — approve (a) or discard them first`);
 		}
 		// Untracked files there are yours and get in the way only if the branch has them too, which checkout catches.
 		if (await isDirty(project.path, { untracked: false })) {
@@ -294,7 +332,7 @@ export function App() {
 		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		// Including untracked files: anything new there is the thread's work.
 		if (await isDirty(project.path)) {
-			return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+			return setMessage(`⚠ #${thread.id} has uncommitted changes — approve (a) or discard them first`);
 		}
 		const restoreRef = thread.restoreRef ?? thread.base;
 		if (!restoreRef) return setMessage(`✗ Don't know what ${project.path} was on before #${thread.id}`);
@@ -330,7 +368,7 @@ export function App() {
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
 		// Reopens it if the thread is coming back from Done.
 		const cwd = thread.cwd ?? (await createWorktree(project, thread));
-		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — accept (a) or discard them first`);
+		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — approve (a) or discard them first`);
 		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
 		let pr = existing;
 		if (pr) {
@@ -380,15 +418,22 @@ export function App() {
 	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one. */
 	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>) =>
 		run(async () => {
-			if (thread.cwd) return await fn(thread.cwd);
-			if (thread.column === 'uitest') {
-				const project = projectByName(thread.project);
-				if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-				return fn(project.path);
-			}
-			if (!hasWorktree(thread)) return setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
-			await fn(worktreePath(thread));
+			const dir = threadDir(thread);
+			if (dir) return await fn(dir);
+			if (thread.column === 'uitest') return setMessage(`✗ Unknown project "${thread.project}"`);
+			setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
 		});
+
+	const approveStep = async (cwd: string, thread: Thread) => {
+		const result = await commitStep(cwd);
+		setMessage(
+			{
+				nothing: 'Nothing to commit',
+				committed: `Committed step on ${thread.branch}`,
+				aborted: '⚠ Commit aborted (changes left staged)',
+			}[result],
+		);
+	};
 
 	const newThread = () => {
 		if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
@@ -437,7 +482,7 @@ export function App() {
 		});
 
 	/** Jump to the thread's claude window, starting claude in `cwd` (resuming its session if it can) if needed. */
-	const launchClaude = async (thread: Thread, cwd: string) => {
+	const launchClaude = async (thread: Thread, cwd: string, resumeAnyway = false) => {
 		// No branch yet means the worktree was just created, so there's nothing to resume in it.
 		const sessionId = thread.branch || thread.cwd ? resumableSession(thread) : undefined;
 		const window = threadWindowName(thread.id);
@@ -448,12 +493,12 @@ export function App() {
 			!liveWindows.has(window) &&
 			statuses[thread.id] === undefined &&
 			recentlyActive(thread.transcriptPath!) &&
-			resumeAnyway.current !== thread.id
+			!resumeAnyway
 		) {
-			resumeAnyway.current = thread.id;
-			return setMessage(`⚠ #${thread.id}'s session was active in the last few minutes — close it elsewhere, then ⏎ (or ⏎ again to resume anyway)`);
+			return ask(`⚠ #${thread.id}'s session was active in the last few minutes — close it elsewhere first, or resume anyway?`, () =>
+				run(() => launchClaude(thread, cwd, true)),
+			);
 		}
-		resumeAnyway.current = null;
 		const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
 		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id });
 		await refreshWindows();
@@ -523,20 +568,30 @@ export function App() {
 	useInput((input, key) => {
 		if (busy || showProjects) return;
 		setMessage('');
+		if (confirm) {
+			setConfirm(null);
+			return input === 'y' ? confirm() : setMessage('Cancelled');
+		}
 		if (prompt) return promptInput(prompt, input, key);
 		if (picker) {
-			const last = picker.sessions.length - 1;
-			if (input === 'q' || key.escape) return setPicker(null);
-			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: Math.min(last, picker.row + 1) });
-			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: Math.max(0, picker.row - 1) });
+			const count = picker.sessions.length;
+			if (input === 'q' || input === 'i' || key.escape) return setPicker(null);
+			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: loop(picker.row, 1, count) });
+			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: loop(picker.row, -1, count) });
 			if (key.return) return importSession(picker.project, picker.sessions[picker.row]!);
 			return;
 		}
-		if (input === 'q') return exit();
-		if (input === 'h' || key.leftArrow) return setCursor({ col: Math.max(0, cursor.col - 1), row });
-		if (input === 'l' || key.rightArrow) return setCursor({ col: Math.min(COLUMNS.length - 1, cursor.col + 1), row });
-		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: Math.min(colThreads.length - 1, row + 1) });
-		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: Math.max(0, row - 1) });
+		if (input === 'q') return ask('Quit?', exit);
+		if (key.escape && filter) {
+			setFilter(null);
+			// Stay on the same thread now that the rest of its column is back.
+			if (selected) setCursor({ col: cursor.col, row: state.threads.filter(t => t.column === selected.column).indexOf(selected) });
+			return;
+		}
+		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, COLUMNS.length), row });
+		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, COLUMNS.length), row });
+		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
+		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
 		if (input === 'i') return openPicker();
@@ -561,17 +616,23 @@ export function App() {
 				if (selected.column === 'uitest') return setMessage(`⚠ Move #${selected.id} out of UI testing before archiving`);
 				// Archived threads are hidden, so don't leave uncommitted work behind in one.
 				if (hasWorktree(selected) && (await isDirty(worktreePath(selected)))) {
-					return setMessage(`⚠ #${selected.id} has uncommitted changes — accept (a) or discard them before archiving`);
+					return setMessage(`⚠ #${selected.id} has uncommitted changes — approve (a) or discard them before archiving`);
 				}
-				updateThread(selected.id, { column: 'archived' });
-				await syncWorktree({ ...selected, column: 'archived' });
-				setMessage(`Archived #${selected.id}`);
-			}, 'archiving');
+				ask(`Archive #${selected.id}?`, () =>
+					run(async () => {
+						updateThread(selected.id, { column: 'archived' });
+						await syncWorktree({ ...selected, column: 'archived' });
+						setMessage(`Archived #${selected.id}`);
+					}, 'archiving'),
+				);
+			}, 'checking for uncommitted changes');
 		}
 		if (input === 'd' || input === 'D') {
 			const kind = input === 'd' ? 'step' : 'thread';
 			return inWorktree(selected, async cwd => {
-				if (!(await showDiff(cwd, kind, selected))) setMessage(`No ${kind} changes`);
+				const result = await showDiff(cwd, kind, selected);
+				if (result === 'empty') setMessage(`No ${kind} changes`);
+				if (result === 'approved') await approveStep(cwd, selected);
 			});
 		}
 		if (input === 'c') {
@@ -593,16 +654,7 @@ export function App() {
 			});
 		}
 		if (input === 'a') {
-			return inWorktree(selected, async cwd => {
-				const result = await commitStep(cwd);
-				setMessage(
-					{
-						nothing: 'Nothing to commit',
-						committed: `Committed step on ${selected.branch}`,
-						aborted: '⚠ Commit aborted (changes left staged)',
-					}[result],
-				);
-			});
+			return ask(`Approve #${selected.id}'s step?`, () => inWorktree(selected, cwd => approveStep(cwd, selected)));
 		}
 	});
 
@@ -620,7 +672,7 @@ export function App() {
 			) : picker ? (
 				<Box flexGrow={1} overflow="hidden" flexDirection="column">
 					<Text bold>
-						Import a {picker.project} session <Text dimColor>(j/k move  ⏎ import  esc cancel)</Text>
+						Import a {picker.project} session <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel)</Text>
 					</Text>
 					<Text dimColor>{'─'.repeat(Math.max(0, width - 1))}</Text>
 					{picker.sessions.map((s, r) => {
@@ -666,6 +718,11 @@ export function App() {
 											<Text color={badgeColor}>{badge} </Text>
 											<Text color={color}>{t.project}</Text>
 											<Text dimColor> #{t.id}</Text>
+											{unreviewed.has(t.id) ? (
+												<Text color="magenta" bold>
+													{' '}±
+												</Text>
+											) : null}
 										</Text>
 										<Text wrap="truncate" inverse={isSelected}>
 											{'  '}
@@ -711,7 +768,7 @@ export function App() {
 						<Text dimColor>  (⏎ create, esc cancel)</Text>
 					</Text>
 				) : null}
-				<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
+				<Text color={message.startsWith('✗') ? 'red' : confirm || message.startsWith('⚠') ? 'yellow' : 'green'}>
 					{busy ? `… ${busy}` : message}
 				</Text>
 				<Text>

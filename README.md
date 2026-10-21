@@ -35,10 +35,13 @@ the thread's last session if its window was closed (e.g. after a restart).
 Leaving Planned (or opening a thread) gives it its own git worktree and branch
 (`oo/<id>-<title>`), under `~/.local/share/output-orchestrator/worktrees/`; claude runs
 there. Review a step with `d` (diff since the last commit) or `D` (whole thread vs the
-branch it came from), shown through `delta`; `o` opens the changed hunks in vim as a
+branch it came from), shown through `delta` in `less` — `n`/`N` jump between files and hunks,
+and in a step diff `a` approves it (after a y/n confirm); `o` opens the changed hunks in vim as a
 quickfix list; `c` opens the diff in vim for comments — write notes on lines starting `>>`
 under the diff line they're about, and on save they're sent to the thread's claude as
-`file:line — note` feedback (`:cq` cancels); `a` accepts the step by committing everything (`git commit -v`).
+`file:line — note` feedback (`:cq` cancels); `a` approves the step by committing everything (`git commit -v`).
+Confirmations (quit, archive, approve, resuming a busy session) all take `y`; any other key
+cancels.
 
 Moving a thread to PR pushes its branch and opens a PR with `gh pr create`. claude drafts the
 title and description from the thread's commits and diff, and they open in vim for you to
@@ -50,12 +53,12 @@ uncommitted changes; archiving refuses until they're committed or discarded.
 `i` imports a claude session you started outside the board (e.g. plain `claude` in the
 project's directory): pick one from the project's recent sessions and it becomes a Planned
 thread that Enter resumes, with badges from then on. Imported threads keep running in the
-directory the session started in rather than a worktree, so diffs, comments and accept work
+directory the session started in rather than a worktree, so diffs, comments and approve work
 there but they can't open a PR. If the session looks like it's still open somewhere else, Enter
-warns first; press it again to resume anyway.
+warns first; `y` resumes anyway.
 
 Card badges (with a legend at the bottom of the board): ⚙ working, ⏸ needs you
 (permission prompt), ✓ stopped, ○ window open with no activity yet, ↻ no window but
-resumable. Each card shows the project and thread number, with the title beneath.
+resumable, ± uncommitted changes waiting to be reviewed and approved. Each card shows the project and thread number, with the title beneath.
 
 State lives in `~/.local/share/output-orchestrator/state.json`.
