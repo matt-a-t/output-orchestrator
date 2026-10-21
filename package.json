@@ -1,0 +1,29 @@
+{
+  "name": "output-orchestrator",
+  "version": "0.1.0",
+  "description": "Kanban TUI for orchestrating Claude Code sessions in tmux",
+  "type": "module",
+  "bin": {
+    "oo": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "execa": "^10.2.0",
+    "ink": "^8.0.0",
+    "react": "^19.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

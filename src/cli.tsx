@@ -1,0 +1,63 @@
+#!/usr/bin/env node
+import { existsSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
+import { render } from 'ink';
+import { App } from './app.js';
+import { COLORS, loadState, saveState } from './state.js';
+import { BOARD_WINDOW, insideTmux, renameCurrentWindow } from './tmux.js';
+
+const USAGE = `usage:
+  oo                          open the board (inside tmux)
+  oo project add <path> [name]
+  oo project list
+  oo project rm <name>`;
+
+function projectCommand(args: string[]): number {
+	const state = loadState();
+	const [sub, ...rest] = args;
+	if (sub === 'add' && rest[0]) {
+		const path = resolve(rest[0]);
+		if (!existsSync(path)) {
+			console.error(`No such directory: ${path}`);
+			return 1;
+		}
+		const name = rest[1] ?? basename(path);
+		if (state.projects.some(p => p.name === name)) {
+			console.error(`Project "${name}" already exists`);
+			return 1;
+		}
+		const color = COLORS[state.projects.length % COLORS.length]!;
+		saveState({ ...state, projects: [...state.projects, { name, path, color }] });
+		console.log(`Added ${name} → ${path}`);
+		return 0;
+	}
+	if (sub === 'list') {
+		for (const p of state.projects) console.log(`${p.name}\t${p.path}`);
+		return 0;
+	}
+	if (sub === 'rm' && rest[0]) {
+		if (state.threads.some(t => t.project === rest[0] && t.column !== 'archived')) {
+			console.error(`Project "${rest[0]}" still has unarchived threads`);
+			return 1;
+		}
+		saveState({ ...state, projects: state.projects.filter(p => p.name !== rest[0]) });
+		return 0;
+	}
+	console.error(USAGE);
+	return 1;
+}
+
+const [cmd, ...args] = process.argv.slice(2);
+if (cmd === 'project') {
+	process.exit(projectCommand(args));
+} else if (cmd) {
+	console.error(USAGE);
+	process.exit(1);
+} else {
+	if (!insideTmux()) {
+		console.error('oo must run inside tmux. Try:  tmux new -A -s oo oo');
+		process.exit(1);
+	}
+	await renameCurrentWindow(BOARD_WINDOW);
+	render(<App />);
+}
