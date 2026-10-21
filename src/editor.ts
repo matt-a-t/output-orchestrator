@@ -30,7 +30,7 @@ export type ThreadDraft = { project: string; title: string; plan: string };
  *   <plan...>
  * Lines starting with `# ` are ignored. Returns null if the title is left empty.
  */
-export async function editThread(draft: ThreadDraft, projectNames: string[]): Promise<ThreadDraft | null> {
+export async function editThread(draft: ThreadDraft, projectNames: string[], note?: string): Promise<ThreadDraft | null> {
 	const lines = await editLines(
 		[
 			`project: ${draft.project}`,
@@ -40,6 +40,7 @@ export async function editThread(draft: ThreadDraft, projectNames: string[]): Pr
 			'',
 			'# Line 1: project. Line 2: title. Everything after: plan.',
 			`# Projects: ${projectNames.join(', ')}`,
+			...(note ? [`# ${note}`] : []),
 			'# Leave the title empty to cancel.',
 			'',
 		].join('\n'),

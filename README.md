@@ -11,8 +11,11 @@ npm run build
 npm link            # puts `oo` on your PATH
 ```
 
-The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread,
-unless you've already bound `b` to something else.
+The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread, and
+`prefix Ctrl-b` too for when you're still holding ctrl, plus `Alt-b` with no prefix in thread
+windows (where it no longer moves back a word), unless you've already bound those keys
+to something else. `prefix Ctrl-b` normally sends a literal `Ctrl-b` (send-prefix), which this
+replaces.
 
 ## Use
 
@@ -25,7 +28,10 @@ oo
 inside tmux, it opens the board in the current window, or jumps to it if it's already
 running.
 
-Keys are listed at the bottom of the board. `n` / `e` open `$EDITOR` (default vim)
+Keys are listed at the bottom of the board. The mouse works too: click a card to select
+it, double-click to open it, scroll to move up and down (the import list works the same way).
+For that the board turns on tmux's `mouse` option for its session, so in claude windows
+dragging selects into tmux's buffer; hold Shift while dragging for your terminal's own selection. `n` / `e` open `$EDITOR` (default vim)
 in a tmux popup; Enter opens or jumps to the thread's `claude` window, resuming
 the thread's last session if its window was closed (e.g. after a restart).
 
@@ -45,8 +51,11 @@ worktree and closes its claude window; the branch stays. Done keeps a worktree w
 uncommitted changes; archiving refuses until they're committed or discarded.
 
 `i` imports a claude session you started outside the board (e.g. plain `claude` in the
-project's directory): pick one from the project's recent sessions and it becomes a Planned
-thread that Enter resumes, with badges from then on. Imported threads keep running in the
+project's directory): pick one from your recent sessions in any directory (j/k, Enter) and
+confirm its project and title in vim. Both are filled in for you: the project whose directory
+(or worktree) the session ran in, and claude's own title for it. Giving a project name the board
+doesn't know adds the session's repo as that project. It becomes a Planned thread that Enter
+resumes, with badges from then on. Imported threads keep running in the
 directory the session started in rather than a worktree, so diffs, comments and accept work
 there but they can't open a PR. If the session looks like it's still open somewhere else, Enter
 warns first; press it again to resume anyway.

@@ -82,11 +82,29 @@ export async function pasteInto(name: string, text: string): Promise<void> {
 	await execa('tmux', ['send-keys', '-t', `:${name}`, 'Enter']);
 }
 
-/** Bind `prefix b` to jump back to the board, unless the user has bound `b` to something themselves. */
-export async function bindBoardKey(): Promise<void> {
-	const existing = await execa('tmux', ['list-keys', '-T', 'prefix', 'b'], { reject: false });
-	if (existing.exitCode === 0 && !existing.stdout.includes(BOARD_WINDOW)) return;
-	await execa('tmux', ['bind-key', 'b', 'select-window', '-t', BOARD_WINDOW]);
+/**
+ * Bind `prefix b`, `prefix C-b` (for when ctrl is still held) and `M-b` (no prefix) to jump back
+ * to the board, unless the user has bound them to something themselves.
+ */
+export async function bindBoardKeys(): Promise<void> {
+	const back = ['select-window', '-t', BOARD_WINDOW];
+	const bindings: [table: string, key: string, command: string[]][] = [
+		['prefix', 'b', back],
+		['prefix', 'C-b', back],
+		// Only in thread windows; everywhere else M-b still reaches the program (e.g. readline's back-a-word).
+		['root', 'M-b', ['if-shell', '-F', `#{m:oo-*,#{window_name}}`, back.join(' '), 'send-keys M-b']],
+	];
+	for (const [table, key, command] of bindings) {
+		const existing = await execa('tmux', ['list-keys', '-T', table, key], { reject: false });
+		// C-b is send-prefix out of the box, which is worth giving up for this.
+		const taken = existing.exitCode === 0 && !existing.stdout.includes(BOARD_WINDOW) && !existing.stdout.includes('send-prefix');
+		if (!taken) await execa('tmux', ['bind-key', '-T', table, key, ...command]);
+	}
+}
+
+/** Pass clicks through to the board (and claude); only for this session, so other sessions keep their own setting. */
+export async function enableTmuxMouse(): Promise<void> {
+	await execa('tmux', ['set-option', 'mouse', 'on']);
 }
 
 /** Run a command in a tmux popup and resolve once it exits. */

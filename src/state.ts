@@ -1,13 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-export const COLUMNS = ['planned', 'active', 'polish', 'pr', 'done'] as const;
+export const COLUMNS = ['planned', 'active', 'polish', 'uitest', 'pr', 'done'] as const;
 export const COLUMN_LABELS: Record<Column, string> = {
 	planned: 'PLANNED',
 	active: 'ACTIVE',
 	polish: 'POLISH',
+	uitest: 'UI TESTING',
 	pr: 'PR',
 	done: 'DONE',
 	archived: 'ARCHIVED',
@@ -19,6 +20,8 @@ export type Column = z.infer<typeof ColumnSchema>;
 
 const ProjectSchema = z.object({
 	name: z.string(),
+	// Not shown anywhere yet.
+	abbrev: z.string().default(''),
 	path: z.string(),
 	color: z.enum(COLORS),
 });
@@ -40,6 +43,10 @@ const ThreadSchema = z.object({
 	branch: z.string().optional(),
 	// What the branch was created from; the thread diff is against its merge-base.
 	base: z.string().optional(),
+	// Where the worktree lives; recorded when the project is renamed (see worktreePath).
+	worktree: z.string().optional(),
+	// While in UI testing the branch is checked out in the project's own checkout; this is what to put back after.
+	restoreRef: z.string().optional(),
 	// Opened on moving to PR; polled so the thread moves to Done once it's merged.
 	pr: z.object({ number: z.number(), url: z.string() }).optional(),
 	createdAt: z.string(),
@@ -75,6 +82,13 @@ export function saveState(state: State): string {
 	writeFileSync(tmp, json);
 	renameSync(tmp, STATE_FILE);
 	return json;
+}
+
+/** Why `project` can't be saved over the project currently named `original` (undefined for a new one), if it can't. */
+export function projectProblem(state: State, project: Project, original?: string): string | undefined {
+	if (!project.name) return 'Name is empty';
+	if (project.name !== original && state.projects.some(p => p.name === project.name)) return `Project "${project.name}" already exists`;
+	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
 }
 
 export function newThreadId(state: State): string {

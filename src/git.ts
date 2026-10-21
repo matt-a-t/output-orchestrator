@@ -5,8 +5,15 @@ import { DATA_DIR, type Thread } from './state.js';
 
 const git = (cwd: string, args: string[]) => execa('git', ['-C', cwd, ...args]);
 
+/** Defaults to a path named after the project; renaming the project pins the old one on the thread. */
 export function worktreePath(thread: Thread): string {
-	return join(DATA_DIR, 'worktrees', thread.project, thread.id);
+	return thread.worktree ?? join(DATA_DIR, 'worktrees', thread.project, thread.id);
+}
+
+/** The top of the git checkout containing `cwd`, or `cwd` itself if it isn't in one. */
+export async function repoRoot(cwd: string): Promise<string> {
+	const result = await execa('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { reject: false });
+	return result.exitCode === 0 ? result.stdout : cwd;
 }
 
 export function hasWorktree(thread: Thread): boolean {
@@ -36,16 +43,25 @@ export async function ensureWorktree(repo: string, thread: Thread): Promise<Pick
 		await git(repo, ['worktree', 'add', path, thread.branch]);
 		return;
 	}
-	const symbolic = await execa('git', ['-C', repo, 'symbolic-ref', '--short', '-q', 'HEAD'], { reject: false });
-	const base = symbolic.stdout || (await git(repo, ['rev-parse', 'HEAD'])).stdout;
+	const base = await currentRef(repo);
 	const branch = `oo/${thread.id}${slug(thread.title) ? `-${slug(thread.title)}` : ''}`;
 	await git(repo, ['worktree', 'add', '-b', branch, path, base]);
 	return { branch, base };
 }
 
-/** Whether the worktree has uncommitted changes (including untracked files). */
-export async function isDirty(cwd: string): Promise<boolean> {
-	return (await git(cwd, ['status', '--porcelain'])).stdout !== '';
+/** The checked-out branch, or the commit if HEAD is detached. */
+export async function currentRef(repo: string): Promise<string> {
+	const symbolic = await execa('git', ['-C', repo, 'symbolic-ref', '--short', '-q', 'HEAD'], { reject: false });
+	return symbolic.stdout || (await git(repo, ['rev-parse', 'HEAD'])).stdout;
+}
+
+export async function checkout(repo: string, ref: string): Promise<void> {
+	await git(repo, ['checkout', ref]);
+}
+
+/** Whether the worktree has uncommitted changes (including untracked files, unless told not to). */
+export async function isDirty(cwd: string, { untracked = true } = {}): Promise<boolean> {
+	return (await git(cwd, ['status', '--porcelain', ...(untracked ? [] : ['--untracked-files=no'])])).stdout !== '';
 }
 
 /** Remove the thread's worktree, keeping its branch. */
