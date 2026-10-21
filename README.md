@@ -11,8 +11,11 @@ npm run build
 npm link            # puts `oo` on your PATH
 ```
 
-The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread,
-unless you've already bound `b` to something else.
+The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread, and
+`prefix Ctrl-b` too for when you're still holding ctrl, plus `Alt-b` with no prefix in thread
+windows (where it no longer moves back a word), unless you've already bound those keys
+to something else. `prefix Ctrl-b` normally sends a literal `Ctrl-b` (send-prefix), which this
+replaces.
 
 ## Use
 
@@ -43,6 +46,13 @@ change first (an empty title cancels). The board checks open PRs every
 minute and moves merged ones to Done. Moving a thread to Done or archiving it removes the
 worktree and closes its claude window; the branch stays. Done keeps a worktree with
 uncommitted changes; archiving refuses until they're committed or discarded.
+
+`i` imports a claude session you started outside the board (e.g. plain `claude` in the
+project's directory): pick one from the project's recent sessions and it becomes a Planned
+thread that Enter resumes, with badges from then on. Imported threads keep running in the
+directory the session started in rather than a worktree, so diffs, comments and accept work
+there but they can't open a PR. If the session looks like it's still open somewhere else, Enter
+warns first; press it again to resume anyway.
 
 Card badges (with a legend at the bottom of the board): ⚙ working, ⏸ needs you
 (permission prompt), ✓ stopped, ○ window open with no activity yet, ↻ no window but

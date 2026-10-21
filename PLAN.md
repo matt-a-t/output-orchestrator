@@ -31,8 +31,8 @@ tmux session
 
 - Board must run inside tmux (simplest; may relax later).
 - Launch: `tmux new-window -n oo-<id> -c <dir> claude`.
-- Return to board: `prefix b`, bound by the board at start (`bind b select-window -t oo-board`)
-  unless `b` is already bound to something else.
+- Return to board: `prefix b`, `prefix C-b` or `M-b` (thread windows only), bound by the board at start (`bind b select-window -t oo-board`)
+  unless the key is already bound to something else (C-b's default send-prefix is replaced).
 - Editors / diffs open in `tmux display-popup -E`, synchronised with `tmux wait-for`.
 - Send text into a session: `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + Enter.
 - Status (M2): Claude Code hooks (`SessionStart`, `UserPromptSubmit`, `PostToolUse`,
@@ -52,6 +52,12 @@ tmux session
   back to the thread's title/plan). The PR is
   recorded on the thread; if one already exists it's just pushed again. Uncommitted changes
   block the move. The board polls `gh pr view` every minute and moves merged PRs to Done.
+- Import (#7): `i` lists the selected project's recent sessions from
+  `~/.claude/projects/<path with non-alphanumerics as ->/<session>.jsonl` (title, first prompt, last
+  activity, linked thread). Picking one makes a Planned thread with its session ID, transcript and
+  `cwd`; such threads skip worktrees and resume in that `cwd` (they have no branch, so no PR).
+  Resuming a session the board hasn't seen this run whose transcript changed in the last 2 minutes
+  needs a second ⏎, since it's probably still open elsewhere.
 - State: JSON at `~/.local/share/output-orchestrator/state.json`, validated with zod.
 - Projects are added by hand: `oo project add <path> [name]`.
 
@@ -74,13 +80,14 @@ tmux session
 | h/l, j/k  | move cursor between columns / cards |
 | H/L       | move card to prev/next column       |
 | J/K       | reorder card within column          |
-| n         | new thread (vim template)           |
+| n         | new thread (pick project, type title) |
 | e         | edit thread title/plan in vim       |
 | Enter     | open / jump to thread's claude      |
 | d / D     | step / thread diff (delta popup)    |
 | c         | comment on the diff → Claude        |
 | a         | accept step (commit)                |
 | o         | open changed hunks in vim           |
+| i         | import a claude session not started by the board |
 | C         | cycle card colour                   |
 | p         | cycle project filter                |
 | x         | archive                             |
