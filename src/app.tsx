@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import { editThread } from './editor.js';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
-import { commitStep, openChanges, showDiff } from './review.js';
+import { commitStep, openChanges, reviewDiff, showDiff } from './review.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
@@ -18,7 +18,7 @@ import {
 	type Thread,
 } from './state.js';
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
-import { killWindow, openWindow, threadWindowName, windowNames } from './tmux.js';
+import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
@@ -32,7 +32,7 @@ function resumableSession(thread: Thread): string | undefined {
 }
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  a accept  o open changes  C colour  p filter  x archive  q quit';
+	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  C colour  p filter  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -271,6 +271,19 @@ export function App() {
 			const kind = input === 'd' ? 'step' : 'thread';
 			return inWorktree(selected, async cwd => {
 				if (!(await showDiff(cwd, kind, selected))) setMessage(`No ${kind} changes`);
+			});
+		}
+		if (input === 'c') {
+			return inWorktree(selected, async cwd => {
+				const window = threadWindowName(selected.id);
+				// Checked first so notes aren't written only to be thrown away.
+				if (!(await windowNames()).includes(window)) return setMessage(`#${selected.id} has no claude window — open it with ⏎ first`);
+				const feedback = await reviewDiff(cwd, selected);
+				if (feedback === null) return setMessage('No changes');
+				if (!feedback) return setMessage('No comments');
+				if (!(await windowNames()).includes(window)) return setMessage(`✗ #${selected.id}'s claude window closed; comments not sent`);
+				await pasteInto(window, feedback);
+				setMessage(`Sent comments to #${selected.id}`);
 			});
 		}
 		if (input === 'o') {
