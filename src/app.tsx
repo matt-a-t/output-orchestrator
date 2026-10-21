@@ -33,6 +33,7 @@ import {
 	type State,
 	type Thread,
 } from './state.js';
+import { mouse, type MouseEvent } from './mouse.js';
 import { copySession, listSessions, recentlyActive, timeAgo, type Session } from './sessions.js';
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
@@ -59,8 +60,12 @@ const LEGEND: [string, string | undefined, string][] = [
 /** The `n` flow: pick a project, then type the title. */
 type NewThreadPrompt = { step: 'project'; index: number } | { step: 'title'; project: string; title: string };
 
-const PICKER_HELP = 'j/k move  ⏎ import  esc cancel';
+const PICKER_HELP = 'j/k move  ⏎ import  esc cancel  (or click, double-click, scroll)';
 
+// The columns and the import list start below the title bar, a header and a rule; each card or session is two lines.
+const LIST_TOP = 3;
+const ITEM_HEIGHT = 2;
+const DOUBLE_CLICK_MS = 400;
 
 /** `path` is `dir` or somewhere inside it. */
 function within(path: string, dir: string): boolean {
@@ -651,8 +656,8 @@ export function App() {
 	});
 
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
-	// Two lines per session, around the title bar, list header, and the message and help below; scrolled to keep the cursor in view.
-	const pickerRows = Math.max(1, Math.floor((height - 6) / 2));
+	// Below the list are a gap, the message and the help; scrolled to keep the cursor in view.
+	const pickerRows = Math.max(1, Math.floor((height - LIST_TOP - 3) / ITEM_HEIGHT));
 	const pickerTop = picker ? Math.max(0, Math.min(picker.row - Math.floor(pickerRows / 2), picker.sessions.length - pickerRows)) : 0;
 	const status = (
 		<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
@@ -660,6 +665,47 @@ export function App() {
 		</Text>
 	);
 	const pickerPage = picker ? picker.sessions.slice(pickerTop, pickerTop + pickerRows) : [];
+
+	const lastClick = useRef<{ target: string; at: number } | null>(null);
+	/** Whether this click is on the same thing as the last, soon enough to make a double-click. */
+	const isDoubleClick = (target: string) => {
+		const now = Date.now();
+		const double = lastClick.current?.target === target && now - lastClick.current.at < DOUBLE_CLICK_MS;
+		lastClick.current = double ? null : { target, at: now };
+		return double;
+	};
+
+	// The layout is a fixed grid, so a press's cell says what it's on.
+	const onMouse = ({ button, x, y }: MouseEvent) => {
+		if (busy || showProjects || prompt) return;
+		setMessage('');
+		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
+		const item = Math.floor((y - LIST_TOP) / ITEM_HEIGHT);
+		if (picker) {
+			if (wheel) return movePicker(wheel);
+			const session = y >= LIST_TOP ? pickerPage[item] : undefined;
+			if (button !== 'left' || !session) return;
+			setPicker(p => p && { ...p, row: pickerTop + item });
+			if (isDoubleClick(session.id)) importSession(session);
+			return;
+		}
+		if (wheel) return moveCursor(0, wheel);
+		const col = Math.floor(x / colWidth);
+		if (button !== 'left' || y < 1 || col >= COLUMNS.length) return;
+		// The column's header.
+		if (y < LIST_TOP) return setCursor(c => ({ col, row: c.row }));
+		const thread = columnThreads(COLUMNS[col]!)[item];
+		if (!thread) return;
+		setCursor({ col, row: item });
+		if (isDoubleClick(thread.id)) openThread(thread);
+	};
+	const onMouseRef = useRef(onMouse);
+	onMouseRef.current = onMouse;
+	useEffect(() => {
+		const listener = (event: MouseEvent) => onMouseRef.current(event);
+		mouse.on('press', listener);
+		return () => void mouse.off('press', listener);
+	}, []);
 
 	return (
 		<Box flexDirection="column" height={height}>

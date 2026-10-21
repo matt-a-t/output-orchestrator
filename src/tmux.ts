@@ -102,6 +102,11 @@ export async function bindBoardKeys(): Promise<void> {
 	}
 }
 
+/** Pass clicks through to the board (and claude); only for this session, so other sessions keep their own setting. */
+export async function enableTmuxMouse(): Promise<void> {
+	await execa('tmux', ['set-option', 'mouse', 'on']);
+}
+
 /** Run a command in a tmux popup and resolve once it exits. */
 export async function popup(command: string, opts: { cwd?: string; title?: string } = {}): Promise<void> {
 	const channel = `oo-${randomUUID()}`;

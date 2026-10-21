@@ -28,7 +28,10 @@ oo
 inside tmux, it opens the board in the current window, or jumps to it if it's already
 running.
 
-Keys are listed at the bottom of the board. `n` / `e` open `$EDITOR` (default vim)
+Keys are listed at the bottom of the board. The mouse works too: click a card to select
+it, double-click to open it, scroll to move up and down (the import list works the same way).
+For that the board turns on tmux's `mouse` option for its session, so in claude windows
+dragging selects into tmux's buffer; hold Shift while dragging for your terminal's own selection. `n` / `e` open `$EDITOR` (default vim)
 in a tmux popup; Enter opens or jumps to the thread's `claude` window, resuming
 the thread's last session if its window was closed (e.g. after a restart).
 
