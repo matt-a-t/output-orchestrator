@@ -74,7 +74,7 @@ tmux session
 | h/l, j/k  | move cursor between columns / cards |
 | H/L       | move card to prev/next column       |
 | J/K       | reorder card within column          |
-| n         | new thread (vim template)           |
+| n         | new thread (pick project, type title) |
 | e         | edit thread title/plan in vim       |
 | Enter     | open / jump to thread's claude      |
 | d / D     | step / thread diff (delta popup)    |

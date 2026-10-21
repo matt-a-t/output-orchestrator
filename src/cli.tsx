@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { render } from 'ink';
 import { App } from './app.js';
-import { COLORS, loadState, saveState } from './state.js';
+import { COLORS, loadState, projectProblem, saveState } from './state.js';
 import { writeClaudeSettings } from './status.js';
 import { BOARD_WINDOW, attachBoard, bindBoardKey, insideTmux, renameCurrentWindow, selectExistingBoard } from './tmux.js';
 
@@ -18,18 +17,14 @@ function projectCommand(args: string[]): number {
 	const [sub, ...rest] = args;
 	if (sub === 'add' && rest[0]) {
 		const path = resolve(rest[0]);
-		if (!existsSync(path)) {
-			console.error(`No such directory: ${path}`);
+		const project = { name: rest[1] ?? basename(path), abbrev: '', path, color: COLORS[state.projects.length % COLORS.length]! };
+		const problem = projectProblem(state, project);
+		if (problem) {
+			console.error(problem);
 			return 1;
 		}
-		const name = rest[1] ?? basename(path);
-		if (state.projects.some(p => p.name === name)) {
-			console.error(`Project "${name}" already exists`);
-			return 1;
-		}
-		const color = COLORS[state.projects.length % COLORS.length]!;
-		saveState({ ...state, projects: [...state.projects, { name, path, color }] });
-		console.log(`Added ${name} → ${path}`);
+		saveState({ ...state, projects: [...state.projects, project] });
+		console.log(`Added ${project.name} → ${path}`);
 		return 0;
 	}
 	if (sub === 'list') {
