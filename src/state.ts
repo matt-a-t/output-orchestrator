@@ -20,7 +20,7 @@ export type Column = z.infer<typeof ColumnSchema>;
 
 const ProjectSchema = z.object({
 	name: z.string(),
-	// Not shown anywhere yet.
+	// Shown on board cards in place of the name, when set.
 	abbrev: z.string().default(''),
 	path: z.string(),
 	color: z.enum(COLORS),
@@ -34,10 +34,10 @@ const ThreadSchema = z.object({
 	project: z.string(),
 	column: ColumnSchema,
 	color: z.enum(COLORS).optional(),
-	// Latest claude session for this thread, reported by the SessionStart hook; used to resume.
+	// Claude's session ID for the thread's latest run, reported by the SessionStart hook; used to resume.
 	sessionId: z.string().optional(),
 	transcriptPath: z.string().optional(),
-	// Imported sessions (see sessions.ts) keep running where they were started instead of in a worktree.
+	// Imported threads (see transcripts.ts) keep running where they were started instead of in a worktree.
 	cwd: z.string().optional(),
 	// Set when the thread's worktree is first created (see git.ts); the branch outlives the worktree.
 	branch: z.string().optional(),

@@ -25,7 +25,8 @@ function slug(title: string): string {
 /**
  * Create the thread's worktree if it's missing. The first time, this also creates the thread's
  * branch from the latest main (origin's default branch, fetched first) and returns the
- * branch/base to record on the thread; after that (e.g. reopening a Done thread) it checks the existing branch out again.
+ * branch/base to record on the thread; after that (e.g. reopening a Done thread) it checks the
+ * existing branch out again.
  */
 export async function ensureWorktree(repo: string, thread: Thread): Promise<Pick<Thread, 'branch' | 'base'> | undefined> {
 	const path = worktreePath(thread);
@@ -64,7 +65,9 @@ export async function checkout(repo: string, ref: string): Promise<void> {
 
 /** Whether the worktree has uncommitted changes (including untracked files, unless told not to). */
 export async function isDirty(cwd: string, { untracked = true } = {}): Promise<boolean> {
-	return (await git(cwd, ['status', '--porcelain', ...(untracked ? [] : ['--untracked-files=no'])])).stdout !== '';
+	// No optional locks: the board polls this, and must not trip up a commit running alongside.
+	const args = ['--no-optional-locks', 'status', '--porcelain', ...(untracked ? [] : ['--untracked-files=no'])];
+	return (await git(cwd, args)).stdout !== '';
 }
 
 /** Remove the thread's worktree, keeping its branch. */
@@ -122,8 +125,8 @@ export async function hunkLocations(cwd: string, args: string[]): Promise<string
 	return locations;
 }
 
-export async function head(cwd: string): Promise<string> {
-	return (await git(cwd, ['rev-parse', 'HEAD'])).stdout;
+export async function commit(cwd: string, message: string): Promise<void> {
+	await execa('git', ['-C', cwd, 'commit', '-F', '-'], { input: message });
 }
 
 /** Stage everything; returns false if there's nothing to commit. */

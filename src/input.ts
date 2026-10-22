@@ -6,3 +6,8 @@ export function editText(value: string, input: string, key: Key): string | undef
 	if (key.backspace || key.delete) return value.slice(0, -1);
 	if (input && !key.ctrl && !key.meta && !key.tab && !key.return && !key.escape) return value + input;
 }
+
+/** Step `index` by `delta` through a list of `length` items, looping at both ends. */
+export function loop(index: number, delta: number, length: number): number {
+	return length === 0 ? 0 : (((index + delta) % length) + length) % length;
+}
