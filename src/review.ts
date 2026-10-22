@@ -28,7 +28,7 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 		writeFileSync(keys, APPROVE_KEYS);
 		less.push(`--lesskey-src=${keys}`);
 	}
-	const label = kind === 'step' ? 'step diff' : `thread diff vs ${thread.base ?? 'HEAD'}`;
+	const label = kind === 'step' ? 'step diff' : `thread diff vs ${args.at(-1)}`;
 	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}q close `;
 	const command = `git ${args.map(shellQuote).join(' ')} | delta --paging=never --navigate | ${less.map(shellQuote).join(' ')}`;
 	for (;;) {
