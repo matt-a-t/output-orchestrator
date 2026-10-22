@@ -81,7 +81,7 @@ tmux session
 | H/L       | move card to prev/next column       |
 | J/K       | reorder card within column          |
 | n         | new thread (pick project, type title) |
-| e         | edit thread title/plan in vim       |
+| e         | thread screen: edit fields, see info |
 | Enter     | open / jump to thread's claude      |
 | d / D     | step / thread diff (delta popup)    |
 | c         | comment on the diff → Claude        |
