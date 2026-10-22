@@ -8,7 +8,7 @@ import { killWindow, threadWindowName } from './tmux.js';
 /** Where the thread's work happens, if it has anywhere yet. */
 export function threadDir(state: State, thread: Thread): string | undefined {
 	if (thread.cwd) return thread.cwd;
-	if (thread.column === 'uitest') return state.projects.find(p => p.name === thread.project)?.path;
+	if (thread.local) return state.projects.find(p => p.name === thread.project)?.path;
 	if (hasWorktree(thread)) return worktreePath(thread);
 }
 
@@ -46,7 +46,7 @@ export function moveWarning(state: State, thread: Thread, column: Column): strin
 
 /** Why the thread can't be archived, if it can't. */
 export async function archiveProblem(thread: Thread): Promise<string | undefined> {
-	if (thread.column === 'uitest') return `⚠ Move #${thread.id} out of UI testing before archiving`;
+	if (thread.local) return `⚠ Bring #${thread.id} back from Local before archiving`;
 	// Archived threads are hidden, so don't leave uncommitted work behind in one.
 	if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
 		return `⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them before archiving`;
@@ -86,10 +86,8 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 
 /** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
 export function boardOnlyMove(thread: Thread, column: Column): string | undefined {
+	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back from the board first`;
 	if (column === 'pr') return `Moving #${thread.id} to PR opens the PR description editor — do it from the board`;
-	if (column === 'uitest' || thread.column === 'uitest') {
-		return `Moving #${thread.id} ${column === 'uitest' ? 'into' : 'out of'} UI testing switches the project's checkout — do it from the board`;
-	}
 }
 
 /** The state being changed: the board's, or state.json when it isn't running. */

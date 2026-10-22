@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
-import { COLUMN_LABELS, COLUMNS, DATA_DIR, loadState, saveState, type Column, type State, type Thread } from './state.js';
+import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, type Column, type State, type Thread } from './state.js';
 import { applyRequest, inDir, threadDir, type Store } from './threads.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-]
@@ -11,7 +11,8 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread show [id] [--json]
   oo thread move [id] <column>
                               columns: ${[...COLUMNS, 'archived'].join(', ')}
-                              Moving into or out of uitest, or to pr, is done on the board.
+                              Moving to pr, and into or out of Local, is done on the board;
+                              a thread in Local can't move until it's back.
   Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
 
 /** What the command runs against; tests swap these out. */
@@ -105,12 +106,17 @@ async function change(request: DistributiveOmit<Request, 'id'>, ctx: Context): P
 	return response;
 }
 
+/** The thread's column, noting when it's in Local. */
+function where(t: Thread): string {
+	return `${COLUMN_LABELS[t.column]}${t.local ? ` (in ${LOCAL_LABEL})` : ''}`;
+}
+
 function summary(t: Thread): string {
-	return `#${t.id}\t${COLUMN_LABELS[t.column]}\t${t.project}\t${t.title}`;
+	return `#${t.id}\t${where(t)}\t${t.project}\t${t.title}`;
 }
 
 function details(state: State, t: Thread): string {
-	const lines = [`#${t.id} ${t.title}`, `column:  ${COLUMN_LABELS[t.column]}`, `project: ${t.project}`];
+	const lines = [`#${t.id} ${t.title}`, `column:  ${where(t)}`, `project: ${t.project}`];
 	if (t.branch) lines.push(`branch:  ${t.branch}${t.base ? ` (from ${t.base})` : ''}`);
 	const dir = threadDir(state, t);
 	if (dir) lines.push(`dir:     ${dir}`);

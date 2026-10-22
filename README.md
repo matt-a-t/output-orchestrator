@@ -47,6 +47,21 @@ claude drafts, whose subject you edit on the board (esc cancels, leaving the cha
 drafted body is kept as is). Confirmations (quit, archive, approve, resuming a busy thread) all
 take `y`; any other key cancels.
 
+`t` puts a thread in Local, a box beside the columns, to try it out in your usual dev setup:
+its branch is checked out in the project's own checkout (which needs no uncommitted changes to
+tracked files), its worktree is removed, and its claude moves there too. Only one thread per
+project fits. The thread keeps its column, shown on its card, but can't move between columns
+until `t` brings it back: that needs the checkout clean, puts it back on the default branch,
+and gives the thread its worktree again.
+
+Each project can set hooks in the projects screen (`P`): shell commands run when something
+happens on the board. So far there are two, enter local and leave local, run in the project's
+checkout once the branch is checked out or the checkout is back on main (in an imported thread,
+enter runs in the thread's own directory). They run in a background tmux window named
+`oo-hook-<project>` that becomes a shell when the command exits, so its output stays readable;
+the next hook replaces it, stopping anything still running (e.g. a dev server). `OO_THREAD_ID`,
+`OO_PROJECT` and `OO_BRANCH` are set for them.
+
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with `gh pr create`, whatever branch the thread started from. claude drafts the
 title and description from the thread's commits and diff, and they open in vim for you to
 change first (an empty title cancels). `b` opens the selected thread's PR in your browser
