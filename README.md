@@ -49,7 +49,8 @@ take `y`; any other key cancels.
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with `gh pr create`, whatever branch the thread started from. claude drafts the
 title and description from the thread's commits and diff, and they open in vim for you to
-change first (an empty title cancels). The board checks open PRs every
+change first (an empty title cancels). `b` opens the selected thread's PR in your browser
+(`$BROWSER` if set; under WSL, Windows' default browser). The board checks open PRs every
 minute and moves merged ones to Done. Moving a thread to Done or archiving it removes the
 worktree and closes its claude window; the branch stays. Done keeps a worktree with
 uncommitted changes; archiving refuses until they're committed or discarded.

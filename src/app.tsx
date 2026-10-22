@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
 import { editPr } from './editor.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
-import { createPr, draftPr, findPr, prState } from './github.js';
+import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js';
 import { editText, loop } from './input.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond } from './requests.js';
@@ -73,7 +73,7 @@ const CARD_HEIGHT = 2;
 const DOUBLE_CLICK_MS = 400;
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -692,6 +692,14 @@ export function App() {
 				setMessage(`Sent comments to #${selected.id}`);
 			});
 		}
+		if (input === 'b') {
+			const { pr } = selected;
+			if (!pr) return setMessage(`#${selected.id} has no PR`);
+			return run(async () => {
+				await openPrInBrowser(pr);
+				setMessage(`Opened PR #${pr.number} in the browser`);
+			}, 'opening PR in the browser');
+		}
 		if (input === 'o') {
 			return inWorktree(selected, async cwd => {
 				if (!(await openChanges(cwd, selected))) setMessage('No changes');
@@ -848,7 +856,7 @@ export function App() {
 				) : null}
 				{selected?.pr ? (
 					<Text dimColor>
-						PR #{selected.pr.number} {selected.pr.url}
+						PR #{selected.pr.number} {selected.pr.url} (b opens it)
 					</Text>
 				) : null}
 				{prompt?.step === 'project' ? (
