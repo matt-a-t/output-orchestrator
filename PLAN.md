@@ -70,7 +70,7 @@ tmux session
   under a diff line become `file:line — note` (consecutive `>>` lines join into one note;
   under a file header they're about the file, before any file they're general), batched and
   pasted into the thread's claude on save. `:cq` cancels. Needs the claude window open.
-- `a` after closing a step diff — accept step: `git add -A` + commit, with a claude-drafted message edited on the board.
+- `a` in a step diff (after a y/n confirm) — approve step: `git add -A` + commit, with a claude-drafted message edited on the board.
 - `o` — vim with a quickfix list of the changed hunks (the step's, else the thread's).
 
 ## Keys (board)
@@ -85,7 +85,7 @@ tmux session
 | Enter     | open / jump to thread's claude      |
 | d / D     | step / thread diff (delta popup)    |
 | c         | comment on the diff → Claude        |
-| d → a     | accept step (commit)                |
+| d, then a | approve step (commit)               |
 | o         | open changed hunks in vim           |
 | i         | import a thread not started by the board |
 | C         | cycle card colour                   |

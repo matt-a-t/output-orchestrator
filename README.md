@@ -35,12 +35,14 @@ the thread where it left off if its window was closed (e.g. after a restart).
 Leaving Planned (or opening a thread) gives it its own git worktree and branch
 (`oo/<id>-<title>`), under `~/.local/share/output-orchestrator/worktrees/`; claude runs
 there. Review a step with `d` (diff since the last commit) or `D` (whole thread vs the
-branch it came from), shown through `delta`; `o` opens the changed hunks in vim as a
+branch it came from), shown through `delta` in `less` — `n`/`N` jump between files and hunks,
+and in a step diff `a` approves it (after a y/n confirm); `o` opens the changed hunks in vim as a
 quickfix list; `c` opens the diff in vim for comments — write notes on lines starting `>>`
 under the diff line they're about, and on save they're sent to the thread's claude as
-`file:line — note` feedback (`:cq` cancels). After closing a step diff, `a` accepts the step:
-everything is committed with a message claude drafts, whose subject you edit on the board
-(esc cancels, leaving the changes staged; the drafted body is kept as is).
+`file:line — note` feedback (`:cq` cancels). Approving a step commits everything with a message
+claude drafts, whose subject you edit on the board (esc cancels, leaving the changes staged; the
+drafted body is kept as is). Confirmations (quit, archive, approve, resuming a busy thread) all
+take `y`; any other key cancels.
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with `gh pr create`, whatever branch the thread started from. claude drafts the
 title and description from the thread's commits and diff, and they open in vim for you to
@@ -52,12 +54,12 @@ uncommitted changes; archiving refuses until they're committed or discarded.
 `i` imports a thread you started outside the board (e.g. plain `claude` in the
 project's directory): pick one from the project's recent threads and it lands in Planned,
 where Enter resumes it, with badges from then on. Imported threads keep running in the
-directory they started in rather than a worktree, so diffs, comments and accept work
+directory they started in rather than a worktree, so diffs, comments and approve work
 there but they can't open a PR. If the thread looks like it's still open somewhere else, Enter
-warns first; press it again to resume anyway.
+warns first; `y` resumes anyway.
 
 Card badges (with a legend at the bottom of the board): ⚙ working, ⏸ needs you
 (permission prompt), ✓ stopped, ○ window open with no activity yet, ↻ no window but
-resumable. Each card shows the project and thread number, with the title beneath.
+resumable, ± uncommitted changes waiting to be reviewed and approved. Each card shows the project and thread number, with the title beneath.
 
 State lives in `~/.local/share/output-orchestrator/state.json`.
