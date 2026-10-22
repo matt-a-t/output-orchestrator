@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
+import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { editPr } from './editor.js';
 import { runHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
@@ -71,15 +71,16 @@ type Prompt =
 	| { step: 'title'; project: string; title: string }
 	| { step: 'commit'; thread: Thread; cwd: string; subject: string; body: string };
 
-// The columns and the import list start below the title bar, a header and a rule; each card is two lines.
+// The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
 const LIST_TOP = 3;
 // Local is drawn as a box after the columns, and the cursor reaches it like one more column.
 const LOCAL_COL = COLUMNS.length;
 const CARD_HEIGHT = 2;
+const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -109,6 +110,10 @@ export function App() {
 		setConfirm(() => action);
 		setMessage(`${question} y to confirm`);
 	};
+	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
+	const boardRef = useRef<DOMElement>(null);
+	const [boardHeight, setBoardHeight] = useState(0);
+	const scrollOffsets = useRef<Partial<Record<Column, number>>>({});
 
 	const refreshWindows = () =>
 		windowNames()
@@ -250,11 +255,18 @@ export function App() {
 	const moveColumn = (thread: Thread, delta: number) => {
 		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 		if (col < 0 || col >= COLUMNS.length) return;
-		const column = COLUMNS[col]!;
+		moveThread(thread, COLUMNS[col]!);
+	};
+
+	const moveThread = (thread: Thread, column: (typeof COLUMNS)[number]) => {
+		if (thread.column === column) return;
+		const col = COLUMNS.indexOf(column);
 		// Its branch is checked out in the project's checkout, not its worktree, until it comes back.
 		if (thread.local) return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
 		const warning = moveWarning(state, thread, column);
 		if (warning) setMessage(warning);
+		// Done closes its claude window.
+		if (column === 'done' && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
 		setColumn(thread.id, column);
 		setCursor({ col, row: columnThreads(column).length });
@@ -660,6 +672,11 @@ export function App() {
 		if (!selected) return;
 		if (input === 'H') return moveColumn(selected, -1);
 		if (input === 'L') return moveColumn(selected, 1);
+		if (input === 'F' && selected.column !== 'done') {
+			// Imported threads keep their directory and window.
+			const closes = selected.cwd ? '' : ' It closes its claude window and removes its worktree (branch kept).';
+			return ask(`Move #${selected.id} ${selected.title} to Done?${closes}`, () => moveThread(selected, 'done'));
+		}
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
 		if (input === 't') {
@@ -722,6 +739,30 @@ export function App() {
 		}
 	});
 
+	useEffect(() => {
+		if (!boardRef.current) return;
+		const measured = measureElement(boardRef.current).height;
+		if (measured !== boardHeight) setBoardHeight(measured);
+	});
+
+	/** The slice of a column's threads that fits, keeping the cursor in view; `top` is the lines its "more" line above takes. */
+	const visibleSlice = (column: Column, count: number, cursorRow: number | undefined) => {
+		const lines = boardHeight - (LIST_TOP - 1);
+		const rowLines = cardHeight(column);
+		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count, top: 0 };
+		// Room for the "more" lines above and below.
+		const fits = Math.max(1, Math.floor((lines - 2) / rowLines));
+		const last = count - fits;
+		let start = scrollOffsets.current[column] ?? (column === 'done' ? last : 0);
+		if (cursorRow !== undefined) start = Math.min(Math.max(start, cursorRow - fits + 1), cursorRow);
+		// Unless you're in it, Done shows the latest arrivals, which land at the bottom.
+		else if (column === 'done') start = last;
+		start = Math.min(Math.max(0, start), last);
+		scrollOffsets.current[column] = start;
+		return { start, end: start + fits, top: start > 0 ? 1 : 0 };
+	};
+	const columnSlice = (c: number) => visibleSlice(COLUMNS[c]!, columnThreads(COLUMNS[c]!).length, c === cursor.col ? row : undefined);
+
 	// Local gets a column's width too.
 	const colWidth = Math.max(16, Math.floor(width / (COLUMNS.length + 1)));
 
@@ -760,12 +801,13 @@ export function App() {
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
 		const col = Math.floor(x / colWidth);
 		if (button !== 'left' || y < 1 || col > LOCAL_COL) return;
-		// Local's border pushes its contents down a line.
-		const top = col === LOCAL_COL ? LIST_TOP + 1 : LIST_TOP;
-		// The column's header.
+		// Local's border pushes its contents down a line; it doesn't scroll.
+		const slice = col === LOCAL_COL ? { start: 0, end: Infinity, top: 1 } : columnSlice(col);
+		const top = LIST_TOP + slice.top;
+		// The column's header, or its "more" line.
 		if (y < top) return setCursor({ col, row });
-		const r = Math.floor((y - top) / CARD_HEIGHT);
-		const thread = laneThreads(col)[r];
+		const r = slice.start + Math.floor((y - top) / (col === LOCAL_COL ? CARD_HEIGHT : cardHeight(COLUMNS[col]!)));
+		const thread = r < slice.end ? laneThreads(col)[r] : undefined;
 		if (!thread) return;
 		setCursor({ col, row: r });
 		if (isDoubleClick(thread.id)) openThread(thread);
@@ -778,8 +820,9 @@ export function App() {
 		return () => void mouse.off('press', listener);
 	}, []);
 
-	/** A thread's two lines on the board; `from` notes the column a thread in Local came from. */
+	/** A thread's two lines on the board (one in Done); `from` notes the column a thread in Local came from. */
 	const card = (t: Thread, isSelected: boolean, from?: string) => {
+		const oneLine = cardHeight(t.column) === 1 && !t.local;
 		const color = t.color ?? projectByName(t.project)?.color;
 		const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
 			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
@@ -798,11 +841,15 @@ export function App() {
 						</Text>
 					) : null}
 					{from ? <Text dimColor> ↩ {from}</Text> : null}
+					{/* Finished threads get one line each so more of them fit. */}
+					{oneLine ? ` ${t.title}` : null}
 				</Text>
-				<Text wrap="truncate" inverse={isSelected}>
-					{'  '}
-					{t.title}
-				</Text>
+				{oneLine ? null : (
+					<Text wrap="truncate" inverse={isSelected}>
+						{'  '}
+						{t.title}
+					</Text>
+				)}
 			</Box>
 		);
 	};
@@ -857,16 +904,22 @@ export function App() {
 					})}
 				</Box>
 			) : (
-				<Box flexGrow={1} overflow="hidden">
-					{COLUMNS.map((column, c) => (
-						<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-								{COLUMN_LABELS[column]} ({columnThreads(column).length})
-							</Text>
-							<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-							{columnThreads(column).map((t, r) => card(t, c === cursor.col && r === row))}
-						</Box>
-					))}
+				<Box ref={boardRef} flexGrow={1} overflow="hidden">
+					{COLUMNS.map((column, c) => {
+						const threads = columnThreads(column);
+						const { start, end } = columnSlice(c);
+						return (
+							<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
+								<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+									{COLUMN_LABELS[column]} ({threads.length})
+								</Text>
+								<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
+								{start > 0 ? <Text dimColor>  ↑ {start} more</Text> : null}
+								{threads.slice(start, end).map((t, i) => card(t, c === cursor.col && start + i === row))}
+								{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
+							</Box>
+						);
+					})}
 					{/* Not a column: a box off to the side that threads visit, one per project. */}
 					<Box flexDirection="column" width={colWidth} alignSelf="flex-start" borderStyle="round" borderColor="yellow">
 						<Text bold color={cursor.col === LOCAL_COL ? 'white' : 'gray'}>

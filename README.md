@@ -68,7 +68,12 @@ change first (an empty title cancels). `b` opens the selected thread's PR in you
 (`$BROWSER` if set; under WSL, Windows' default browser). The board checks open PRs every
 minute and moves merged ones to Done. Moving a thread to Done or archiving it removes the
 worktree and closes its claude window; the branch stays. Done keeps a worktree with
-uncommitted changes; archiving refuses until they're committed or discarded.
+uncommitted changes; archiving refuses until they're committed or discarded. `F` moves a
+thread straight to Done from any column, after a `y` to confirm (a thread in Local has to come
+back with `t` first).
+
+Columns too long for the window scroll with the cursor, with `↑ n more` / `↓ n more` marking
+what's hidden. Done shows one line per thread and, while you're not in it, its newest arrivals.
 
 `i` imports a thread you started outside the board (e.g. plain `claude` in the
 project's directory): pick one from the project's recent threads and it lands in Planned,
