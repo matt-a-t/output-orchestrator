@@ -65,7 +65,7 @@ export function respond(response: Response, dir = DATA_DIR): void {
 	appendFileSync(responsesFile(dir), JSON.stringify(response) + '\n');
 }
 
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+export type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
 
 /**
  * The CLI's side: send the request and wait for the board's response. Gives up after `timeoutMs`

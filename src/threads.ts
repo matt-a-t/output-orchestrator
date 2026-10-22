@@ -77,8 +77,8 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 	if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
 		return { message: `⚠ Kept #${thread.id}'s worktree: it has uncommitted changes` };
 	}
-	// claude can't carry on in a deleted directory.
-	await killWindow(threadWindowName(thread.id));
+	// claude can't carry on in a deleted directory. No tmux server (`oo thread move` from a plain shell) means no window.
+	await killWindow(threadWindowName(thread.id)).catch(() => {});
 	if (!hasWorktree(thread)) return {};
 	await removeWorktree(project.path, thread);
 	return { message: `Removed #${thread.id}'s worktree (kept branch ${thread.branch})` };
