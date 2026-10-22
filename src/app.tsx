@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
+import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { editPr } from './editor.js';
 import { runHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
@@ -43,6 +43,8 @@ import {
 } from './threads.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
 
+type PermissionMode = 'plan' | 'auto';
+
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
 	waiting: ['⏸', 'red'],
@@ -64,23 +66,25 @@ const LEGEND: [string, string | undefined, string][] = [
 ];
 
 /**
- * The `n` flow (pick a project, then type the title), or approving a step from its diff: edit the
+ * The `n` flow (pick a project, then type the title), picking the project to import from (`i`
+ * with no filter), or approving a step from its diff: edit the
  * subject of the commit message claude drafted (its body is kept as is).
  */
 type Prompt =
-	| { step: 'project'; index: number }
+	| { step: 'project'; index: number; then: 'new' | 'import' }
 	| { step: 'title'; project: string; title: string }
 	| { step: 'commit'; thread: Thread; cwd: string; subject: string; body: string };
 
-// The columns and the import list start below the title bar, a header and a rule; each card is two lines.
+// The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
 const LIST_TOP = 3;
 // Local is drawn as a box after the columns, and the cursor reaches it like one more column.
 const LOCAL_COL = COLUMNS.length;
 const CARD_HEIGHT = 2;
+const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -110,6 +114,10 @@ export function App() {
 		setConfirm(() => action);
 		setMessage(`${question} y to confirm`);
 	};
+	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
+	const boardRef = useRef<DOMElement>(null);
+	const [boardHeight, setBoardHeight] = useState(0);
+	const scrollOffsets = useRef<Partial<Record<Column, number>>>({});
 
 	const refreshWindows = () =>
 		windowNames()
@@ -251,16 +259,27 @@ export function App() {
 	const moveColumn = (thread: Thread, delta: number) => {
 		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 		if (col < 0 || col >= COLUMNS.length) return;
-		const column = COLUMNS[col]!;
+		moveThread(thread, COLUMNS[col]!);
+	};
+
+	const moveThread = (thread: Thread, column: (typeof COLUMNS)[number]) => {
+		if (thread.column === column) return;
+		const col = COLUMNS.indexOf(column);
 		// Its branch is checked out in the project's checkout, not its worktree, until it comes back.
 		if (thread.local) return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
+		// Its claude is in plan mode just while it's Planned (see launchClaude), so an open one restarts on the way in or out.
+		const restart = (thread.column === 'planned') !== (column === 'planned') && liveWindows.has(threadWindowName(thread.id));
+		if (restart && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		const warning = moveWarning(state, thread, column);
 		if (warning) setMessage(warning);
+		// Done closes its claude window.
+		if (column === 'done' && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
-		const move = () => {
+		const move = async () => {
 			setColumn(thread.id, column);
 			setCursor({ col, row: columnThreads(column).length });
-			return syncWorktree({ ...thread, column });
+			await syncWorktree({ ...thread, column });
+			if (restart) await restartClaude({ ...thread, column }, column === 'planned' ? 'plan' : 'auto');
 		};
 		const project = projectByName(thread.project);
 		if (column !== 'done' || !thread.pr || !project) return void run(move, 'updating worktree');
@@ -321,6 +340,14 @@ export function App() {
 		await killWindow(threadWindowName(thread.id));
 		await refreshWindows();
 		return open;
+	};
+
+	/** Close the thread's claude and resume it in the background in `mode`. */
+	const restartClaude = async (thread: Thread, mode: PermissionMode) => {
+		const cwd = threadDir(stateRef.current, thread);
+		if (!cwd || !(await closeClaude(thread))) return;
+		await launchClaude(thread, cwd, { background: true, mode });
+		setMessage(`Restarted claude for #${thread.id} in ${mode} mode`);
 	};
 
 	/** Copy the thread's transcript to where `claude --resume` looks from `cwd`. */
@@ -489,7 +516,7 @@ export function App() {
 		// One project means nothing to choose.
 		if (state.projects.length === 1) return setPrompt({ step: 'title', project: state.projects[0]!.name, title: '' });
 		const current = filter ?? selected?.project;
-		setPrompt({ step: 'project', index: Math.max(0, state.projects.findIndex(p => p.name === current)) });
+		setPrompt({ step: 'project', index: Math.max(0, state.projects.findIndex(p => p.name === current)), then: 'new' });
 	};
 
 	const createThread = (project: string, title: string) => {
@@ -532,7 +559,14 @@ export function App() {
 			const count = state.projects.length;
 			if (input === 'j' || key.downArrow) return setPrompt({ ...prompt, index: (prompt.index + 1) % count });
 			if (input === 'k' || key.upArrow) return setPrompt({ ...prompt, index: (prompt.index + count - 1) % count });
-			if (key.return) return setPrompt({ step: 'title', project: state.projects[prompt.index]!.name, title: '' });
+			if (key.return) {
+				const project = state.projects[prompt.index]!;
+				if (prompt.then === 'import') {
+					setPrompt(null);
+					return openPicker(project);
+				}
+				return setPrompt({ step: 'title', project: project.name, title: '' });
+			}
 			return;
 		}
 		if (key.return) {
@@ -548,8 +582,13 @@ export function App() {
 	/**
 	 * Jump to the thread's claude window, starting claude in `cwd` (resuming the thread if it can) if needed.
 	 * `background` starts it without leaving the board; `resumeAnyway` skips the check for it being open elsewhere.
+	 * A thread in Planned is for planning only, so its claude starts in plan mode unless `mode` says otherwise.
 	 */
-	const launchClaude = async (thread: Thread, cwd: string, { background = false, resumeAnyway = false } = {}) => {
+	const launchClaude = async (
+		thread: Thread,
+		cwd: string,
+		{ background = false, resumeAnyway = false, mode = thread.column === 'planned' ? 'plan' : undefined }: { background?: boolean; resumeAnyway?: boolean; mode?: PermissionMode } = {},
+	) => {
 		// No branch yet means the worktree was just created, so there's nothing to resume in it.
 		const sessionId = thread.branch || thread.cwd ? resumeId(thread) : undefined;
 		const window = threadWindowName(thread.id);
@@ -563,10 +602,16 @@ export function App() {
 			!resumeAnyway
 		) {
 			return ask(`⚠ #${thread.id} was active elsewhere in the last few minutes — close it there first, or resume anyway?`, () =>
-				run(() => launchClaude(thread, cwd, { resumeAnyway: true })),
+				run(() => launchClaude(thread, cwd, { background, mode, resumeAnyway: true })),
 			);
 		}
-		const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
+		const command = [
+			'claude',
+			'--settings',
+			CLAUDE_SETTINGS_FILE,
+			...(sessionId ? ['--resume', sessionId] : []),
+			...(mode ? ['--permission-mode', mode] : []),
+		];
 		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id }, { background });
 		await refreshWindows();
 		if (result === 'selected') setMessage('');
@@ -581,10 +626,16 @@ export function App() {
 			await launchClaude(thread, cwd);
 		});
 
-	const openPicker = () =>
+	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
+	const startImport = () => {
+		if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
+		const filtered = filter ? projectByName(filter) : state.projects.length === 1 ? state.projects[0] : undefined;
+		if (filtered) return openPicker(filtered);
+		setPrompt({ step: 'project', index: 0, then: 'import' });
+	};
+
+	const openPicker = (project: Project) =>
 		run(async () => {
-			if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
-			const project = projectByName(filter ?? selected?.project ?? state.projects[0]!.name)!;
 			const threads = await listOutsideThreads(project.path);
 			if (threads.length === 0) return setMessage(`No claude threads to import in ${project.path}`);
 			setPicker({ project: project.name, threads, row: 0 });
@@ -661,7 +712,7 @@ export function App() {
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
-		if (input === 'i') return openPicker();
+		if (input === 'i') return startImport();
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
 			setFilter(names[(names.indexOf(filter) + 1) % names.length]!);
@@ -670,6 +721,11 @@ export function App() {
 		if (!selected) return;
 		if (input === 'H') return moveColumn(selected, -1);
 		if (input === 'L') return moveColumn(selected, 1);
+		if (input === 'F' && selected.column !== 'done') {
+			// Imported threads keep their directory and window.
+			const closes = selected.cwd ? '' : ' It closes its claude window and removes its worktree (branch kept).';
+			return ask(`Move #${selected.id} ${selected.title} to Done?${closes}`, () => moveThread(selected, 'done'));
+		}
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
 		if (input === 't') {
@@ -732,8 +788,57 @@ export function App() {
 		}
 	});
 
+	useEffect(() => {
+		if (!boardRef.current) return;
+		const measured = measureElement(boardRef.current).height;
+		if (measured !== boardHeight) setBoardHeight(measured);
+	});
+
+	/** The slice of a column's threads that fits, keeping the cursor in view; `top` is the lines its "more" line above takes. */
+	const visibleSlice = (column: Column, count: number, cursorRow: number | undefined) => {
+		const lines = boardHeight - (LIST_TOP - 1);
+		const rowLines = cardHeight(column);
+		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count, top: 0 };
+		// Room for the "more" lines above and below.
+		const fits = Math.max(1, Math.floor((lines - 2) / rowLines));
+		const last = count - fits;
+		let start = scrollOffsets.current[column] ?? (column === 'done' ? last : 0);
+		if (cursorRow !== undefined) start = Math.min(Math.max(start, cursorRow - fits + 1), cursorRow);
+		// Unless you're in it, Done shows the latest arrivals, which land at the bottom.
+		else if (column === 'done') start = last;
+		start = Math.min(Math.max(0, start), last);
+		scrollOffsets.current[column] = start;
+		return { start, end: start + fits, top: start > 0 ? 1 : 0 };
+	};
+	const columnSlice = (c: number) => visibleSlice(COLUMNS[c]!, columnThreads(COLUMNS[c]!).length, c === cursor.col ? row : undefined);
+
 	// Local gets a column's width too.
 	const colWidth = Math.max(16, Math.floor(width / (COLUMNS.length + 1)));
+
+	// The import list scrolls to keep the selected entry in view; it shows what fits in the space
+	// measured after each render, starting at entry `pickerTop`.
+	const pickerList = useRef<DOMElement>(null);
+	const [pickerLines, setPickerLines] = useState(0);
+	useEffect(() => {
+		if (!pickerList.current) return;
+		const lines = measureElement(pickerList.current).height;
+		if (lines !== pickerLines) setPickerLines(lines);
+	});
+	const pickerTop = useRef(0);
+	const entryHeight = (t: OutsideThread) => (t.title === t.firstPrompt ? 1 : 2);
+	const pickerShown: OutsideThread[] = [];
+	if (picker) {
+		const { threads, row: selectedRow } = picker;
+		const linesFrom = (from: number, to: number) => threads.slice(from, to + 1).reduce((n, t) => n + entryHeight(t), 0);
+		pickerTop.current = Math.min(pickerTop.current, selectedRow);
+		while (pickerTop.current < selectedRow && linesFrom(pickerTop.current, selectedRow) > pickerLines) pickerTop.current++;
+		let lines = 0;
+		for (const t of threads.slice(pickerTop.current)) {
+			lines += entryHeight(t);
+			if (lines > pickerLines) break;
+			pickerShown.push(t);
+		}
+	} else pickerTop.current = 0;
 
 	const lastClick = useRef<{ target: string; at: number } | null>(null);
 	/** Whether this click is on the same thing as the last, soon enough to make a double-click. */
@@ -747,9 +852,9 @@ export function App() {
 	/** The import list's entry at screen row `y`; an entry is one line, or two when it shows its first prompt. */
 	const pickerRowAt = (y: number) => {
 		let top = LIST_TOP;
-		for (const [r, t] of (picker?.threads ?? []).entries()) {
-			top += t.title === t.firstPrompt ? 1 : 2;
-			if (y < top) return r;
+		for (const [r, t] of pickerShown.entries()) {
+			top += entryHeight(t);
+			if (y < top) return pickerTop.current + r;
 		}
 	};
 
@@ -770,12 +875,13 @@ export function App() {
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
 		const col = Math.floor(x / colWidth);
 		if (button !== 'left' || y < 1 || col > LOCAL_COL) return;
-		// Local's border pushes its contents down a line.
-		const top = col === LOCAL_COL ? LIST_TOP + 1 : LIST_TOP;
-		// The column's header.
+		// Local's border pushes its contents down a line; it doesn't scroll.
+		const slice = col === LOCAL_COL ? { start: 0, end: Infinity, top: 1 } : columnSlice(col);
+		const top = LIST_TOP + slice.top;
+		// The column's header, or its "more" line.
 		if (y < top) return setCursor({ col, row });
-		const r = Math.floor((y - top) / CARD_HEIGHT);
-		const thread = laneThreads(col)[r];
+		const r = slice.start + Math.floor((y - top) / (col === LOCAL_COL ? CARD_HEIGHT : cardHeight(COLUMNS[col]!)));
+		const thread = r < slice.end ? laneThreads(col)[r] : undefined;
 		if (!thread) return;
 		setCursor({ col, row: r });
 		if (isDoubleClick(thread.id)) openThread(thread);
@@ -788,8 +894,9 @@ export function App() {
 		return () => void mouse.off('press', listener);
 	}, []);
 
-	/** A thread's two lines on the board; `from` notes the column a thread in Local came from. */
+	/** A thread's two lines on the board (one in Done); `from` notes the column a thread in Local came from. */
 	const card = (t: Thread, isSelected: boolean, from?: string) => {
+		const oneLine = cardHeight(t.column) === 1 && !t.local;
 		const color = t.color ?? projectByName(t.project)?.color;
 		const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
 			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
@@ -808,11 +915,15 @@ export function App() {
 						</Text>
 					) : null}
 					{from ? <Text dimColor> ↩ {from}</Text> : null}
+					{/* Finished threads get one line each so more of them fit. */}
+					{oneLine ? ` ${t.title}` : null}
 				</Text>
-				<Text wrap="truncate" inverse={isSelected}>
-					{'  '}
-					{t.title}
-				</Text>
+				{oneLine ? null : (
+					<Text wrap="truncate" inverse={isSelected}>
+						{'  '}
+						{t.title}
+					</Text>
+				)}
 			</Box>
 		);
 	};
@@ -844,39 +955,50 @@ export function App() {
 					<Text bold>
 						Import a {picker.project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
 					</Text>
-					<Text dimColor>{'─'.repeat(Math.max(0, width - 1))}</Text>
-					{picker.threads.map((s, r) => {
-						const linked = linkedThread(s);
-						const active = recentlyActive(s.transcriptPath);
-						return (
-							<Box key={s.id} flexDirection="column">
-								<Text wrap="truncate" inverse={r === picker.row}>
-									<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
-									{linked ? <Text color="cyan">#{linked.id} </Text> : null}
-									{active ? <Text color="yellow">● active </Text> : null}
-									{s.title}
-								</Text>
-								{s.title !== s.firstPrompt ? (
-									<Text wrap="truncate" dimColor>
-										{'         '}
-										{s.firstPrompt}
+					<Text dimColor>
+						{'─'.repeat(Math.max(0, width - 13))} {String(picker.row + 1).padStart(4)} of {String(picker.threads.length).padEnd(3)}
+					</Text>
+					<Box ref={pickerList} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
+						{pickerShown.map((s, i) => {
+							const r = pickerTop.current + i;
+							const linked = linkedThread(s);
+							const active = recentlyActive(s.transcriptPath);
+							return (
+								<Box key={s.id} flexDirection="column" flexShrink={0}>
+									<Text wrap="truncate" inverse={r === picker.row}>
+										<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
+										{linked ? <Text color="cyan">#{linked.id} </Text> : null}
+										{active ? <Text color="yellow">● active </Text> : null}
+										{s.title}
 									</Text>
-								) : null}
+									{s.title !== s.firstPrompt ? (
+										<Text wrap="truncate" dimColor>
+											{'         '}
+											{s.firstPrompt}
+										</Text>
+									) : null}
+								</Box>
+							);
+						})}
+					</Box>
+				</Box>
+			) : (
+				<Box ref={boardRef} flexGrow={1} overflow="hidden">
+					{COLUMNS.map((column, c) => {
+						const threads = columnThreads(column);
+						const { start, end } = columnSlice(c);
+						return (
+							<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
+								<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+									{COLUMN_LABELS[column]} ({threads.length})
+								</Text>
+								<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
+								{start > 0 ? <Text dimColor>  ↑ {start} more</Text> : null}
+								{threads.slice(start, end).map((t, i) => card(t, c === cursor.col && start + i === row))}
+								{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
 							</Box>
 						);
 					})}
-				</Box>
-			) : (
-				<Box flexGrow={1} overflow="hidden">
-					{COLUMNS.map((column, c) => (
-						<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-								{COLUMN_LABELS[column]} ({columnThreads(column).length})
-							</Text>
-							<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-							{columnThreads(column).map((t, r) => card(t, c === cursor.col && r === row))}
-						</Box>
-					))}
 					{/* Not a column: a box off to the side that threads visit, one per project. */}
 					<Box flexDirection="column" width={colWidth} alignSelf="flex-start" borderStyle="round" borderColor="yellow">
 						<Text bold color={cursor.col === LOCAL_COL ? 'white' : 'gray'}>
@@ -889,19 +1011,20 @@ export function App() {
 				</Box>
 			)}
 			<Box marginTop={1} flexDirection="column" display={showProjects || editing ? 'none' : 'flex'}>
-				{selected?.plan ? (
+				{/* About the highlighted card, so not while the import list covers the board. */}
+				{selected?.plan && !picker ? (
 					<Text dimColor wrap="truncate-end">
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
 					</Text>
 				) : null}
-				{selected?.pr ? (
+				{selected?.pr && !picker ? (
 					<Text dimColor>
 						PR #{selected.pr.number} {selected.pr.url} (b opens it)
 					</Text>
 				) : null}
 				{prompt?.step === 'project' ? (
 					<Box flexDirection="column">
-						<Text bold>New thread — project? (j/k move, ⏎ choose, esc cancel)</Text>
+						<Text bold>{prompt.then === 'import' ? 'Import' : 'New thread'} — project? (j/k move, ⏎ choose, esc cancel)</Text>
 						{state.projects.map((p, i) => (
 							<Text key={p.name} inverse={i === prompt.index}>
 								{'  '}
