@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import type { Thread } from './state.js';
@@ -64,4 +65,15 @@ export async function createPr(cwd: string, thread: Thread, title: string, body:
 export async function prState(cwd: string, pr: Pr): Promise<PrState> {
 	const { stdout } = await execa('gh', ['pr', 'view', String(pr.number), '--json', 'state'], { cwd });
 	return (JSON.parse(stdout) as { state: PrState }).state;
+}
+
+/**
+ * Open the PR in the browser: $BROWSER if set, else the OS's opener. Under WSL that's Windows'
+ * explorer.exe, since xdg-open usually has no browser there (explorer exits 1 even when it works).
+ */
+export async function openPrInBrowser(pr: Pr): Promise<void> {
+	// Not waited on: a browser started this way can run until it's closed.
+	if (process.env.BROWSER) return void spawn(process.env.BROWSER, [pr.url], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref();
+	if (process.env.WSL_DISTRO_NAME) return void (await execa('explorer.exe', [pr.url], { reject: false }));
+	await execa(process.platform === 'darwin' ? 'open' : 'xdg-open', [pr.url]);
 }
