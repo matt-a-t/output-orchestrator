@@ -2,9 +2,11 @@
 import { basename, resolve } from 'node:path';
 import { render } from 'ink';
 import { App } from './app.js';
+import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
+import { THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
-import { writeClaudeSettings } from './status.js';
+import { writeClaudeSettings, writeOoSkill } from './status.js';
 import {
 	BOARD_WINDOW,
 	attachBoard,
@@ -19,7 +21,8 @@ const USAGE = `usage:
   oo                          open the board (starts/attaches the "oo" tmux session if needed)
   oo project add <path> [name]
   oo project list
-  oo project rm <name>`;
+  oo project rm <name>
+${THREAD_USAGE}`;
 
 function projectCommand(args: string[]): number {
 	const state = loadState();
@@ -55,6 +58,8 @@ function projectCommand(args: string[]): number {
 const [cmd, ...args] = process.argv.slice(2);
 if (cmd === 'project') {
 	process.exit(projectCommand(args));
+} else if (cmd === 'thread') {
+	process.exit(await threadCommand(args));
 } else if (cmd) {
 	console.error(USAGE);
 	process.exit(1);
@@ -68,6 +73,8 @@ if (cmd === 'project') {
 	await bindBoardKeys();
 	await enableTmuxMouse();
 	writeClaudeSettings();
+	writeOoSkill();
+	claimBoard();
 	render(<App />, { stdin: mouseStdin() });
 	reportMouse();
 }

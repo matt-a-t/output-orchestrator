@@ -1,7 +1,10 @@
-import { closeSync, openSync, readSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JsonlReader } from './jsonl.js';
 import { DATA_DIR } from './state.js';
+import { THREAD_USAGE } from './threadCommand.js';
 
 export const EVENTS_FILE = join(DATA_DIR, 'events.jsonl');
 export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
@@ -19,6 +22,42 @@ export function writeClaudeSettings(): void {
 	);
 	mkdirSync(DATA_DIR, { recursive: true });
 	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
+}
+
+export const SKILL_FILE = join(homedir(), '.claude', 'skills', 'oo', 'SKILL.md');
+
+export const SKILL = `---
+name: oo
+description: Read and change the output-orchestrator (oo) board of threads with the \`oo thread\` CLI. Use when OO_THREAD_ID is set (this claude was launched from the board), when the user mentions the board, a thread by number (#12) or oo, or when follow-up work turns up that belongs in its own thread.
+---
+
+# The oo board
+
+The user tracks work as threads on a kanban board (Planned → Active → Polish → UI testing → PR → Done).
+Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
+claude, and \`oo thread show\` describes your thread, including its plan.
+
+## Commands
+
+\`\`\`
+${THREAD_USAGE}
+\`\`\`
+
+## When to use them
+
+- **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
+  plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
+  and why, then tell the user its id. Keep the title short; put the detail in the plan.
+- **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is
+  in flight, so you don't duplicate it.
+- **Move threads only when the user asks.** Never move your own thread to done or archived: that removes
+  its worktree and closes this claude. Moves into or out of UI testing, and to PR, happen on the board.
+`;
+
+/** Install the skill that tells claude about \`oo thread\` (see threadCommand.ts). */
+export function writeOoSkill(): void {
+	mkdirSync(dirname(SKILL_FILE), { recursive: true });
+	writeFileSync(SKILL_FILE, SKILL);
 }
 
 export type HookEvent = {
@@ -68,41 +107,9 @@ export function fromThreadDir(e: HookEvent, dir: string | undefined): boolean {
 	return cwd === root || cwd.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
-/** Incrementally reads complete lines appended to the events file. */
-export class EventReader {
-	private offset = 0;
-	private partial = '';
-
-	read(): HookEvent[] {
-		let size: number;
-		try {
-			size = statSync(EVENTS_FILE).size;
-		} catch {
-			return [];
-		}
-		if (size < this.offset) {
-			// Truncated or replaced: start over.
-			this.offset = 0;
-			this.partial = '';
-		}
-		if (size === this.offset) return [];
-		const buf = Buffer.alloc(size - this.offset);
-		const fd = openSync(EVENTS_FILE, 'r');
-		try {
-			readSync(fd, buf, 0, buf.length, this.offset);
-		} finally {
-			closeSync(fd);
-		}
-		this.offset = size;
-		const lines = (this.partial + buf.toString('utf8')).split('\n');
-		this.partial = lines.pop() ?? '';
-		const events: HookEvent[] = [];
-		for (const line of lines) {
-			try {
-				const e = JSON.parse(line);
-				if (typeof e.thread === 'string' && typeof e.event === 'string') events.push(e);
-			} catch {}
-		}
-		return events;
+/** Incrementally reads hook events appended to the events file. */
+export class EventReader extends JsonlReader<HookEvent> {
+	constructor() {
+		super(EVENTS_FILE, e => typeof e.thread === 'string' && typeof e.event === 'string');
 	}
 }

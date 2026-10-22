@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
 export const COLUMNS = ['planned', 'active', 'polish', 'uitest', 'pr', 'done'] as const;
@@ -65,22 +65,22 @@ export type State = z.infer<typeof StateSchema>;
 export const DATA_DIR = join(homedir(), '.local', 'share', 'output-orchestrator');
 export const STATE_FILE = join(DATA_DIR, 'state.json');
 
-export function loadState(): State {
+export function loadState(file = STATE_FILE): State {
 	let raw: string;
 	try {
-		raw = readFileSync(STATE_FILE, 'utf8');
+		raw = readFileSync(file, 'utf8');
 	} catch {
 		return { version: 1, projects: [], threads: [] };
 	}
 	return StateSchema.parse(JSON.parse(raw));
 }
 
-export function saveState(state: State): string {
-	mkdirSync(DATA_DIR, { recursive: true });
-	const tmp = `${STATE_FILE}.tmp`;
+export function saveState(state: State, file = STATE_FILE): string {
+	mkdirSync(dirname(file), { recursive: true });
+	const tmp = `${file}.tmp`;
 	const json = JSON.stringify(state, null, 2);
 	writeFileSync(tmp, json);
-	renameSync(tmp, STATE_FILE);
+	renameSync(tmp, file);
 	return json;
 }
 
