@@ -11,7 +11,8 @@ import { DATA_DIR, type Column } from './state.js';
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
 	| { id: string; op: 'add'; project: string; title: string; plan: string }
-	| { id: string; op: 'move'; thread: string; column: Column };
+	| { id: string; op: 'move'; thread: string; column: Column }
+	| { id: string; op: 'plan'; thread: string; plan: string };
 export type Response = { id: string; ok: boolean; message: string; thread?: string };
 
 export const requestsFile = (dir = DATA_DIR) => join(dir, 'requests.jsonl');
@@ -51,7 +52,7 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const isRequest = (r: any) => typeof r.id === 'string' && (r.op === 'add' || r.op === 'move');
+const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'plan'].includes(r.op);
 const isResponse = (r: any) => typeof r.id === 'string' && typeof r.ok === 'boolean';
 
 /** The board's side: new requests since the last read. */

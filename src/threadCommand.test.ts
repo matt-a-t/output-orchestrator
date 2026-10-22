@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { loadState } from './state.js';
-import { resolveProject, resolveThreadId, threadCommand, type Context } from './threadCommand.js';
+import { planApproved, resolveProject, resolveThreadId, threadCommand, type Context } from './threadCommand.js';
 import { inDir } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
@@ -120,4 +120,28 @@ test('usage: shown for mistakes in the command line, not for failed lookups', as
 	const quiet = capture(t);
 	assert.equal(await threadCommand(['show', '9'], context(lookup.dir, lookup.project)), 1);
 	assert.doesNotMatch(quiet.err(), /usage:/);
+});
+
+test('plan replaces the thread\'s plan', async t => {
+	const { dir } = fixture([{ cwd: '/work/one', plan: 'old' }]);
+	capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['plan', '--plan-file', '-'], ctx), 0);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.plan, 'plan from stdin');
+	assert.equal(await threadCommand(['plan', '1'], ctx), 1);
+});
+
+test('approving a Planned thread\'s plan saves it and moves the thread to Active', async () => {
+	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two', column: 'polish', plan: 'kept' }]);
+	const input = (cwd: string) => ({ cwd, tool_name: 'ExitPlanMode', tool_input: { plan: '# Do it\n' } });
+	assert.match((await planApproved(input('/work/one'), context(dir, '/', { OO_THREAD_ID: '1' })))!, /Moved #1 to ACTIVE/);
+	// Not Planned: left alone.
+	assert.equal(await planApproved(input('/work/two'), context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
+	// No thread to go with it.
+	assert.equal(await planApproved(input('/work/two'), context(dir, '/', {})), undefined);
+	const threads = loadState(join(dir, 'state.json')).threads;
+	assert.deepEqual(
+		threads.map(t => [t.id, t.plan, t.column]),
+		[['2', 'kept', 'polish'], ['1', '# Do it', 'active']],
+	);
 });

@@ -42,6 +42,8 @@ import {
 } from './threads.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
 
+type PermissionMode = 'plan' | 'auto';
+
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
 	waiting: ['⏸', 'red'],
@@ -263,6 +265,9 @@ export function App() {
 		const col = COLUMNS.indexOf(column);
 		// Its branch is checked out in the project's checkout, not its worktree, until it comes back.
 		if (thread.local) return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
+		// Its claude is in plan mode just while it's Planned (see launchClaude), so an open one restarts on the way in or out.
+		const restart = (thread.column === 'planned') !== (column === 'planned') && liveWindows.has(threadWindowName(thread.id));
+		if (restart && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		const warning = moveWarning(state, thread, column);
 		if (warning) setMessage(warning);
 		// Done closes its claude window.
@@ -270,7 +275,10 @@ export function App() {
 		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
 		setColumn(thread.id, column);
 		setCursor({ col, row: columnThreads(column).length });
-		run(() => syncWorktree({ ...thread, column }), 'updating worktree');
+		run(async () => {
+			await syncWorktree({ ...thread, column });
+			if (restart) await restartClaude({ ...thread, column }, column === 'planned' ? 'plan' : 'auto');
+		}, 'updating worktree');
 	};
 
 	const reorder = (thread: Thread, delta: number) => {
@@ -323,6 +331,14 @@ export function App() {
 		await killWindow(threadWindowName(thread.id));
 		await refreshWindows();
 		return open;
+	};
+
+	/** Close the thread's claude and resume it in the background in `mode`. */
+	const restartClaude = async (thread: Thread, mode: PermissionMode) => {
+		const cwd = threadDir(stateRef.current, thread);
+		if (!cwd || !(await closeClaude(thread))) return;
+		await launchClaude(thread, cwd, { background: true, mode });
+		setMessage(`Restarted claude for #${thread.id} in ${mode} mode`);
 	};
 
 	/** Copy the thread's transcript to where `claude --resume` looks from `cwd`. */
@@ -550,8 +566,13 @@ export function App() {
 	/**
 	 * Jump to the thread's claude window, starting claude in `cwd` (resuming the thread if it can) if needed.
 	 * `background` starts it without leaving the board; `resumeAnyway` skips the check for it being open elsewhere.
+	 * A thread in Planned is for planning only, so its claude starts in plan mode unless `mode` says otherwise.
 	 */
-	const launchClaude = async (thread: Thread, cwd: string, { background = false, resumeAnyway = false } = {}) => {
+	const launchClaude = async (
+		thread: Thread,
+		cwd: string,
+		{ background = false, resumeAnyway = false, mode = thread.column === 'planned' ? 'plan' : undefined }: { background?: boolean; resumeAnyway?: boolean; mode?: PermissionMode } = {},
+	) => {
 		// No branch yet means the worktree was just created, so there's nothing to resume in it.
 		const sessionId = thread.branch || thread.cwd ? resumeId(thread) : undefined;
 		const window = threadWindowName(thread.id);
@@ -565,10 +586,16 @@ export function App() {
 			!resumeAnyway
 		) {
 			return ask(`⚠ #${thread.id} was active elsewhere in the last few minutes — close it there first, or resume anyway?`, () =>
-				run(() => launchClaude(thread, cwd, { resumeAnyway: true })),
+				run(() => launchClaude(thread, cwd, { background, mode, resumeAnyway: true })),
 			);
 		}
-		const command = ['claude', '--settings', CLAUDE_SETTINGS_FILE, ...(sessionId ? ['--resume', sessionId] : [])];
+		const command = [
+			'claude',
+			'--settings',
+			CLAUDE_SETTINGS_FILE,
+			...(sessionId ? ['--resume', sessionId] : []),
+			...(mode ? ['--permission-mode', mode] : []),
+		];
 		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id }, { background });
 		await refreshWindows();
 		if (result === 'selected') setMessage('');
