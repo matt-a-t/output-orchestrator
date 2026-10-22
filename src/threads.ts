@@ -1,6 +1,7 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
+import { prState } from './github.js';
 import type { Request, Response } from './requests.js';
 import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
@@ -51,6 +52,14 @@ export async function archiveProblem(thread: Thread): Promise<string | undefined
 	if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
 		return `⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them before archiving`;
 	}
+}
+
+/** Why the thread can't move to Done, if it can't: its PR is still open (merging moves it there itself). */
+export async function doneProblem(project: Project, thread: Thread): Promise<string | undefined> {
+	if (!thread.pr) return;
+	const state = await prState(project.path, thread.pr).catch(() => undefined);
+	if (!state) return `⚠ Couldn't check whether #${thread.id}'s PR #${thread.pr.number} is still open — try again`;
+	if (state === 'OPEN') return `⚠ #${thread.id}'s PR #${thread.pr.number} is still open — merge or close it before moving to Done`;
 }
 
 /** What to record on the thread after touching its worktree, and what to tell the user. */
@@ -109,7 +118,10 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	if (!project) return { id, ok: false, message: `Unknown project "${thread.project}"` };
 	const done = (message: string) => ({ id, ok: true, message, thread: thread.id });
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
-	const problem = boardOnlyMove(thread, request.column) ?? (request.column === 'archived' ? await archiveProblem(thread) : undefined);
+	const problem =
+		boardOnlyMove(thread, request.column) ??
+		(request.column === 'archived' ? await archiveProblem(thread) : undefined) ??
+		(request.column === 'done' ? await doneProblem(project, thread) : undefined);
 	if (problem) return { id, ok: false, message: problem };
 	const moved = { ...thread, column: request.column };
 	store.update(s => setColumn(s, thread.id, request.column));
