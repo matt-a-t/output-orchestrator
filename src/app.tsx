@@ -2,19 +2,7 @@ import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
 import { editPr, editThread } from './editor.js';
-import {
-	checkout,
-	currentRef,
-	defaultBranch,
-	ensureWorktree,
-	hasWorktree,
-	isDirty,
-	commit,
-	pushBranch,
-	removeWorktree,
-	stageAll,
-	worktreePath,
-} from './git.js';
+import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, prState } from './github.js';
 import { editText, loop } from './input.js';
 import { ProjectsView } from './projects.js';
@@ -25,7 +13,6 @@ import {
 	COLUMNS,
 	STATE_FILE,
 	loadState,
-	newThreadId,
 	saveState,
 	type Column,
 	type Project,
@@ -34,6 +21,16 @@ import {
 } from './state.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
+import {
+	addThread,
+	archiveProblem,
+	createWorktree as worktreeFor,
+	moveWarning,
+	setColumn as moveTo,
+	syncWorktree as syncWorktreeFor,
+	threadDir,
+	type WorktreeChange,
+} from './threads.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
@@ -177,13 +174,6 @@ export function App() {
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 
-	/** Where the thread's work happens, if it has anywhere yet. */
-	const threadDir = (thread: Thread): string | undefined => {
-		if (thread.cwd) return thread.cwd;
-		if (thread.column === 'uitest') return projectByName(thread.project)?.path;
-		if (hasWorktree(thread)) return worktreePath(thread);
-	};
-
 	useEffect(() => {
 		let checking = false;
 		const check = async () => {
@@ -194,7 +184,7 @@ export function App() {
 				const threads = stateRef.current.threads.filter(t => t.column !== 'archived');
 				await Promise.all(
 					threads.map(async t => {
-						const dir = threadDir(t);
+						const dir = threadDir(stateRef.current, t);
 						if (dir && (await isDirty(dir).catch(() => false))) dirty.add(t.id);
 					}),
 				);
@@ -221,23 +211,14 @@ export function App() {
 		}));
 
 	/** Move the thread to the bottom of the column. */
-	const setColumn = (id: string, column: Column, patch: Partial<Thread> = {}) =>
-		setState(s => {
-			const thread = s.threads.find(t => t.id === id);
-			if (!thread) return s;
-			const moved = { ...thread, ...patch, column, updatedAt: new Date().toISOString() };
-			// Moving to the end of the array puts it at the bottom of the target column.
-			return { ...s, threads: [...s.threads.filter(t => t.id !== id), moved] };
-		});
+	const setColumn = (id: string, column: Column, patch: Partial<Thread> = {}) => setState(s => moveTo(s, id, column, patch));
 
 	const moveColumn = (thread: Thread, delta: number) => {
 		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 		if (col < 0 || col >= COLUMNS.length) return;
 		const column = COLUMNS[col]!;
-		if (column === 'active') {
-			const other = state.threads.find(t => t.column === 'active' && t.project === thread.project);
-			if (other) setMessage(`⚠ ${thread.project} already has an active thread: #${other.id} ${other.title}`);
-		}
+		const warning = moveWarning(state, thread, column);
+		if (warning) setMessage(warning);
 		if (column === 'uitest') return void run(() => startUiTest(thread), 'checking out for UI testing');
 		// From UI testing too: it only leaves once the PR is open.
 		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
@@ -271,33 +252,24 @@ export function App() {
 		}
 	};
 
-	/** Create the thread's worktree if it's missing; returns its path. */
-	const createWorktree = async (project: Project, thread: Thread): Promise<string> => {
-		const created = await ensureWorktree(project.path, thread);
-		if (created) {
-			// Until now it ran in the main checkout, so `claude --resume` wouldn't find them from here.
-			updateThread(thread.id, { ...created, sessionId: undefined, transcriptPath: undefined });
-			setMessage(`Created worktree for #${thread.id} on ${created.branch}`);
-		}
-		return worktreePath(thread);
+	const applyChange = (thread: Thread, { patch, message }: WorktreeChange) => {
+		if (patch) updateThread(thread.id, patch);
+		if (message) setMessage(message);
 	};
 
-	/** Keep the worktree in step with the column: there from Active on, removed (branch kept) once Done/archived. */
+	/** Create the thread's worktree if it's missing; returns its path. */
+	const createWorktree = async (project: Project, thread: Thread): Promise<string> => {
+		const change = await worktreeFor(project, thread);
+		applyChange(thread, change);
+		return change.path;
+	};
+
+	/** Keep the worktree in step with the column (see threads.ts). */
 	const syncWorktree = async (thread: Thread) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		// Imported threads stay where they were started.
-		if (thread.column === 'planned' || thread.cwd) return;
-		if (thread.column !== 'done' && thread.column !== 'archived') return void (await createWorktree(project, thread));
-		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
-			return setMessage(`⚠ Kept #${thread.id}'s worktree: it has uncommitted changes`);
-		}
-		// claude can't carry on in a deleted directory.
-		await killWindow(threadWindowName(thread.id));
+		applyChange(thread, await syncWorktreeFor(project, thread));
 		await refreshWindows();
-		if (!hasWorktree(thread)) return;
-		await removeWorktree(project.path, thread);
-		setMessage(`Removed #${thread.id}'s worktree (kept branch ${thread.branch})`);
 	};
 
 	/** Close the thread's claude window, if it's open; returns whether it was. */
@@ -466,7 +438,7 @@ export function App() {
 	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one. */
 	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>) =>
 		run(async () => {
-			const dir = threadDir(thread);
+			const dir = threadDir(stateRef.current, thread);
 			if (dir) return await fn(dir);
 			if (thread.column === 'uitest') return setMessage(`✗ Unknown project "${thread.project}"`);
 			setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
@@ -481,8 +453,7 @@ export function App() {
 	};
 
 	const createThread = (project: string, title: string) => {
-		const now = new Date().toISOString();
-		const thread: Thread = { id: newThreadId(state), project, title, plan: '', column: 'planned', createdAt: now, updatedAt: now };
+		const { thread } = addThread(state, { project, title });
 		setState(s => ({ ...s, threads: [...s.threads, thread] }));
 		setCursor({ col: 0, row: columnThreads('planned').length });
 		setMessage(`Created #${thread.id} — e to add a plan`);
@@ -607,19 +578,14 @@ export function App() {
 			if (!showThread(linked)) setMessage(`That thread is already imported as archived #${linked.id}`);
 			return;
 		}
-		const now = new Date().toISOString();
-		const thread: Thread = {
-			id: newThreadId(state),
+		const { thread } = addThread(state, {
 			title: outside.title,
 			plan: outside.title === outside.firstPrompt ? '' : outside.firstPrompt,
 			project,
-			column: 'planned',
 			sessionId: outside.id,
 			transcriptPath: outside.transcriptPath,
 			cwd: outside.cwd,
-			createdAt: now,
-			updatedAt: now,
-		};
+		});
 		setState(s => ({ ...s, threads: [...s.threads, thread] }));
 		setCursor({ col: 0, row: columnThreads('planned').length });
 		setMessage(
@@ -677,11 +643,8 @@ export function App() {
 		}
 		if (input === 'x') {
 			return run(async () => {
-				if (selected.column === 'uitest') return setMessage(`⚠ Move #${selected.id} out of UI testing before archiving`);
-				// Archived threads are hidden, so don't leave uncommitted work behind in one.
-				if (hasWorktree(selected) && (await isDirty(worktreePath(selected)))) {
-					return setMessage(`⚠ #${selected.id} has uncommitted changes — approve them (d, then a) or discard them before archiving`);
-				}
+				const problem = await archiveProblem(selected);
+				if (problem) return setMessage(problem);
 				ask(`Archive #${selected.id}?`, () =>
 					run(async () => {
 						updateThread(selected.id, { column: 'archived' });
