@@ -10,16 +10,24 @@ export const EVENTS_FILE = join(DATA_DIR, 'events.jsonl');
 export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
 
 // Run from source (tsx) we point at hook.ts and let Node strip the types.
-const HOOK_SCRIPT = fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './hook.ts' : './hook.js', import.meta.url));
+const fromSource = import.meta.url.endsWith('.ts');
+const HOOK_SCRIPT = fileURLToPath(new URL(fromSource ? './hook.ts' : './hook.js', import.meta.url));
+// This one imports the rest of oo, so from source it needs tsx's loader too, which execArgv carries.
+const PLAN_HOOK = [
+	...(fromSource ? process.execArgv : []),
+	fileURLToPath(new URL(fromSource ? './planHook.ts' : './planHook.js', import.meta.url)),
+];
 
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 
 /** Write the settings file passed to every thread's claude via `--settings`. */
 export function writeClaudeSettings(): void {
-	const command = `${JSON.stringify(process.execPath)} --no-warnings ${JSON.stringify(HOOK_SCRIPT)}`;
-	const hooks = Object.fromEntries(
+	const node = (args: string[]) => [process.execPath, '--no-warnings', ...args].map(arg => JSON.stringify(arg)).join(' ');
+	const command = node([HOOK_SCRIPT]);
+	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]> = Object.fromEntries(
 		HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]),
 	);
+	hooks.PostToolUse!.push({ matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: node(PLAN_HOOK) }] });
 	mkdirSync(DATA_DIR, { recursive: true });
 	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
 }
@@ -47,6 +55,10 @@ ${THREAD_USAGE}
 
 ## When to use them
 
+- **Planned means planning only.** If \`oo thread show\` says your thread is in PLANNED, don't change code,
+  create files or commit: its claude starts in plan mode. Work out what to build (read the code, ask questions)
+  and save it with \`oo thread plan --plan-file - <<'EOF'\`. When the user approves your plan as you leave plan
+  mode, the board saves it as the thread's plan and moves the thread to Active, and the work can start.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
   and why, then tell the user its id. Keep the title short; put the detail in the plan.

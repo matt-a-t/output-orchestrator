@@ -13,12 +13,14 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               columns: ${[...COLUMNS, 'archived'].join(', ')}
                               Moving to pr, and into or out of Local, is done on the board;
                               a thread in Local can't move until it's back.
+  oo thread plan [id] --plan-file <path>|-
+                              replace the thread's plan
   Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
 
 /** What the command runs against; tests swap these out. */
 export type Context = { cwd: string; env: NodeJS.ProcessEnv; dir: string; stdin: () => string };
 
-const defaultContext = (): Context => ({
+export const defaultContext = (): Context => ({
 	cwd: process.cwd(),
 	env: process.env,
 	dir: DATA_DIR,
@@ -176,7 +178,51 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		console.log(response.message);
 		return 0;
 	}
+	if (sub === 'plan') {
+		const { positional, flag } = parseArgs(rest, ['plan-file'], []);
+		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
+		const planFile = flag('plan-file');
+		if (planFile === undefined) throw new UsageError('oo thread plan [id] --plan-file <path>|-');
+		const plan = (planFile === '-' ? ctx.stdin() : readFileSync(planFile, 'utf8')).trim();
+		const thread = resolveThreadId(state, positional[0], ctx.env, ctx.cwd);
+		const response = await change({ op: 'plan', thread, plan }, ctx);
+		if (!response.ok) return fail(response.message);
+		console.log(response.message);
+		return 0;
+	}
 	throw new UsageError('');
+}
+
+/** The plan claude had approved, from ExitPlanMode's PostToolUse input: inline, or in the file it was written to. */
+function approvedPlan(input: any): string | undefined {
+	const inline = input?.tool_input?.plan ?? input?.tool_response?.plan;
+	if (typeof inline === 'string' && inline.trim()) return inline.trim();
+	const file = input?.tool_input?.planFilePath ?? input?.tool_response?.filePath;
+	if (typeof file !== 'string') return;
+	try {
+		return readFileSync(file, 'utf8').trim() || undefined;
+	} catch {}
+}
+
+/**
+ * Claude hook for ExitPlanMode (see planHook.ts): approving the plan of a thread in Planned saves it
+ * as the thread's plan and moves the thread to Active. Returns what happened, for claude; undefined if nothing did.
+ */
+export async function planApproved(input: any, ctx: Context): Promise<string | undefined> {
+	const state = loadState(join(ctx.dir, 'state.json'));
+	let thread: string;
+	try {
+		thread = resolveThreadId(state, undefined, ctx.env, typeof input?.cwd === 'string' ? input.cwd : ctx.cwd);
+	} catch {
+		return;
+	}
+	if (state.threads.find(t => t.id === thread)?.column !== 'planned') return;
+	const plan = approvedPlan(input);
+	const responses = [
+		...(plan ? [await change({ op: 'plan', thread, plan }, ctx)] : []),
+		await change({ op: 'move', thread, column: 'active' }, ctx),
+	];
+	return responses.map(r => `${r.ok ? '' : '✗ '}${r.message}`).join('\n');
 }
 
 function fail(message: string): number {

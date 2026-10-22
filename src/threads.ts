@@ -108,6 +108,11 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const project = state.projects.find(p => p.name === thread.project);
 	if (!project) return { id, ok: false, message: `Unknown project "${thread.project}"` };
 	const done = (message: string) => ({ id, ok: true, message, thread: thread.id });
+	if (request.op === 'plan') {
+		const now = new Date().toISOString();
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));
+		return done(`Saved #${thread.id}'s plan`);
+	}
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem = boardOnlyMove(thread, request.column) ?? (request.column === 'archived' ? await archiveProblem(thread) : undefined);
 	if (problem) return { id, ok: false, message: problem };
