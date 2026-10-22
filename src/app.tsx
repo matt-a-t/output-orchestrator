@@ -32,6 +32,7 @@ import {
 	addThread,
 	applyRequest,
 	archiveProblem,
+	doneProblem,
 	createWorktree as worktreeFor,
 	moveWarning,
 	setColumn as moveTo,
@@ -274,12 +275,19 @@ export function App() {
 		// Done closes its claude window.
 		if (column === 'done' && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
-		setColumn(thread.id, column);
-		setCursor({ col, row: columnThreads(column).length });
-		run(async () => {
+		const move = async () => {
+			setColumn(thread.id, column);
+			setCursor({ col, row: columnThreads(column).length });
 			await syncWorktree({ ...thread, column });
 			if (restart) await restartClaude({ ...thread, column }, column === 'planned' ? 'plan' : 'auto');
-		}, 'updating worktree');
+		};
+		const project = projectByName(thread.project);
+		if (column !== 'done' || !thread.pr || !project) return void run(move, 'updating worktree');
+		run(async () => {
+			const problem = await doneProblem(project, thread);
+			if (problem) return setMessage(problem);
+			await move();
+		}, 'checking PR');
 	};
 
 	const reorder = (thread: Thread, delta: number) => {
