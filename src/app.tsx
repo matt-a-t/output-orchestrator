@@ -34,7 +34,7 @@ import {
 } from './state.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
 import { mouse, type MouseEvent } from './mouse.js';
-import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
+import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from './status.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
@@ -124,7 +124,8 @@ export function App() {
 	useEffect(() => {
 		const reader = new EventReader();
 		const poll = () => {
-			const events = reader.read();
+			const dirs = new Map(stateRef.current.threads.map(t => [t.id, threadDir(t)]));
+			const events = reader.read().filter(e => fromThreadDir(e, dirs.get(e.thread)));
 			if (events.length === 0) return;
 			setStatuses(prev => {
 				const next = { ...prev };
