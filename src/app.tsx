@@ -6,6 +6,7 @@ import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, push
 import { createPr, draftPr, findPr, prState } from './github.js';
 import { editText, loop } from './input.js';
 import { ProjectsView } from './projects.js';
+import { RequestReader, requestsFile, respond } from './requests.js';
 import { draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
 import {
 	COLORS,
@@ -23,12 +24,14 @@ import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type Outsi
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
 import {
 	addThread,
+	applyRequest,
 	archiveProblem,
 	createWorktree as worktreeFor,
 	moveWarning,
 	setColumn as moveTo,
 	syncWorktree as syncWorktreeFor,
 	threadDir,
+	type Store,
 	type WorktreeChange,
 } from './threads.js';
 import { killWindow, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
@@ -163,6 +166,37 @@ export function App() {
 		poll();
 		watchFile(EVENTS_FILE, { interval: 500 }, poll);
 		return () => unwatchFile(EVENTS_FILE, poll);
+	}, []);
+
+	// Apply `oo thread …` requests (see requests.ts), one at a time.
+	useEffect(() => {
+		const reader = new RequestReader();
+		const store: Store = {
+			get: () => stateRef.current,
+			// The ref is updated now rather than on the next render, so a request queued right behind sees this one.
+			update: fn => {
+				stateRef.current = fn(stateRef.current);
+				setState(fn);
+			},
+		};
+		let queue = Promise.resolve();
+		const poll = () => {
+			for (const request of reader.read()) {
+				queue = queue.then(async () => {
+					const response = await applyRequest(store, request).catch(err => ({
+						id: request.id,
+						ok: false,
+						message: err instanceof Error ? err.message : String(err),
+					}));
+					respond(response);
+					setMessage(`${response.ok ? '' : '✗ '}oo thread: ${response.message.replaceAll('\n', ' · ')}`);
+					await refreshWindows();
+				});
+			}
+		};
+		poll();
+		watchFile(requestsFile(), { interval: 500 }, poll);
+		return () => unwatchFile(requestsFile(), poll);
 	}, []);
 
 	// Badges only mean something while the thread's window is open.

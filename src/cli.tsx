@@ -2,6 +2,7 @@
 import { basename, resolve } from 'node:path';
 import { render } from 'ink';
 import { App } from './app.js';
+import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
 import { writeClaudeSettings } from './status.js';
 import { BOARD_WINDOW, attachBoard, bindBoardKeys, insideTmux, renameCurrentWindow, selectExistingBoard } from './tmux.js';
@@ -58,5 +59,6 @@ if (cmd === 'project') {
 	await renameCurrentWindow(BOARD_WINDOW);
 	await bindBoardKeys();
 	writeClaudeSettings();
+	claimBoard();
 	render(<App />);
 }

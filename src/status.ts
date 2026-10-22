@@ -1,6 +1,7 @@
-import { closeSync, openSync, readSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JsonlReader } from './jsonl.js';
 import { DATA_DIR } from './state.js';
 
 export const EVENTS_FILE = join(DATA_DIR, 'events.jsonl');
@@ -52,41 +53,9 @@ export function nextStatus(current: Status | undefined, e: HookEvent): Status | 
 	}
 }
 
-/** Incrementally reads complete lines appended to the events file. */
-export class EventReader {
-	private offset = 0;
-	private partial = '';
-
-	read(): HookEvent[] {
-		let size: number;
-		try {
-			size = statSync(EVENTS_FILE).size;
-		} catch {
-			return [];
-		}
-		if (size < this.offset) {
-			// Truncated or replaced: start over.
-			this.offset = 0;
-			this.partial = '';
-		}
-		if (size === this.offset) return [];
-		const buf = Buffer.alloc(size - this.offset);
-		const fd = openSync(EVENTS_FILE, 'r');
-		try {
-			readSync(fd, buf, 0, buf.length, this.offset);
-		} finally {
-			closeSync(fd);
-		}
-		this.offset = size;
-		const lines = (this.partial + buf.toString('utf8')).split('\n');
-		this.partial = lines.pop() ?? '';
-		const events: HookEvent[] = [];
-		for (const line of lines) {
-			try {
-				const e = JSON.parse(line);
-				if (typeof e.thread === 'string' && typeof e.event === 'string') events.push(e);
-			} catch {}
-		}
-		return events;
+/** Incrementally reads hook events appended to the events file. */
+export class EventReader extends JsonlReader<HookEvent> {
+	constructor() {
+		super(EVENTS_FILE, e => typeof e.thread === 'string' && typeof e.event === 'string');
 	}
 }

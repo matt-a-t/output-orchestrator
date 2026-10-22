@@ -1,7 +1,8 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
-import { newThreadId, type Column, type Project, type State, type Thread } from './state.js';
+import type { Request, Response } from './requests.js';
+import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
 /** Where the thread's work happens, if it has anywhere yet. */
@@ -81,4 +82,41 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 	if (!hasWorktree(thread)) return {};
 	await removeWorktree(project.path, thread);
 	return { message: `Removed #${thread.id}'s worktree (kept branch ${thread.branch})` };
+}
+
+/** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
+export function boardOnlyMove(thread: Thread, column: Column): string | undefined {
+	if (column === 'pr') return `Moving #${thread.id} to PR opens the PR description editor — do it from the board`;
+	if (column === 'uitest' || thread.column === 'uitest') {
+		return `Moving #${thread.id} ${column === 'uitest' ? 'into' : 'out of'} UI testing switches the project's checkout — do it from the board`;
+	}
+}
+
+/** The state being changed: the board's, or state.json when it isn't running. */
+export type Store = { get(): State; update(fn: (state: State) => State): void };
+
+/** Apply a request from `oo thread …` with the same rules as the board's keys. */
+export async function applyRequest(store: Store, request: Request): Promise<Response> {
+	const { id } = request;
+	const state = store.get();
+	if (request.op === 'add') {
+		if (!state.projects.some(p => p.name === request.project)) return { id, ok: false, message: `Unknown project "${request.project}"` };
+		const { thread } = addThread(state, { project: request.project, title: request.title, plan: request.plan });
+		store.update(s => ({ ...s, threads: [...s.threads, thread] }));
+		return { id, ok: true, message: `Created #${thread.id}`, thread: thread.id };
+	}
+	const thread = state.threads.find(t => t.id === request.thread);
+	if (!thread) return { id, ok: false, message: `No thread #${request.thread}` };
+	const project = state.projects.find(p => p.name === thread.project);
+	if (!project) return { id, ok: false, message: `Unknown project "${thread.project}"` };
+	const done = (message: string) => ({ id, ok: true, message, thread: thread.id });
+	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
+	const problem = boardOnlyMove(thread, request.column) ?? (request.column === 'archived' ? await archiveProblem(thread) : undefined);
+	if (problem) return { id, ok: false, message: problem };
+	const moved = { ...thread, column: request.column };
+	store.update(s => setColumn(s, thread.id, request.column));
+	const { patch, message } = await syncWorktree(project, moved);
+	if (patch) store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch } : t)) }));
+	const messages = [moveWarning(state, thread, request.column), message, `Moved #${thread.id} to ${COLUMN_LABELS[request.column]}`];
+	return done(messages.filter(Boolean).join('\n'));
 }
