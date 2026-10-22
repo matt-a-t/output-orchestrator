@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
+import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { editPr, editThread } from './editor.js';
 import {
 	checkout,
@@ -57,7 +57,7 @@ const LEGEND: [string, string | undefined, string][] = [
 type NewThreadPrompt = { step: 'project'; index: number } | { step: 'title'; project: string; title: string };
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  i import session  C colour  p filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  F done  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff  c comment  a accept  o open changes  i import session  C colour  p filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -71,6 +71,8 @@ export function App() {
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
 	const [prompt, setPrompt] = useState<NewThreadPrompt | null>(null);
+	// Thread waiting on y/n before F moves it to Done.
+	const [confirmDone, setConfirmDone] = useState<Thread | null>(null);
 	const [showProjects, setShowProjects] = useState(false);
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
@@ -79,6 +81,10 @@ export function App() {
 	const [picker, setPicker] = useState<{ project: string; sessions: Session[]; row: number } | null>(null);
 	// Thread whose resume was held back because its session looked busy elsewhere; ⏎ again goes ahead.
 	const resumeAnyway = useRef<string | null>(null);
+	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
+	const boardRef = useRef<DOMElement>(null);
+	const [boardHeight, setBoardHeight] = useState(0);
+	const scrollOffsets = useRef<Partial<Record<Column, number>>>({});
 
 	const refreshWindows = () =>
 		windowNames()
@@ -168,7 +174,14 @@ export function App() {
 	const moveColumn = (thread: Thread, delta: number) => {
 		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 		if (col < 0 || col >= COLUMNS.length) return;
-		const column = COLUMNS[col]!;
+		moveTo(thread, COLUMNS[col]!);
+	};
+
+	const moveTo = (thread: Thread, column: (typeof COLUMNS)[number]) => {
+		if (thread.column === column) return;
+		const col = COLUMNS.indexOf(column);
+		// Done closes its claude window.
+		if (column === 'done' && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (column === 'active') {
 			const other = state.threads.find(t => t.column === 'active' && t.project === thread.project);
 			if (other) setMessage(`⚠ ${thread.project} already has an active thread: #${other.id} ${other.title}`);
@@ -300,6 +313,11 @@ export function App() {
 		if (!restoreRef) return setMessage(`✗ Don't know what ${project.path} was on before #${thread.id}`);
 		const wasOpen = await closeClaude(thread);
 		await checkout(project.path, restoreRef);
+		if (column === 'done') {
+			setColumn(thread.id, 'done', { restoreRef: undefined });
+			setCursor({ col: COLUMNS.indexOf('done'), row: columnThreads('done').length });
+			return setMessage(`${project.name} checkout is back on ${restoreRef}; #${thread.id} → Done`);
+		}
 		const back: Thread = { ...thread, column: 'polish', restoreRef: undefined };
 		const cwd = await createWorktree(project, back);
 		Object.assign(back, moveSession(thread, cwd));
@@ -524,6 +542,11 @@ export function App() {
 		if (busy || showProjects) return;
 		setMessage('');
 		if (prompt) return promptInput(prompt, input, key);
+		if (confirmDone) {
+			setConfirmDone(null);
+			if (input === 'y') return moveTo(confirmDone, 'done');
+			return setMessage('Cancelled');
+		}
 		if (picker) {
 			const last = picker.sessions.length - 1;
 			if (input === 'q' || key.escape) return setPicker(null);
@@ -548,6 +571,7 @@ export function App() {
 		if (!selected) return;
 		if (input === 'H') return moveColumn(selected, -1);
 		if (input === 'L') return moveColumn(selected, 1);
+		if (input === 'F') return selected.column === 'done' ? undefined : setConfirmDone(selected);
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
 		if (input === 'e') return editSelected(selected);
@@ -606,6 +630,29 @@ export function App() {
 		}
 	});
 
+	useEffect(() => {
+		if (!boardRef.current) return;
+		const measured = measureElement(boardRef.current).height;
+		if (measured !== boardHeight) setBoardHeight(measured);
+	});
+
+	/** The slice of a column's threads that fits, keeping the cursor in view. */
+	const visibleSlice = (column: Column, count: number, cursorRow: number | undefined) => {
+		const lines = boardHeight - 2; // title and rule
+		const rowLines = column === 'done' ? 1 : 2;
+		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count };
+		// Room for the "more" lines above and below.
+		const fits = Math.max(1, Math.floor((lines - 2) / rowLines));
+		const last = count - fits;
+		let start = scrollOffsets.current[column] ?? (column === 'done' ? last : 0);
+		if (cursorRow !== undefined) start = Math.min(Math.max(start, cursorRow - fits + 1), cursorRow);
+		// Unless you're in it, Done shows the latest arrivals, which land at the bottom.
+		else if (column === 'done') start = last;
+		start = Math.min(Math.max(0, start), last);
+		scrollOffsets.current[column] = start;
+		return { start, end: start + fits };
+	};
+
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
 	return (
@@ -645,37 +692,53 @@ export function App() {
 					})}
 				</Box>
 			) : (
-				<Box flexGrow={1} overflow="hidden">
-					{COLUMNS.map((column, c) => (
-						<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-								{COLUMN_LABELS[column]} ({columnThreads(column).length})
-							</Text>
-							<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-							{columnThreads(column).map((t, r) => {
-								const isSelected = c === cursor.col && r === row;
-								const color = t.color ?? projectByName(t.project)?.color;
-								const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
-									? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
-									: resumableSession(t)
-										? ['↻', 'gray']
-										: [' ', undefined];
-								return (
-									<Box key={t.id} flexDirection="column">
-										<Text wrap="truncate" inverse={isSelected}>
-											<Text color={badgeColor}>{badge} </Text>
-											<Text color={color}>{t.project}</Text>
-											<Text dimColor> #{t.id}</Text>
-										</Text>
-										<Text wrap="truncate" inverse={isSelected}>
-											{'  '}
-											{t.title}
-										</Text>
-									</Box>
-								);
-							})}
-						</Box>
-					))}
+				<Box ref={boardRef} flexGrow={1} overflow="hidden">
+					{COLUMNS.map((column, c) => {
+						const threads = columnThreads(column);
+						const { start, end } = visibleSlice(column, threads.length, c === cursor.col ? row : undefined);
+						return (
+							<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
+								<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+									{COLUMN_LABELS[column]} ({threads.length})
+								</Text>
+								<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
+								{start > 0 ? <Text dimColor>  ↑ {start} more</Text> : null}
+								{threads.slice(start, end).map((t, i) => {
+									const r = start + i;
+									const isSelected = c === cursor.col && r === row;
+									const color = t.color ?? projectByName(t.project)?.color;
+									const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
+										? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
+										: resumableSession(t)
+											? ['↻', 'gray']
+											: [' ', undefined];
+									// Finished threads get one line each so more of them fit.
+									if (column === 'done') {
+										return (
+											<Text key={t.id} wrap="truncate" inverse={isSelected}>
+												<Text color={badgeColor}>{badge} </Text>
+												<Text color={color}>#{t.id}</Text> {t.title}
+											</Text>
+										);
+									}
+									return (
+										<Box key={t.id} flexDirection="column">
+											<Text wrap="truncate" inverse={isSelected}>
+												<Text color={badgeColor}>{badge} </Text>
+												<Text color={color}>{t.project}</Text>
+												<Text dimColor> #{t.id}</Text>
+											</Text>
+											<Text wrap="truncate" inverse={isSelected}>
+												{'  '}
+												{t.title}
+											</Text>
+										</Box>
+									);
+								})}
+								{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
+							</Box>
+						);
+					})}
 				</Box>
 			)}
 			<Box marginTop={1} flexDirection="column" display={showProjects ? 'none' : 'flex'}>
@@ -709,6 +772,15 @@ export function App() {
 						{prompt.title}
 						<Text inverse> </Text>
 						<Text dimColor>  (⏎ create, esc cancel)</Text>
+					</Text>
+				) : null}
+				{confirmDone ? (
+					<Text>
+						<Text bold>Move #{confirmDone.id} {confirmDone.title} to Done?</Text>
+						<Text dimColor>
+							{confirmDone.cwd ? '' : ' It closes its claude window and removes its worktree (branch kept).'}
+							{' (y confirm, any other key cancels)'}
+						</Text>
 					</Text>
 				) : null}
 				<Text color={message.startsWith('✗') ? 'red' : message.startsWith('⚠') ? 'yellow' : 'green'}>
