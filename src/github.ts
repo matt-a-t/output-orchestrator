@@ -14,11 +14,10 @@ export async function findPr(cwd: string, branch: string): Promise<Pr | undefine
 }
 
 /**
- * Have claude draft the PR's title and description from the thread's commits and diff against its
- * base. Returns undefined if claude fails or says nothing usable.
+ * Have claude draft the PR's title and description from the thread's commits and diff against
+ * `base`, what the PR will merge into. Returns undefined if claude fails or says nothing usable.
  */
-export async function draftPr(cwd: string, thread: Thread): Promise<{ title: string; body: string } | undefined> {
-	const base = thread.base ?? 'HEAD';
+export async function draftPr(cwd: string, thread: Thread, base: string): Promise<{ title: string; body: string } | undefined> {
 	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
 	const log = await git(['log', '--reverse', '--format=commit %h%n%B', `${base}..HEAD`]);
 	const stat = await git(['diff', '--stat', `${base}...HEAD`]);
@@ -48,12 +47,13 @@ export async function draftPr(cwd: string, thread: Thread): Promise<{ title: str
 	return { title: cleanTitle, body: rest.join('\n').trim() };
 }
 
-/** Open a PR for the thread's branch, which must already be pushed. */
+/**
+ * Open a PR for the thread's branch, which must already be pushed, into the repo's default branch:
+ * not the thread's base, which is whatever the checkout happened to be on when the thread started.
+ */
 export async function createPr(cwd: string, thread: Thread, title: string, body: string): Promise<Pr> {
 	const branch = thread.branch!;
-	// A base that's a commit (the repo was on a detached HEAD) isn't a branch gh can target; let it pick the default.
-	const base = thread.base && !/^[0-9a-f]{40}$/.test(thread.base) ? ['--base', thread.base] : [];
-	const { stdout } = await execa('gh', ['pr', 'create', '--head', branch, ...base, '--title', title, '--body-file', '-'], {
+	const { stdout } = await execa('gh', ['pr', 'create', '--head', branch, '--title', title, '--body-file', '-'], {
 		cwd,
 		input: body,
 	});

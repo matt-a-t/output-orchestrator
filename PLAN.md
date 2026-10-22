@@ -47,8 +47,8 @@ tmux session
   base). claude runs in the worktree, so `--resume` finds its transcripts. Removed on
   Done/archive (branch kept; its claude window is closed) unless it has uncommitted changes;
   archiving refuses until they're committed or discarded.
-- PRs (M5): moving a card to PR pushes its branch and runs `gh pr create --head <branch>
-  --base <base>`, title/body drafted by `claude -p` from the commits and diff, then edited in vim (falls
+- PRs (M5): moving a card to PR pushes its branch and runs `gh pr create --head <branch>`
+  into the repo's default branch (whatever the thread branched from), title/body drafted by `claude -p` from the commits and diff, then edited in vim (falls
   back to the thread's title/plan). The PR is
   recorded on the thread; if one already exists it's just pushed again. Uncommitted changes
   block the move. The board polls `gh pr view` every minute and moves merged PRs to Done.
@@ -70,7 +70,7 @@ tmux session
   under a diff line become `file:line — note` (consecutive `>>` lines join into one note;
   under a file header they're about the file, before any file they're general), batched and
   pasted into the thread's claude on save. `:cq` cancels. Needs the claude window open.
-- `a` — accept step: `git add -A` + `git commit -v` in a popup (message in git's editor).
+- `a` in a step diff (after a y/n confirm) — approve step: `git add -A` + commit, with a claude-drafted message edited on the board.
 - `o` — vim with a quickfix list of the changed hunks (the step's, else the thread's).
 
 ## Keys (board)
@@ -85,7 +85,7 @@ tmux session
 | Enter     | open / jump to thread's claude      |
 | d / D     | step / thread diff (delta popup)    |
 | c         | comment on the diff → Claude        |
-| a         | accept step (commit)                |
+| d, then a | approve step (commit)               |
 | o         | open changed hunks in vim           |
 | i         | import a thread not started by the board |
 | C         | cycle card colour                   |
