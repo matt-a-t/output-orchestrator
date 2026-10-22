@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { editPlan } from './editor.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { editText } from './input.js';
-import { COLORS, COLUMN_LABELS, type State, type Thread } from './state.js';
+import { COLORS, COLUMN_LABELS, LOCAL_LABEL, type State, type Thread } from './state.js';
 
 const FIELDS = ['title', 'project', 'color', 'base', 'plan'] as const;
 type Field = (typeof FIELDS)[number];
@@ -101,11 +101,10 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 
 	const worktree = thread.cwd ? undefined : `${worktreePath(thread)}${hasWorktree(thread) ? '' : ' (not created)'}`;
 	const info: [string, string | undefined][] = [
-		['column', COLUMN_LABELS[thread.column]],
+		['column', `${COLUMN_LABELS[thread.column]}${thread.local ? ` (in ${LOCAL_LABEL})` : ''}`],
 		['branch', thread.branch],
 		['worktree', worktree],
 		['directory', thread.cwd],
-		['restore ref', thread.restoreRef],
 		['session', thread.sessionId],
 		['transcript', thread.transcriptPath],
 		['PR', thread.pr && `#${thread.pr.number} ${thread.pr.url}`],

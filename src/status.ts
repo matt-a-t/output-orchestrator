@@ -33,7 +33,9 @@ description: Read and change the output-orchestrator (oo) board of threads with 
 
 # The oo board
 
-The user tracks work as threads on a kanban board (Planned → Active → Polish → UI testing → PR → Done).
+The user tracks work as threads on a kanban board (Planned → Active → Polish → PR → Done).
+A thread can also be put in Local, beside the board, which checks its branch out in the project's own checkout
+(one per project) for trying it out; claude then works there until it comes back to its worktree.
 Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
 claude, and \`oo thread show\` describes your thread, including its plan.
 
@@ -51,7 +53,7 @@ ${THREAD_USAGE}
 - **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is
   in flight, so you don't duplicate it.
 - **Move threads only when the user asks.** Never move your own thread to done or archived: that removes
-  its worktree and closes this claude. Moves into or out of UI testing, and to PR, happen on the board.
+  its worktree and closes this claude. Moves into or out of Local, and to PR, happen on the board.
 `;
 
 /** Install the skill that tells claude about \`oo thread\` (see threadCommand.ts). */

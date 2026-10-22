@@ -4,11 +4,17 @@ import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
 import { editText, loop } from './input.js';
-import { COLORS, projectProblem, type Project, type State } from './state.js';
+import { COLORS, HOOK_EVENTS, HOOK_LABELS, projectProblem, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path'] as const;
+const FIELDS = ['name', 'abbrev', 'color', 'path', ...HOOK_EVENTS] as const;
 type Field = (typeof FIELDS)[number];
-const FIELD_LABELS: Record<Field, string> = { name: 'name', abbrev: 'abbrev', color: 'colour', path: 'path' };
+const FIELD_LABELS: Record<Field, string> = { name: 'name', abbrev: 'abbrev', color: 'colour', path: 'path', ...HOOK_LABELS };
+const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
+
+const isHook = (field: Field): field is ProjectHook => (HOOK_EVENTS as readonly string[]).includes(field);
+const fieldValue = (project: Project, field: Exclude<Field, 'color'>) => (isHook(field) ? (project.hooks[field] ?? '') : project[field]);
+const withField = (project: Project, field: Exclude<Field, 'color'>, value: string): Project =>
+	isHook(field) ? { ...project, hooks: { ...project.hooks, [field]: value } } : { ...project, [field]: value };
 
 /** `original` is the name of the project being edited; undefined when adding one. */
 type Form = { original?: string; project: Project; field: number };
@@ -33,14 +39,16 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 	const current: Project | undefined = state.projects[row];
 
 	const save = (form: Form) => {
-		const project = { ...form.project, name: form.project.name.trim(), abbrev: form.project.abbrev.trim(), path: expandPath(form.project.path.trim()) };
+		// Hooks left empty aren't kept.
+		const hooks = Object.fromEntries(Object.entries(form.project.hooks).map(([k, v]) => [k, v?.trim()]).filter(([, v]) => v));
+		const project = { ...form.project, name: form.project.name.trim(), abbrev: form.project.abbrev.trim(), path: expandPath(form.project.path.trim()), hooks };
 		const problem = projectProblem(state, project, form.original);
 		if (problem) return setMessage(`✗ ${problem}`);
 		const old = state.projects.find(p => p.name === form.original);
-		const testing = state.threads.find(t => t.project === form.original && t.column === 'uitest');
+		const local = state.threads.find(t => t.project === form.original && t.local);
 		// The checkout is holding that thread's branch.
-		if (old && testing && old.path !== project.path) {
-			return setMessage(`✗ Move #${testing.id} out of UI testing before changing the path`);
+		if (old && local && old.path !== project.path) {
+			return setMessage(`✗ Bring #${local.id} back from Local before changing the path`);
 		}
 		setState(s => ({
 			...s,
@@ -71,8 +79,8 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				const color = COLORS[(COLORS.indexOf(form.project.color) + delta + COLORS.length) % COLORS.length]!;
 				return setForm({ ...form, project: { ...form.project, color } });
 			}
-			const value = editText(form.project[field], input, key);
-			if (value !== undefined) setForm({ ...form, project: { ...form.project, [field]: value } });
+			const value = editText(fieldValue(form.project, field), input, key);
+			if (value !== undefined) setForm({ ...form, project: withField(form.project, field, value) });
 			return;
 		}
 		if (confirmRemove) {
@@ -86,7 +94,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '' }, field: 0 });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', hooks: {} }, field: 0 });
 		}
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0 });
@@ -131,13 +139,13 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 							<Text key={field}>
 								<Text dimColor={!active}>
 									{active ? '› ' : '  '}
-									{pad(`${FIELD_LABELS[field]}:`, 9)}
+									{pad(`${FIELD_LABELS[field]}:`, LABEL_WIDTH)}
 								</Text>
 								{field === 'color' ? (
 									<Text color={form.project.color}>{active ? `‹ ${form.project.color} ›` : form.project.color}</Text>
 								) : (
 									<Text>
-										{form.project[field]}
+										{fieldValue(form.project, field)}
 										{active ? <Text inverse> </Text> : null}
 									</Text>
 								)}
@@ -150,7 +158,9 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			<Text color={message.startsWith('✗') ? 'red' : confirmRemove ? 'yellow' : 'green'}>{message}</Text>
 			<Text dimColor>
 				{form
-					? '↑/↓ or tab field  ←/→ colour  ⏎ save  esc cancel'
+					? isHook(FIELDS[form.field]!)
+						? 'shell command run in the project checkout (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  ↑/↓ or tab field  ⏎ save  esc cancel'
+						: '↑/↓ or tab field  ←/→ colour  ⏎ save  esc cancel'
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>
