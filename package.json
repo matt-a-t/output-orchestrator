@@ -8,9 +8,9 @@
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
-    "test": "node --import tsx --test 'src/test/*.test.ts'",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc && chmod +x dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
   },
   "engines": {
     "node": ">=22"

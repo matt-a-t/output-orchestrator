@@ -20,7 +20,7 @@ export type Column = z.infer<typeof ColumnSchema>;
 
 const ProjectSchema = z.object({
 	name: z.string(),
-	// Not shown anywhere yet.
+	// Shown on board cards in place of the name, when set.
 	abbrev: z.string().default(''),
 	path: z.string(),
 	color: z.enum(COLORS),

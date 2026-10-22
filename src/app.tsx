@@ -1,13 +1,14 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
-import { editPr, editThread } from './editor.js';
+import { editPr } from './editor.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, prState } from './github.js';
 import { editText, loop } from './input.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond } from './requests.js';
 import { draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
+import { ThreadView } from './thread.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
@@ -21,7 +22,8 @@ import {
 	type Thread,
 } from './state.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
-import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, nextStatus, type Status } from './status.js';
+import { mouse, type MouseEvent } from './mouse.js';
+import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from './status.js';
 import {
 	addThread,
 	applyRequest,
@@ -47,25 +49,6 @@ function resumeId(thread: Thread): string | undefined {
 	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
 }
 
-const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-/** What the board is waiting on, with a spinner and, once it's taking a while, how long it's been. */
-function Busy({ label }: { label: string }) {
-	const [started] = useState(Date.now);
-	const [now, setNow] = useState(started);
-	useEffect(() => {
-		const timer = setInterval(() => setNow(Date.now()), 80);
-		return () => clearInterval(timer);
-	}, []);
-	const elapsed = Math.floor((now - started) / 1000);
-	return (
-		<Text color="cyan">
-			{SPINNER[Math.floor((now - started) / 80) % SPINNER.length]} {label}…
-			{elapsed >= 2 ? <Text dimColor> {elapsed}s</Text> : null}
-		</Text>
-	);
-}
-
 const LEGEND: [string, string | undefined, string][] = [
 	['⚙', 'yellow', 'working'],
 	['⏸', 'red', 'needs you'],
@@ -84,6 +67,11 @@ type Prompt =
 	| { step: 'title'; project: string; title: string }
 	| { step: 'commit'; thread: Thread; cwd: string; subject: string; body: string };
 
+// The columns and the import list start below the title bar, a header and a rule; each card is two lines.
+const LIST_TOP = 3;
+const CARD_HEIGHT = 2;
+const DOUBLE_CLICK_MS = 400;
+
 const HELP =
 	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
@@ -100,6 +88,8 @@ export function App() {
 	const [busy, setBusy] = useState<string | null>(null);
 	const [prompt, setPrompt] = useState<Prompt | null>(null);
 	const [showProjects, setShowProjects] = useState(false);
+	// The thread form (e), replacing the board while it's open.
+	const [editing, setEditing] = useState<string | null>(null);
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
@@ -137,7 +127,8 @@ export function App() {
 	useEffect(() => {
 		const reader = new EventReader();
 		const poll = () => {
-			const events = reader.read();
+			const dirs = new Map(stateRef.current.threads.map(t => [t.id, threadDir(stateRef.current, t)]));
+			const events = reader.read().filter(e => fromThreadDir(e, dirs.get(e.thread)));
 			if (events.length === 0) return;
 			setStatuses(prev => {
 				const next = { ...prev };
@@ -539,14 +530,6 @@ export function App() {
 		if (title !== undefined) setPrompt({ ...prompt, title });
 	};
 
-	const editSelected = (thread: Thread) =>
-		run(async () => {
-			const draft = await editThread(thread, state.projects.map(p => p.name));
-			if (!draft) return setMessage('Cancelled');
-			if (!projectByName(draft.project)) return setMessage(`✗ Unknown project "${draft.project}"`);
-			updateThread(thread.id, draft);
-		});
-
 	/**
 	 * Jump to the thread's claude window, starting claude in `cwd` (resuming the thread if it can) if needed.
 	 * `background` starts it without leaving the board; `resumeAnyway` skips the check for it being open elsewhere.
@@ -630,7 +613,7 @@ export function App() {
 	};
 
 	useInput((input, key) => {
-		if (busy || showProjects) return;
+		if (busy || showProjects || editing) return;
 		setMessage('');
 		if (confirm) {
 			setConfirm(null);
@@ -669,7 +652,7 @@ export function App() {
 		if (input === 'L') return moveColumn(selected, 1);
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
-		if (input === 'e') return editSelected(selected);
+		if (input === 'e') return setEditing(selected.id);
 		if (key.return) return openThread(selected);
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
@@ -718,6 +701,57 @@ export function App() {
 
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
+	const lastClick = useRef<{ target: string; at: number } | null>(null);
+	/** Whether this click is on the same thing as the last, soon enough to make a double-click. */
+	const isDoubleClick = (target: string) => {
+		const now = Date.now();
+		const double = lastClick.current?.target === target && now - lastClick.current.at < DOUBLE_CLICK_MS;
+		lastClick.current = double ? null : { target, at: now };
+		return double;
+	};
+
+	/** The import list's entry at screen row `y`; an entry is one line, or two when it shows its first prompt. */
+	const pickerRowAt = (y: number) => {
+		let top = LIST_TOP;
+		for (const [r, t] of (picker?.threads ?? []).entries()) {
+			top += t.title === t.firstPrompt ? 1 : 2;
+			if (y < top) return r;
+		}
+	};
+
+	// The layout is a fixed grid, so a press's cell says what it's on. The wheel stops at the ends rather than looping.
+	const onMouse = ({ button, x, y }: MouseEvent) => {
+		if (busy || showProjects || editing || prompt || confirm) return;
+		setMessage('');
+		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
+		if (picker) {
+			const last = picker.threads.length - 1;
+			if (wheel) return setPicker(p => p && { ...p, row: Math.max(0, Math.min(last, p.row + wheel)) });
+			const r = y >= LIST_TOP ? pickerRowAt(y) : undefined;
+			if (button !== 'left' || r === undefined) return;
+			setPicker(p => p && { ...p, row: r });
+			if (isDoubleClick(picker.threads[r]!.id)) importThread(picker.project, picker.threads[r]!);
+			return;
+		}
+		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
+		const col = Math.floor(x / colWidth);
+		if (button !== 'left' || y < 1 || col >= COLUMNS.length) return;
+		// The column's header.
+		if (y < LIST_TOP) return setCursor({ col, row });
+		const r = Math.floor((y - LIST_TOP) / CARD_HEIGHT);
+		const thread = columnThreads(COLUMNS[col]!)[r];
+		if (!thread) return;
+		setCursor({ col, row: r });
+		if (isDoubleClick(thread.id)) openThread(thread);
+	};
+	const onMouseRef = useRef(onMouse);
+	onMouseRef.current = onMouse;
+	useEffect(() => {
+		const listener = (event: MouseEvent) => onMouseRef.current(event);
+		mouse.on('press', listener);
+		return () => void mouse.off('press', listener);
+	}, []);
+
 	return (
 		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
@@ -729,10 +763,21 @@ export function App() {
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
 			{showProjects ? (
 				<ProjectsView state={state} setState={setState} onClose={() => setShowProjects(false)} />
+			) : editing ? (
+				<ThreadView
+					key={editing}
+					state={state}
+					threadId={editing}
+					updateThread={updateThread}
+					onClose={closing => {
+						setEditing(null);
+						setMessage(closing);
+					}}
+				/>
 			) : picker ? (
 				<Box flexGrow={1} overflow="hidden" flexDirection="column">
 					<Text bold>
-						Import a {picker.project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel)</Text>
+						Import a {picker.project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
 					</Text>
 					<Text dimColor>{'─'.repeat(Math.max(0, width - 1))}</Text>
 					{picker.threads.map((s, r) => {
@@ -776,8 +821,8 @@ export function App() {
 									<Box key={t.id} flexDirection="column">
 										<Text wrap="truncate" inverse={isSelected}>
 											<Text color={badgeColor}>{badge} </Text>
-											<Text color={color}>{t.project}</Text>
-											<Text dimColor> #{t.id}</Text>
+											<Text bold>#{t.id} </Text>
+											<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
 											{unreviewed.has(t.id) ? (
 												<Text color="magenta" bold>
 													{' '}±
@@ -795,7 +840,7 @@ export function App() {
 					))}
 				</Box>
 			)}
-			<Box marginTop={1} flexDirection="column" display={showProjects ? 'none' : 'flex'}>
+			<Box marginTop={1} flexDirection="column" display={showProjects || editing ? 'none' : 'flex'}>
 				{selected?.plan ? (
 					<Text dimColor wrap="truncate-end">
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
@@ -844,7 +889,7 @@ export function App() {
 					</Box>
 				) : null}
 				{busy ? (
-					<Busy label={busy} />
+					<Text color="cyan">{busy}…</Text>
 				) : (
 					<Text color={message.startsWith('✗') ? 'red' : confirm || message.startsWith('⚠') ? 'yellow' : 'green'}>{message}</Text>
 				)}

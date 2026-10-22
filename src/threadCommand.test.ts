@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { capture, fixture } from './helpers.js';
-import { loadState } from '../state.js';
-import { resolveProject, resolveThreadId, threadCommand, type Context } from '../threadCommand.js';
-import { inDir } from '../threads.js';
+import { capture, fixture } from './testHelpers.js';
+import { loadState } from './state.js';
+import { resolveProject, resolveThreadId, threadCommand, type Context } from './threadCommand.js';
+import { inDir } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,

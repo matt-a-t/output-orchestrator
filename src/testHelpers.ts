@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestContext } from 'node:test';
-import { saveState, type State, type Thread } from '../state.js';
+import { saveState, type State, type Thread } from './state.js';
 
 // Moves to Done/archived close the thread's tmux window; point tmux at a socket dir with no server
 // so tests can't touch the real board's windows.

@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonlReader } from './jsonl.js';
 import { DATA_DIR } from './state.js';
@@ -65,6 +65,8 @@ export type HookEvent = {
 	event: string;
 	session?: string;
 	transcript?: string;
+	/** Where claude was running. Missing from lines written before it was recorded. */
+	cwd?: string;
 	type?: string;
 	ts: string;
 };
@@ -89,6 +91,20 @@ export function nextStatus(current: Status | undefined, e: HookEvent): Status | 
 		default:
 			return current;
 	}
+}
+
+/**
+ * Whether the event came from a claude working in the thread's directory (or a subfolder).
+ * OO_THREAD_ID can leak into a claude started for another thread, e.g. when Claude Code's
+ * background daemon re-hosts every running claude with the environment of the first, so the
+ * thread ID alone can't be trusted. Events without a cwd, or for threads with no directory,
+ * can't be checked and are kept.
+ */
+export function fromThreadDir(e: HookEvent, dir: string | undefined): boolean {
+	if (!e.cwd || !dir) return true;
+	const cwd = resolve(e.cwd);
+	const root = resolve(dir);
+	return cwd === root || cwd.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
 /** Incrementally reads hook events appended to the events file. */

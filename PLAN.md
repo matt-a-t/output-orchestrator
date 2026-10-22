@@ -31,6 +31,10 @@ tmux session
 
 - Board must run inside tmux (simplest; may relax later).
 - Launch: `tmux new-window -n oo-<id> -c <dir> claude`.
+- Mouse: the board sets tmux `mouse on` for its session and asks for SGR mouse reports
+  (`?1000h ?1006h`). Ink drops those, so `mouse.ts` hands Ink a stdin proxy that strips them out and
+  emits presses; the app hit-tests the fixed grid (`LIST_TOP`, two lines per card). Click selects,
+  double-click opens/imports, wheel moves, a header click picks the column.
 - Return to board: `prefix b`, `prefix C-b` or `M-b` (thread windows only), bound by the board at start (`bind b select-window -t oo-board`)
   unless the key is already bound to something else (C-b's default send-prefix is replaced).
 - Editors / diffs open in `tmux display-popup -E`, synchronised with `tmux wait-for`.
@@ -81,7 +85,7 @@ tmux session
 | H/L       | move card to prev/next column       |
 | J/K       | reorder card within column          |
 | n         | new thread (pick project, type title) |
-| e         | edit thread title/plan in vim       |
+| e         | thread screen: edit fields, see info |
 | Enter     | open / jump to thread's claude      |
 | d / D     | step / thread diff (delta popup)    |
 | c         | comment on the diff → Claude        |

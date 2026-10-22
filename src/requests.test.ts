@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
-import { fixture } from './helpers.js';
-import { RequestReader, boardRunning, claimBoard, releaseBoard, respond, sendRequest } from '../requests.js';
-import { loadState, type State } from '../state.js';
-import { applyRequest, type Store } from '../threads.js';
+import { fixture } from './testHelpers.js';
+import { RequestReader, boardRunning, claimBoard, releaseBoard, respond, sendRequest } from './requests.js';
+import { loadState, type State } from './state.js';
+import { applyRequest, type Store } from './threads.js';
 
 const stops: (() => void)[] = [];
 afterEach(() => stops.splice(0).forEach(stop => stop()));
