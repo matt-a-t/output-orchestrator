@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { execa } from 'execa';
 
@@ -26,19 +29,20 @@ export async function killWindow(name: string): Promise<void> {
 	if ((await windowNames()).includes(name)) await execa('tmux', ['kill-window', '-t', `:${name}`]);
 }
 
-/** Jump to the thread's window, creating it (running `command` in `cwd`) if needed. */
+/** Jump to the thread's window, creating it (running `command` in `cwd`) if needed; `background` creates it without jumping. */
 export async function openWindow(
 	name: string,
 	cwd: string,
 	command: string[],
 	env: Record<string, string> = {},
+	{ background = false } = {},
 ): Promise<'created' | 'selected'> {
 	if ((await windowNames()).includes(name)) {
-		await execa('tmux', ['select-window', '-t', `:${name}`]);
+		if (!background) await execa('tmux', ['select-window', '-t', `:${name}`]);
 		return 'selected';
 	}
 	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-	await execa('tmux', ['new-window', '-n', name, '-c', cwd, ...envArgs, ...command]);
+	await execa('tmux', ['new-window', ...(background ? ['-d'] : []), '-n', name, '-c', cwd, ...envArgs, ...command]);
 	return 'created';
 }
 
@@ -102,16 +106,37 @@ export async function bindBoardKeys(): Promise<void> {
 	}
 }
 
-/** Run a command in a tmux popup and resolve once it exits. */
-export async function popup(command: string, opts: { cwd?: string; title?: string } = {}): Promise<void> {
+/** Pass clicks through to the board (and claude); only for this session, so other sessions keep their own setting. */
+export async function enableTmuxMouse(): Promise<void> {
+	await execa('tmux', ['set-option', 'mouse', 'on']);
+}
+
+/** Run a command in a tmux popup and resolve with its exit status once it exits. */
+export async function popup(command: string, opts: { cwd?: string; title?: string; width?: string; height?: string } = {}): Promise<number> {
 	const channel = `oo-${randomUUID()}`;
-	const args = ['display-popup', '-E', '-w', '90%', '-h', '90%'];
+	const statusFile = join(tmpdir(), `${channel}.status`);
+	const args = ['display-popup', '-E', '-w', opts.width ?? '90%', '-h', opts.height ?? '90%'];
 	if (opts.cwd) args.push('-d', opts.cwd);
 	if (opts.title) args.push('-T', opts.title);
 	// wait-for makes this independent of whether display-popup blocks.
-	args.push(`${command}; tmux wait-for -S ${channel}`);
+	args.push(`${command}; echo $? > ${shellQuote(statusFile)}; tmux wait-for -S ${channel}`);
 	await execa('tmux', args);
 	await execa('tmux', ['wait-for', channel]);
+	try {
+		return Number(readFileSync(statusFile, 'utf8'));
+	} catch {
+		return 1;
+	} finally {
+		rmSync(statusFile, { force: true });
+	}
+}
+
+/** Ask a question in a small popup; true if it's answered with y. */
+export async function confirmPopup(question: string): Promise<boolean> {
+	const text = `${question} y to confirm, any other key to go back `;
+	const ask = `printf '%s' ${shellQuote(text)}; read -rsn1 key; [ "$key" = y ]`;
+	// Two columns of border and one of padding either side.
+	return (await popup(`bash -c ${shellQuote(ask)}`, { width: String(text.length + 4), height: '3', title: ' confirm ' })) === 0;
 }
 
 export function shellQuote(s: string): string {

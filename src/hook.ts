@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Claude Code hook: appends one line per event to the board's events file.
 // Kept free of dependencies (and runnable via Node's type stripping) so it starts fast.
-// Must never fail or block the claude session, so all errors are swallowed.
+// Must never fail or block claude, so all errors are swallowed.
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,7 @@ process.stdin.on('end', () => {
 			event: data.hook_event_name,
 			session: data.session_id,
 			transcript: data.transcript_path,
+			cwd: data.cwd,
 			type: data.notification_type,
 			ts: new Date().toISOString(),
 		});

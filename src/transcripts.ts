@@ -5,15 +5,16 @@ import { basename, join, resolve } from 'node:path';
 
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 
-// Written to within this long ago, a session may still be running in another terminal.
+// Written to within this long ago, a thread may still be running in another terminal.
 const ACTIVE_MS = 2 * 60_000;
 
-export type Session = {
+/** A thread claude ran outside the board, read from its transcript. */
+export type OutsideThread = {
 	id: string;
 	transcriptPath: string;
-	// Where claude ran; `--resume` only finds the session from here.
+	// Where claude ran; `--resume` only finds the thread from here.
 	cwd: string;
-	// The session's /rename title or claude's own, else the first prompt.
+	// The thread's /rename title or claude's own, else the first prompt.
 	title: string;
 	firstPrompt: string;
 	lastActivity: Date;
@@ -25,10 +26,10 @@ function transcriptDir(cwd: string): string {
 }
 
 /**
- * Copy a transcript to where claude looks for sessions started in `cwd`, so `claude --resume`
- * finds it after the thread moves directory (see UI testing). Returns the new path.
+ * Copy a transcript to where claude looks for threads started in `cwd`, so `claude --resume`
+ * finds it after the thread moves directory (see Local). Returns the new path.
  */
-export function copySession(transcriptPath: string, cwd: string): string | undefined {
+export function copyTranscript(transcriptPath: string, cwd: string): string | undefined {
 	if (!existsSync(transcriptPath)) return;
 	const dir = transcriptDir(cwd);
 	const target = join(dir, basename(transcriptPath));
@@ -47,7 +48,7 @@ function promptText(content: unknown): string {
 }
 
 /** Pull the cwd, first typed prompt and title out of a transcript; undefined if nothing was ever asked. */
-function summarise(id: string, transcriptPath: string, text: string, lastActivity: Date): Session | undefined {
+function summarise(id: string, transcriptPath: string, text: string, lastActivity: Date): OutsideThread | undefined {
 	let cwd: string | undefined;
 	let firstPrompt: string | undefined;
 	let customTitle: string | undefined;
@@ -74,8 +75,8 @@ function summarise(id: string, transcriptPath: string, text: string, lastActivit
 	return { id, transcriptPath, cwd, title: customTitle ?? aiTitle ?? firstPrompt, firstPrompt, lastActivity };
 }
 
-/** The most recent sessions started in `cwd`, newest first. */
-export async function listSessions(cwd: string, limit = 20): Promise<Session[]> {
+/** The most recent threads started in `cwd`, newest first. */
+export async function listOutsideThreads(cwd: string, limit = 20): Promise<OutsideThread[]> {
 	const dir = transcriptDir(cwd);
 	let names: string[];
 	try {
@@ -87,15 +88,15 @@ export async function listSessions(cwd: string, limit = 20): Promise<Session[]> 
 		names.map(async name => ({ name, path: join(dir, name), mtime: (await stat(join(dir, name))).mtime })),
 	);
 	files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-	const sessions: Session[] = [];
+	const threads: OutsideThread[] = [];
 	// Read a few spare in case some turn out empty.
 	for (const file of files.slice(0, limit * 2)) {
-		const session = summarise(file.name.slice(0, -'.jsonl'.length), file.path, await readFile(file.path, 'utf8'), file.mtime);
+		const thread = summarise(file.name.slice(0, -'.jsonl'.length), file.path, await readFile(file.path, 'utf8'), file.mtime);
 		// The encoding isn't reversible, so make sure it's really this directory's.
-		if (session && resolve(session.cwd) === resolve(cwd)) sessions.push(session);
-		if (sessions.length === limit) break;
+		if (thread && resolve(thread.cwd) === resolve(cwd)) threads.push(thread);
+		if (threads.length === limit) break;
 	}
-	return sessions;
+	return threads;
 }
 
 /** Whether the transcript was written to recently enough that its claude may still be running. */

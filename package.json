@@ -8,8 +8,9 @@
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc && chmod +x dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
   },
   "engines": {
     "node": ">=22"

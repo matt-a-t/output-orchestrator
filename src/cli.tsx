@@ -2,22 +2,34 @@
 import { basename, resolve } from 'node:path';
 import { render } from 'ink';
 import { App } from './app.js';
+import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
-import { writeClaudeSettings } from './status.js';
-import { BOARD_WINDOW, attachBoard, bindBoardKeys, insideTmux, renameCurrentWindow, selectExistingBoard } from './tmux.js';
+import { THREAD_USAGE, threadCommand } from './threadCommand.js';
+import { mouseStdin, reportMouse } from './mouse.js';
+import { writeClaudeSettings, writeOoSkill } from './status.js';
+import {
+	BOARD_WINDOW,
+	attachBoard,
+	bindBoardKeys,
+	enableTmuxMouse,
+	insideTmux,
+	renameCurrentWindow,
+	selectExistingBoard,
+} from './tmux.js';
 
 const USAGE = `usage:
   oo                          open the board (starts/attaches the "oo" tmux session if needed)
   oo project add <path> [name]
   oo project list
-  oo project rm <name>`;
+  oo project rm <name>
+${THREAD_USAGE}`;
 
 function projectCommand(args: string[]): number {
 	const state = loadState();
 	const [sub, ...rest] = args;
 	if (sub === 'add' && rest[0]) {
 		const path = resolve(rest[0]);
-		const project = { name: rest[1] ?? basename(path), abbrev: '', path, color: COLORS[state.projects.length % COLORS.length]! };
+		const project = { name: rest[1] ?? basename(path), abbrev: '', path, color: COLORS[state.projects.length % COLORS.length]!, hooks: {} };
 		const problem = projectProblem(state, project);
 		if (problem) {
 			console.error(problem);
@@ -46,6 +58,8 @@ function projectCommand(args: string[]): number {
 const [cmd, ...args] = process.argv.slice(2);
 if (cmd === 'project') {
 	process.exit(projectCommand(args));
+} else if (cmd === 'thread') {
+	process.exit(await threadCommand(args));
 } else if (cmd) {
 	console.error(USAGE);
 	process.exit(1);
@@ -57,6 +71,10 @@ if (cmd === 'project') {
 	if (await selectExistingBoard()) process.exit(0);
 	await renameCurrentWindow(BOARD_WINDOW);
 	await bindBoardKeys();
+	await enableTmuxMouse();
 	writeClaudeSettings();
-	render(<App />);
+	writeOoSkill();
+	claimBoard();
+	render(<App />, { stdin: mouseStdin() });
+	reportMouse();
 }
