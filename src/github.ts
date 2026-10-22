@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { diffBase } from './git.js';
 import type { Thread } from './state.js';
 
 export type Pr = NonNullable<Thread['pr']>;
@@ -20,7 +21,7 @@ const MAX_DIFF = 60_000;
  * base. Returns undefined if claude fails or says nothing usable.
  */
 export async function draftPr(cwd: string, thread: Thread): Promise<{ title: string; body: string } | undefined> {
-	const base = thread.base ?? 'HEAD';
+	const base = await diffBase(cwd, thread);
 	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
 	const log = await git(['log', '--reverse', '--format=commit %h%n%B', `${base}..HEAD`]);
 	const stat = await git(['diff', '--stat', `${base}...HEAD`]);

@@ -10,7 +10,7 @@ import { popup, shellQuote } from './tmux.js';
 export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Promise<boolean> {
 	const args = await diffArgs(cwd, kind, thread);
 	if (!args) return false;
-	const title = kind === 'step' ? ' step diff ' : ` thread diff vs ${thread.base ?? 'HEAD'} `;
+	const title = kind === 'step' ? ' step diff ' : ` thread diff vs ${args.at(-1)} `;
 	await popup(`git ${args.map(shellQuote).join(' ')} | delta --paging=always`, { cwd, title });
 	return true;
 }

@@ -24,8 +24,8 @@ function slug(title: string): string {
 
 /**
  * Create the thread's worktree if it's missing. The first time, this also creates the thread's
- * branch from the repo's current branch and returns the branch/base to record on the thread;
- * after that (e.g. reopening a Done thread) it checks the existing branch out again.
+ * branch from the latest main (origin's default branch, fetched first) and returns the
+ * branch/base to record on the thread; after that (e.g. reopening a Done thread) it checks the existing branch out again.
  */
 export async function ensureWorktree(repo: string, thread: Thread): Promise<Pick<Thread, 'branch' | 'base'> | undefined> {
 	const path = worktreePath(thread);
@@ -37,9 +37,12 @@ export async function ensureWorktree(repo: string, thread: Thread): Promise<Pick
 		await git(repo, ['worktree', 'add', path, thread.branch]);
 		return;
 	}
-	const base = await currentRef(repo);
+	const base = (await defaultBranch(repo)) ?? 'main';
+	// Start from origin's copy when we can fetch it, so the branch isn't behind a stale local main.
+	const fetched = await execa('git', ['-C', repo, 'fetch', 'origin', base], { reject: false });
+	const start = fetched.exitCode === 0 ? `origin/${base}` : base;
 	const branch = `oo/${thread.id}${slug(thread.title) ? `-${slug(thread.title)}` : ''}`;
-	await git(repo, ['worktree', 'add', '-b', branch, path, base]);
+	await git(repo, ['worktree', 'add', '-b', branch, '--no-track', path, start]);
 	return { branch, base };
 }
 
@@ -71,9 +74,17 @@ export async function removeWorktree(repo: string, thread: Thread): Promise<void
 
 export type DiffKind = 'step' | 'thread';
 
+/** What to compare the thread against: origin's copy of its base if there is one, so a stale local main doesn't drag in upstream commits. */
+export async function diffBase(cwd: string, thread: Thread): Promise<string> {
+	if (!thread.base) return 'HEAD';
+	const remote = `origin/${thread.base}`;
+	const found = await execa('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', `refs/remotes/${remote}`], { reject: false });
+	return found.exitCode === 0 ? remote : thread.base;
+}
+
 /** `git diff` arguments: the step is everything since HEAD; the thread is everything since branching from base. */
-function diffRevs(kind: DiffKind, thread: Thread): string[] {
-	return kind === 'step' ? ['HEAD'] : ['--merge-base', thread.base ?? 'HEAD'];
+async function diffRevs(cwd: string, kind: DiffKind, thread: Thread): Promise<string[]> {
+	return kind === 'step' ? ['HEAD'] : ['--merge-base', await diffBase(cwd, thread)];
 }
 
 /**
@@ -82,7 +93,7 @@ function diffRevs(kind: DiffKind, thread: Thread): string[] {
  */
 export async function diffArgs(cwd: string, kind: DiffKind, thread: Thread): Promise<string[] | null> {
 	await git(cwd, ['add', '--all', '--intent-to-add']);
-	const args = ['diff', ...diffRevs(kind, thread)];
+	const args = ['diff', ...(await diffRevs(cwd, kind, thread))];
 	const quiet = await execa('git', ['-C', cwd, ...args, '--quiet'], { reject: false });
 	return quiet.exitCode === 0 ? null : args;
 }
