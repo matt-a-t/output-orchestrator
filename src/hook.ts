@@ -21,6 +21,7 @@ process.stdin.on('end', () => {
 			event: data.hook_event_name,
 			session: data.session_id,
 			transcript: data.transcript_path,
+			cwd: data.cwd,
 			type: data.notification_type,
 			ts: new Date().toISOString(),
 		});
