@@ -1,8 +1,10 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonlReader } from './jsonl.js';
 import { DATA_DIR } from './state.js';
+import { THREAD_USAGE } from './threadCommand.js';
 
 export const EVENTS_FILE = join(DATA_DIR, 'events.jsonl');
 export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
@@ -20,6 +22,42 @@ export function writeClaudeSettings(): void {
 	);
 	mkdirSync(DATA_DIR, { recursive: true });
 	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
+}
+
+export const SKILL_FILE = join(homedir(), '.claude', 'skills', 'oo', 'SKILL.md');
+
+export const SKILL = `---
+name: oo
+description: Read and change the output-orchestrator (oo) board of threads with the \`oo thread\` CLI. Use when OO_THREAD_ID is set (this claude was launched from the board), when the user mentions the board, a thread by number (#12) or oo, or when follow-up work turns up that belongs in its own thread.
+---
+
+# The oo board
+
+The user tracks work as threads on a kanban board (Planned → Active → Polish → UI testing → PR → Done).
+Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
+claude, and \`oo thread show\` describes your thread, including its plan.
+
+## Commands
+
+\`\`\`
+${THREAD_USAGE}
+\`\`\`
+
+## When to use them
+
+- **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
+  plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
+  and why, then tell the user its id. Keep the title short; put the detail in the plan.
+- **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is
+  in flight, so you don't duplicate it.
+- **Move threads only when the user asks.** Never move your own thread to done or archived: that removes
+  its worktree and closes this claude. Moves into or out of UI testing, and to PR, happen on the board.
+`;
+
+/** Install the skill that tells claude about \`oo thread\` (see threadCommand.ts). */
+export function writeOoSkill(): void {
+	mkdirSync(dirname(SKILL_FILE), { recursive: true });
+	writeFileSync(SKILL_FILE, SKILL);
 }
 
 export type HookEvent = {

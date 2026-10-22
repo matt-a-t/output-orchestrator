@@ -5,7 +5,7 @@ import { App } from './app.js';
 import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
 import { THREAD_USAGE, threadCommand } from './threadCommand.js';
-import { writeClaudeSettings } from './status.js';
+import { writeClaudeSettings, writeOoSkill } from './status.js';
 import { BOARD_WINDOW, attachBoard, bindBoardKeys, insideTmux, renameCurrentWindow, selectExistingBoard } from './tmux.js';
 
 const USAGE = `usage:
@@ -63,6 +63,7 @@ if (cmd === 'project') {
 	await renameCurrentWindow(BOARD_WINDOW);
 	await bindBoardKeys();
 	writeClaudeSettings();
+	writeOoSkill();
 	claimBoard();
 	render(<App />);
 }
