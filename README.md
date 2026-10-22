@@ -63,6 +63,10 @@ warns first; `y` resumes anyway.
 
 Card badges (with a legend at the bottom of the board): ⚙ working, ⏸ needs you
 (permission prompt), ✓ stopped, ○ window open with no activity yet, ↻ no window but
-resumable, ± uncommitted changes waiting to be reviewed and approved. Each card shows the project and thread number, with the title beneath.
+resumable, ± uncommitted changes waiting to be reviewed and approved. Each card shows the
+thread number and project abbreviation (or name, if it has none), with the title beneath. `e` opens a thread's own screen: its title, project,
+colour and diff base are edited in place, its plan in `$EDITOR`, and the rest of what the board
+knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that already has
+a branch or directory can't change project.
 
 State lives in `~/.local/share/output-orchestrator/state.json`.

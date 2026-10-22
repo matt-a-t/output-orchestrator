@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
-import { editPr, editThread } from './editor.js';
+import { editPr } from './editor.js';
 import {
 	checkout,
 	currentRef,
@@ -19,6 +19,7 @@ import { createPr, draftPr, findPr, prState } from './github.js';
 import { editText, loop } from './input.js';
 import { ProjectsView } from './projects.js';
 import { draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
+import { ThreadView } from './thread.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
@@ -87,6 +88,8 @@ export function App() {
 	const [busy, setBusy] = useState<string | null>(null);
 	const [prompt, setPrompt] = useState<Prompt | null>(null);
 	const [showProjects, setShowProjects] = useState(false);
+	// The thread form (e), replacing the board while it's open.
+	const [editing, setEditing] = useState<string | null>(null);
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
@@ -522,14 +525,6 @@ export function App() {
 		if (title !== undefined) setPrompt({ ...prompt, title });
 	};
 
-	const editSelected = (thread: Thread) =>
-		run(async () => {
-			const draft = await editThread(thread, state.projects.map(p => p.name));
-			if (!draft) return setMessage('Cancelled');
-			if (!projectByName(draft.project)) return setMessage(`✗ Unknown project "${draft.project}"`);
-			updateThread(thread.id, draft);
-		});
-
 	/**
 	 * Jump to the thread's claude window, starting claude in `cwd` (resuming the thread if it can) if needed.
 	 * `background` starts it without leaving the board; `resumeAnyway` skips the check for it being open elsewhere.
@@ -618,7 +613,7 @@ export function App() {
 	};
 
 	useInput((input, key) => {
-		if (busy || showProjects) return;
+		if (busy || showProjects || editing) return;
 		setMessage('');
 		if (confirm) {
 			setConfirm(null);
@@ -657,7 +652,7 @@ export function App() {
 		if (input === 'L') return moveColumn(selected, 1);
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
-		if (input === 'e') return editSelected(selected);
+		if (input === 'e') return setEditing(selected.id);
 		if (key.return) return openThread(selected);
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
@@ -729,7 +724,7 @@ export function App() {
 
 	// The layout is a fixed grid, so a press's cell says what it's on. The wheel stops at the ends rather than looping.
 	const onMouse = ({ button, x, y }: MouseEvent) => {
-		if (busy || showProjects || prompt || confirm) return;
+		if (busy || showProjects || editing || prompt || confirm) return;
 		setMessage('');
 		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
 		if (picker) {
@@ -771,6 +766,17 @@ export function App() {
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
 			{showProjects ? (
 				<ProjectsView state={state} setState={setState} onClose={() => setShowProjects(false)} />
+			) : editing ? (
+				<ThreadView
+					key={editing}
+					state={state}
+					threadId={editing}
+					updateThread={updateThread}
+					onClose={closing => {
+						setEditing(null);
+						setMessage(closing);
+					}}
+				/>
 			) : picker ? (
 				<Box flexGrow={1} overflow="hidden" flexDirection="column">
 					<Text bold>
@@ -818,8 +824,8 @@ export function App() {
 									<Box key={t.id} flexDirection="column">
 										<Text wrap="truncate" inverse={isSelected}>
 											<Text color={badgeColor}>{badge} </Text>
-											<Text color={color}>{t.project}</Text>
-											<Text dimColor> #{t.id}</Text>
+											<Text bold>#{t.id} </Text>
+											<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
 											{unreviewed.has(t.id) ? (
 												<Text color="magenta" bold>
 													{' '}±
@@ -837,7 +843,7 @@ export function App() {
 					))}
 				</Box>
 			)}
-			<Box marginTop={1} flexDirection="column" display={showProjects ? 'none' : 'flex'}>
+			<Box marginTop={1} flexDirection="column" display={showProjects || editing ? 'none' : 'flex'}>
 				{selected?.plan ? (
 					<Text dimColor wrap="truncate-end">
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
