@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
@@ -72,6 +73,28 @@ test('moves that need the board are refused and leave state.json alone', async t
 	assert.equal(await threadCommand(['move', '1', 'pr'], context(dir, project)), 1);
 	assert.match(output.err(), /from the board/);
 	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.column, 'planned');
+});
+
+test('a thread in Local can\'t change column until it\'s back, and it shows as in Local', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one', column: 'polish', local: true }]);
+	const output = capture(t);
+	assert.equal(await threadCommand(['move', '1', 'active'], context(dir, project)), 1);
+	assert.match(output.err(), /is in Local/);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.column, 'polish');
+	assert.equal(await threadCommand(['list'], context(dir, project)), 0);
+	assert.match(output.out(), /POLISH \(in LOCAL\)/);
+});
+
+test('threads from the old UI testing column load as in Local, back in Polish', () => {
+	const { dir } = fixture();
+	const file = join(dir, 'state.json');
+	const old = JSON.parse(readFileSync(file, 'utf8'));
+	old.threads.push({ id: '1', title: 't', project: 'p', column: 'uitest', restoreRef: 'main', createdAt: '', updatedAt: '' });
+	writeFileSync(file, JSON.stringify(old));
+	const [thread] = loadState(file).threads;
+	assert.equal(thread!.column, 'polish');
+	assert.equal(thread!.local, true);
+	assert.equal('restoreRef' in thread!, false);
 });
 
 test('a thread can\'t be moved to done or archived from its own directory', async t => {

@@ -27,7 +27,7 @@ function transcriptDir(cwd: string): string {
 
 /**
  * Copy a transcript to where claude looks for threads started in `cwd`, so `claude --resume`
- * finds it after the thread moves directory (see UI testing). Returns the new path.
+ * finds it after the thread moves directory (see Local). Returns the new path.
  */
 export function copyTranscript(transcriptPath: string, cwd: string): string | undefined {
 	if (!existsSync(transcriptPath)) return;

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { editPr } from './editor.js';
+import { runHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js';
 import { editText, loop } from './input.js';
@@ -13,11 +14,14 @@ import {
 	COLORS,
 	COLUMN_LABELS,
 	COLUMNS,
+	HOOK_LABELS,
+	LOCAL_LABEL,
 	STATE_FILE,
 	loadState,
 	saveState,
 	type Column,
 	type Project,
+	type ProjectHook,
 	type State,
 	type Thread,
 } from './state.js';
@@ -68,13 +72,16 @@ type Prompt =
 	| { step: 'title'; project: string; title: string }
 	| { step: 'commit'; thread: Thread; cwd: string; subject: string; body: string };
 
-// The columns and the import list start below the title bar, a header and a rule; each card is two lines.
+// The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
 const LIST_TOP = 3;
+// Local is drawn as a box after the columns, and the cursor reaches it like one more column.
+const LOCAL_COL = COLUMNS.length;
 const CARD_HEIGHT = 2;
+const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 
 const HELP =
-	'h/l j/k move  H/L column  J/K reorder  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -104,6 +111,10 @@ export function App() {
 		setConfirm(() => action);
 		setMessage(`${question} y to confirm`);
 	};
+	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
+	const boardRef = useRef<DOMElement>(null);
+	const [boardHeight, setBoardHeight] = useState(0);
+	const scrollOffsets = useRef<Partial<Record<Column, number>>>({});
 
 	const refreshWindows = () =>
 		windowNames()
@@ -223,10 +234,13 @@ export function App() {
 		const timer = setInterval(check, 3000);
 		return () => clearInterval(timer);
 	}, []);
-	const columnThreads = (column: Column) =>
-		state.threads.filter(t => t.column === column && (!filter || t.project === filter));
+	const visible = (t: Thread, f = filter) => t.column !== 'archived' && (!f || t.project === f);
+	const columnThreads = (column: Column, f = filter) => state.threads.filter(t => t.column === column && !t.local && visible(t, f));
+	const localThreads = (f = filter) => state.threads.filter(t => t.local && visible(t, f));
+	/** A column's threads, or Local's. */
+	const laneThreads = (col: number) => (col === LOCAL_COL ? localThreads() : columnThreads(COLUMNS[col]!));
 
-	const colThreads = columnThreads(COLUMNS[cursor.col]!);
+	const colThreads = laneThreads(cursor.col);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
 	const selected: Thread | undefined = colThreads[row];
 
@@ -242,13 +256,19 @@ export function App() {
 	const moveColumn = (thread: Thread, delta: number) => {
 		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 		if (col < 0 || col >= COLUMNS.length) return;
-		const column = COLUMNS[col]!;
+		moveThread(thread, COLUMNS[col]!);
+	};
+
+	const moveThread = (thread: Thread, column: (typeof COLUMNS)[number]) => {
+		if (thread.column === column) return;
+		const col = COLUMNS.indexOf(column);
+		// Its branch is checked out in the project's checkout, not its worktree, until it comes back.
+		if (thread.local) return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
 		const warning = moveWarning(state, thread, column);
 		if (warning) setMessage(warning);
-		if (column === 'uitest') return void run(() => startUiTest(thread), 'checking out for UI testing');
-		// From UI testing too: it only leaves once the PR is open.
+		// Done closes its claude window.
+		if (column === 'done' && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
-		if (thread.column === 'uitest') return void run(async () => void (await endUiTest(thread, column)), 'leaving UI testing');
 		setColumn(thread.id, column);
 		setCursor({ col, row: columnThreads(column).length });
 		run(() => syncWorktree({ ...thread, column }), 'updating worktree');
@@ -312,19 +332,33 @@ export function App() {
 		return transcriptPath ? { transcriptPath } : {};
 	};
 
+	/** Put the cursor on the thread in Local, where it's been added at the bottom. */
+	const showInLocal = () => setCursor({ col: LOCAL_COL, row: localThreads().length });
+
+	/** Run the project's hook, saying so; a hook that can't start doesn't undo the move. */
+	const hook = async (project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string) => {
+		const ran = await runHook(project, event, thread, cwd).catch(
+			err => `✗ ${HOOK_LABELS[event]} hook didn't start: ${err instanceof Error ? err.message : String(err)}`,
+		);
+		setMessage(ran ? `${done}; ${ran}` : done);
+	};
+
 	/**
-	 * Check the thread's branch out in the project's own checkout, so changes show up in the
-	 * local dev environment, and move claude there with it. The worktree is removed meanwhile.
+	 * Check the thread's branch out in the project's own checkout, so changes show up in the local
+	 * dev environment, and move claude there with it, then run the project's enter local hook.
+	 * The worktree is removed meanwhile. Only one thread per project fits.
 	 */
-	const startUiTest = async (thread: Thread) => {
+	const enterLocal = async (thread: Thread) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		const other = stateRef.current.threads.find(t => t.column === 'uitest' && t.project === thread.project);
-		if (other) return setMessage(`✗ ${thread.project} is already UI testing #${other.id} ${other.title}`);
+		const other = stateRef.current.threads.find(t => t.local && t.project === thread.project);
+		if (other) return setMessage(`✗ ${thread.project} already has #${other.id} ${other.title} in Local`);
+		if (thread.column === 'done') return setMessage(`#${thread.id} is done — move it back to Polish first`);
 		// Imported threads already run in their own directory, with no branch to move.
 		if (thread.cwd) {
-			setColumn(thread.id, 'uitest');
-			return setCursor({ col: COLUMNS.indexOf('uitest'), row: columnThreads('uitest').length });
+			setColumn(thread.id, thread.column, { local: true });
+			showInLocal();
+			return hook(project, 'enterLocal', thread, thread.cwd, `#${thread.id} is in Local`);
 		}
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
 		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
@@ -335,51 +369,44 @@ export function App() {
 		if (await isDirty(project.path, { untracked: false })) {
 			return setMessage(`⚠ ${project.path} has uncommitted changes — commit or stash them first`);
 		}
-		const restoreRef = await currentRef(project.path);
 		const wasOpen = await closeClaude(thread);
 		if (hasWorktree(thread)) await removeWorktree(project.path, thread);
 		await checkout(project.path, thread.branch);
-		const moved: Thread = { ...thread, column: 'uitest', restoreRef, ...moveTranscript(thread, project.path) };
-		setColumn(thread.id, 'uitest', moved);
-		setCursor({ col: COLUMNS.indexOf('uitest'), row: columnThreads('uitest').length });
+		const moved: Thread = { ...thread, local: true, ...moveTranscript(thread, project.path) };
+		setColumn(thread.id, thread.column, moved);
+		showInLocal();
 		if (wasOpen) await launchClaude(moved, project.path, { background: true });
-		setMessage(`${project.name} checkout is on ${thread.branch}; claude works there until it leaves UI testing`);
+		await hook(project, 'enterLocal', moved, project.path, `${project.name} checkout is on ${thread.branch}; claude works there until it leaves Local`);
 	};
 
 	/**
-	 * Put the project's checkout back on its previous branch and move the thread back into its worktree,
-	 * in `column` with `patch` applied; returns whether it did.
+	 * Put the project's checkout back on the default branch and move the thread back into its
+	 * worktree, in the column it came from, then run the project's leave local hook.
 	 */
-	const endUiTest = async (thread: Thread, column: Column, patch: Partial<Thread> = {}): Promise<boolean> => {
-		const fail = (message: string) => {
-			setMessage(message);
-			return false;
-		};
+	const leaveLocal = async (thread: Thread) => {
 		const project = projectByName(thread.project);
-		if (!project) return fail(`✗ Unknown project "${thread.project}"`);
-		const showAt = () => setCursor({ col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]), row: columnThreads(column).length });
+		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		const showBack = () => setCursor({ col: COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]), row: columnThreads(thread.column).length });
 		if (thread.cwd) {
-			setColumn(thread.id, column, patch);
-			showAt();
-			return true;
+			setColumn(thread.id, thread.column, { local: undefined });
+			showBack();
+			return hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is back in ${COLUMN_LABELS[thread.column]}`);
 		}
-		if (statuses[thread.id] === 'working') return fail(`⚠ claude is still working on #${thread.id}`);
+		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		// Including untracked files: anything new there is the thread's work.
 		if (await isDirty(project.path)) {
-			return fail(`⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`);
+			return setMessage(`⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`);
 		}
-		const restoreRef = thread.restoreRef ?? thread.base;
-		if (!restoreRef) return fail(`✗ Don't know what ${project.path} was on before #${thread.id}`);
+		const main = (await defaultBranch(project.path)) ?? 'main';
 		const wasOpen = await closeClaude(thread);
-		await checkout(project.path, restoreRef);
-		const back: Thread = { ...thread, ...patch, column, restoreRef: undefined };
+		await checkout(project.path, main);
+		const back: Thread = { ...thread, local: undefined };
 		const cwd = await createWorktree(project, back);
 		Object.assign(back, moveTranscript(thread, cwd));
-		setColumn(thread.id, column, back);
+		setColumn(thread.id, thread.column, back);
 		if (wasOpen) await launchClaude(back, cwd, { background: true });
-		showAt();
-		setMessage(`${project.name} checkout is back on ${restoreRef}`);
-		return true;
+		showBack();
+		await hook(project, 'leaveLocal', back, project.path, `${project.name} checkout is back on ${main}; #${thread.id} is back in its worktree`);
 	};
 
 	/** Push the thread's branch and open its PR (unless it has one already), then move it to PR. */
@@ -399,10 +426,8 @@ export function App() {
 			}
 		}
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
-		const uiTesting = thread.column === 'uitest';
-		if (uiTesting && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
-		// While UI testing the branch is checked out in the project itself; otherwise this reopens the worktree if the thread is coming back from Done.
-		const cwd = thread.cwd ?? (uiTesting ? project.path : await createWorktree(project, thread));
+		// This reopens the worktree if the thread is coming back from Done.
+		const cwd = thread.cwd ?? (await createWorktree(project, thread));
 		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`);
 		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
 		let pr = existing;
@@ -421,17 +446,9 @@ export function App() {
 			pr = await createPr(cwd, thread, draft.title, draft.body);
 		}
 		const patch = { pr, branch: thread.branch, base: thread.base };
-		const done = `${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`;
-		if (uiTesting) {
-			// Recorded first, so if leaving UI testing fails, trying again finds the PR instead of opening another.
-			updateThread(thread.id, patch);
-			// It stays in UI testing until the PR exists, so a cancel leaves it where it was.
-			if (await endUiTest({ ...thread, ...patch }, 'pr', patch)) setMessage(done);
-			return;
-		}
 		setColumn(thread.id, 'pr', patch);
 		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
-		setMessage(done);
+		setMessage(`${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`);
 	};
 
 	// Move threads whose PR has merged to Done (which also cleans up the worktree).
@@ -466,7 +483,7 @@ export function App() {
 		run(async () => {
 			const dir = threadDir(stateRef.current, thread);
 			if (dir) return await fn(dir);
-			if (thread.column === 'uitest') return setMessage(`✗ Unknown project "${thread.project}"`);
+			if (thread.local) return setMessage(`✗ Unknown project "${thread.project}"`);
 			setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
 		});
 
@@ -570,7 +587,7 @@ export function App() {
 		run(async () => {
 			const project = projectByName(thread.project);
 			if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-			const cwd = thread.cwd ?? (thread.column === 'uitest' ? project.path : await createWorktree(project, thread));
+			const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(project, thread));
 			await launchClaude(thread, cwd);
 		});
 
@@ -591,14 +608,19 @@ export function App() {
 
 	const linkedThread = (outside: OutsideThread) => state.threads.find(t => t.sessionId === outside.id);
 
+	/** Where the thread is shown with `f` as the filter: its column or Local, and its row there. */
+	const positionOf = (thread: Thread, f: string | null) => {
+		const col = thread.local ? LOCAL_COL : COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
+		const lane = thread.local ? localThreads(f) : columnThreads(thread.column, f);
+		return { col, row: lane.indexOf(thread) };
+	};
+
 	/** Jump to the column/row a thread is shown at, clearing the filter if it hides it. */
 	const showThread = (thread: Thread) => {
-		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
-		if (col < 0) return false;
-		const visible = filter && filter !== thread.project ? null : filter;
-		setFilter(visible);
-		const rowIn = state.threads.filter(t => t.column === thread.column && (!visible || t.project === visible));
-		setCursor({ col, row: rowIn.indexOf(thread) });
+		if (thread.column === 'archived') return false;
+		const shown = filter && filter !== thread.project ? null : filter;
+		setFilter(shown);
+		setCursor(positionOf(thread, shown));
 		return true;
 	};
 
@@ -646,11 +668,11 @@ export function App() {
 		if (key.escape && filter) {
 			setFilter(null);
 			// Stay on the same thread now that the rest of its column is back.
-			if (selected) setCursor({ col: cursor.col, row: state.threads.filter(t => t.column === selected.column).indexOf(selected) });
+			if (selected) setCursor(positionOf(selected, null));
 			return;
 		}
-		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, COLUMNS.length), row });
-		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, COLUMNS.length), row });
+		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, LOCAL_COL + 1), row });
+		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, LOCAL_COL + 1), row });
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
@@ -664,8 +686,18 @@ export function App() {
 		if (!selected) return;
 		if (input === 'H') return moveColumn(selected, -1);
 		if (input === 'L') return moveColumn(selected, 1);
+		if (input === 'F' && selected.column !== 'done') {
+			// Imported threads keep their directory and window.
+			const closes = selected.cwd ? '' : ' It closes its claude window and removes its worktree (branch kept).';
+			return ask(`Move #${selected.id} ${selected.title} to Done?${closes}`, () => moveThread(selected, 'done'));
+		}
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
+		if (input === 't') {
+			return selected.local
+				? run(() => leaveLocal(selected), 'leaving Local')
+				: run(() => enterLocal(selected), 'checking out for Local');
+		}
 		if (input === 'e') return setEditing(selected.id);
 		if (key.return) return openThread(selected);
 		if (input === 'C') {
@@ -721,7 +753,32 @@ export function App() {
 		}
 	});
 
-	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
+	useEffect(() => {
+		if (!boardRef.current) return;
+		const measured = measureElement(boardRef.current).height;
+		if (measured !== boardHeight) setBoardHeight(measured);
+	});
+
+	/** The slice of a column's threads that fits, keeping the cursor in view; `top` is the lines its "more" line above takes. */
+	const visibleSlice = (column: Column, count: number, cursorRow: number | undefined) => {
+		const lines = boardHeight - (LIST_TOP - 1);
+		const rowLines = cardHeight(column);
+		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count, top: 0 };
+		// Room for the "more" lines above and below.
+		const fits = Math.max(1, Math.floor((lines - 2) / rowLines));
+		const last = count - fits;
+		let start = scrollOffsets.current[column] ?? (column === 'done' ? last : 0);
+		if (cursorRow !== undefined) start = Math.min(Math.max(start, cursorRow - fits + 1), cursorRow);
+		// Unless you're in it, Done shows the latest arrivals, which land at the bottom.
+		else if (column === 'done') start = last;
+		start = Math.min(Math.max(0, start), last);
+		scrollOffsets.current[column] = start;
+		return { start, end: start + fits, top: start > 0 ? 1 : 0 };
+	};
+	const columnSlice = (c: number) => visibleSlice(COLUMNS[c]!, columnThreads(COLUMNS[c]!).length, c === cursor.col ? row : undefined);
+
+	// Local gets a column's width too.
+	const colWidth = Math.max(16, Math.floor(width / (COLUMNS.length + 1)));
 
 	// The import list scrolls to keep the selected entry in view; it shows what fits in the space
 	// measured after each render, starting at entry `pickerTop`.
@@ -782,11 +839,14 @@ export function App() {
 		}
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
 		const col = Math.floor(x / colWidth);
-		if (button !== 'left' || y < 1 || col >= COLUMNS.length) return;
-		// The column's header.
-		if (y < LIST_TOP) return setCursor({ col, row });
-		const r = Math.floor((y - LIST_TOP) / CARD_HEIGHT);
-		const thread = columnThreads(COLUMNS[col]!)[r];
+		if (button !== 'left' || y < 1 || col > LOCAL_COL) return;
+		// Local's border pushes its contents down a line; it doesn't scroll.
+		const slice = col === LOCAL_COL ? { start: 0, end: Infinity, top: 1 } : columnSlice(col);
+		const top = LIST_TOP + slice.top;
+		// The column's header, or its "more" line.
+		if (y < top) return setCursor({ col, row });
+		const r = slice.start + Math.floor((y - top) / (col === LOCAL_COL ? CARD_HEIGHT : cardHeight(COLUMNS[col]!)));
+		const thread = r < slice.end ? laneThreads(col)[r] : undefined;
 		if (!thread) return;
 		setCursor({ col, row: r });
 		if (isDoubleClick(thread.id)) openThread(thread);
@@ -798,6 +858,40 @@ export function App() {
 		mouse.on('press', listener);
 		return () => void mouse.off('press', listener);
 	}, []);
+
+	/** A thread's two lines on the board (one in Done); `from` notes the column a thread in Local came from. */
+	const card = (t: Thread, isSelected: boolean, from?: string) => {
+		const oneLine = cardHeight(t.column) === 1 && !t.local;
+		const color = t.color ?? projectByName(t.project)?.color;
+		const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
+			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
+			: resumeId(t)
+				? ['↻', 'gray']
+				: [' ', undefined];
+		return (
+			<Box key={t.id} flexDirection="column">
+				<Text wrap="truncate" inverse={isSelected}>
+					<Text color={badgeColor}>{badge} </Text>
+					<Text bold>#{t.id} </Text>
+					<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
+					{unreviewed.has(t.id) ? (
+						<Text color="magenta" bold>
+							{' '}±
+						</Text>
+					) : null}
+					{from ? <Text dimColor> ↩ {from}</Text> : null}
+					{/* Finished threads get one line each so more of them fit. */}
+					{oneLine ? ` ${t.title}` : null}
+				</Text>
+				{oneLine ? null : (
+					<Text wrap="truncate" inverse={isSelected}>
+						{'  '}
+						{t.title}
+					</Text>
+				)}
+			</Box>
+		);
+	};
 
 	return (
 		<Box flexDirection="column" height={height}>
@@ -854,42 +948,31 @@ export function App() {
 					</Box>
 				</Box>
 			) : (
-				<Box flexGrow={1} overflow="hidden">
-					{COLUMNS.map((column, c) => (
-						<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-								{COLUMN_LABELS[column]} ({columnThreads(column).length})
-							</Text>
-							<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-							{columnThreads(column).map((t, r) => {
-								const isSelected = c === cursor.col && r === row;
-								const color = t.color ?? projectByName(t.project)?.color;
-								const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
-									? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
-									: resumeId(t)
-										? ['↻', 'gray']
-										: [' ', undefined];
-								return (
-									<Box key={t.id} flexDirection="column">
-										<Text wrap="truncate" inverse={isSelected}>
-											<Text color={badgeColor}>{badge} </Text>
-											<Text bold>#{t.id} </Text>
-											<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
-											{unreviewed.has(t.id) ? (
-												<Text color="magenta" bold>
-													{' '}±
-												</Text>
-											) : null}
-										</Text>
-										<Text wrap="truncate" inverse={isSelected}>
-											{'  '}
-											{t.title}
-										</Text>
-									</Box>
-								);
-							})}
-						</Box>
-					))}
+				<Box ref={boardRef} flexGrow={1} overflow="hidden">
+					{COLUMNS.map((column, c) => {
+						const threads = columnThreads(column);
+						const { start, end } = columnSlice(c);
+						return (
+							<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
+								<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+									{COLUMN_LABELS[column]} ({threads.length})
+								</Text>
+								<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
+								{start > 0 ? <Text dimColor>  ↑ {start} more</Text> : null}
+								{threads.slice(start, end).map((t, i) => card(t, c === cursor.col && start + i === row))}
+								{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
+							</Box>
+						);
+					})}
+					{/* Not a column: a box off to the side that threads visit, one per project. */}
+					<Box flexDirection="column" width={colWidth} alignSelf="flex-start" borderStyle="round" borderColor="yellow">
+						<Text bold color={cursor.col === LOCAL_COL ? 'white' : 'gray'}>
+							{LOCAL_LABEL} ({localThreads().length})
+						</Text>
+						<Text dimColor>{'─'.repeat(Math.max(0, colWidth - 2))}</Text>
+						{localThreads().length === 0 ? <Text dimColor>t sends a thread here</Text> : null}
+						{localThreads().map((t, r) => card(t, cursor.col === LOCAL_COL && r === row, COLUMN_LABELS[t.column].toLowerCase()))}
+					</Box>
 				</Box>
 			)}
 			<Box marginTop={1} flexDirection="column" display={showProjects || editing ? 'none' : 'flex'}>

@@ -29,7 +29,7 @@ function projectCommand(args: string[]): number {
 	const [sub, ...rest] = args;
 	if (sub === 'add' && rest[0]) {
 		const path = resolve(rest[0]);
-		const project = { name: rest[1] ?? basename(path), abbrev: '', path, color: COLORS[state.projects.length % COLORS.length]! };
+		const project = { name: rest[1] ?? basename(path), abbrev: '', path, color: COLORS[state.projects.length % COLORS.length]!, hooks: {} };
 		const problem = projectProblem(state, project);
 		if (problem) {
 			console.error(problem);
