@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput, useWindowSize, type Key } from 'ink';
+import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { editPr } from './editor.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js';
@@ -59,11 +59,12 @@ const LEGEND: [string, string | undefined, string][] = [
 ];
 
 /**
- * The `n` flow (pick a project, then type the title), or approving a step from its diff: edit the
+ * The `n` flow (pick a project, then type the title), picking the project to import from (`i`
+ * with no filter), or approving a step from its diff: edit the
  * subject of the commit message claude drafted (its body is kept as is).
  */
 type Prompt =
-	| { step: 'project'; index: number }
+	| { step: 'project'; index: number; then: 'new' | 'import' }
 	| { step: 'title'; project: string; title: string }
 	| { step: 'commit'; thread: Thread; cwd: string; subject: string; body: string };
 
@@ -474,7 +475,7 @@ export function App() {
 		// One project means nothing to choose.
 		if (state.projects.length === 1) return setPrompt({ step: 'title', project: state.projects[0]!.name, title: '' });
 		const current = filter ?? selected?.project;
-		setPrompt({ step: 'project', index: Math.max(0, state.projects.findIndex(p => p.name === current)) });
+		setPrompt({ step: 'project', index: Math.max(0, state.projects.findIndex(p => p.name === current)), then: 'new' });
 	};
 
 	const createThread = (project: string, title: string) => {
@@ -517,7 +518,14 @@ export function App() {
 			const count = state.projects.length;
 			if (input === 'j' || key.downArrow) return setPrompt({ ...prompt, index: (prompt.index + 1) % count });
 			if (input === 'k' || key.upArrow) return setPrompt({ ...prompt, index: (prompt.index + count - 1) % count });
-			if (key.return) return setPrompt({ step: 'title', project: state.projects[prompt.index]!.name, title: '' });
+			if (key.return) {
+				const project = state.projects[prompt.index]!;
+				if (prompt.then === 'import') {
+					setPrompt(null);
+					return openPicker(project);
+				}
+				return setPrompt({ step: 'title', project: project.name, title: '' });
+			}
 			return;
 		}
 		if (key.return) {
@@ -566,10 +574,16 @@ export function App() {
 			await launchClaude(thread, cwd);
 		});
 
-	const openPicker = () =>
+	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
+	const startImport = () => {
+		if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
+		const filtered = filter ? projectByName(filter) : state.projects.length === 1 ? state.projects[0] : undefined;
+		if (filtered) return openPicker(filtered);
+		setPrompt({ step: 'project', index: 0, then: 'import' });
+	};
+
+	const openPicker = (project: Project) =>
 		run(async () => {
-			if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
-			const project = projectByName(filter ?? selected?.project ?? state.projects[0]!.name)!;
 			const threads = await listOutsideThreads(project.path);
 			if (threads.length === 0) return setMessage(`No claude threads to import in ${project.path}`);
 			setPicker({ project: project.name, threads, row: 0 });
@@ -641,7 +655,7 @@ export function App() {
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
-		if (input === 'i') return openPicker();
+		if (input === 'i') return startImport();
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
 			setFilter(names[(names.indexOf(filter) + 1) % names.length]!);
@@ -709,6 +723,31 @@ export function App() {
 
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
+	// The import list scrolls to keep the selected entry in view; it shows what fits in the space
+	// measured after each render, starting at entry `pickerTop`.
+	const pickerList = useRef<DOMElement>(null);
+	const [pickerLines, setPickerLines] = useState(0);
+	useEffect(() => {
+		if (!pickerList.current) return;
+		const lines = measureElement(pickerList.current).height;
+		if (lines !== pickerLines) setPickerLines(lines);
+	});
+	const pickerTop = useRef(0);
+	const entryHeight = (t: OutsideThread) => (t.title === t.firstPrompt ? 1 : 2);
+	const pickerShown: OutsideThread[] = [];
+	if (picker) {
+		const { threads, row: selectedRow } = picker;
+		const linesFrom = (from: number, to: number) => threads.slice(from, to + 1).reduce((n, t) => n + entryHeight(t), 0);
+		pickerTop.current = Math.min(pickerTop.current, selectedRow);
+		while (pickerTop.current < selectedRow && linesFrom(pickerTop.current, selectedRow) > pickerLines) pickerTop.current++;
+		let lines = 0;
+		for (const t of threads.slice(pickerTop.current)) {
+			lines += entryHeight(t);
+			if (lines > pickerLines) break;
+			pickerShown.push(t);
+		}
+	} else pickerTop.current = 0;
+
 	const lastClick = useRef<{ target: string; at: number } | null>(null);
 	/** Whether this click is on the same thing as the last, soon enough to make a double-click. */
 	const isDoubleClick = (target: string) => {
@@ -721,9 +760,9 @@ export function App() {
 	/** The import list's entry at screen row `y`; an entry is one line, or two when it shows its first prompt. */
 	const pickerRowAt = (y: number) => {
 		let top = LIST_TOP;
-		for (const [r, t] of (picker?.threads ?? []).entries()) {
-			top += t.title === t.firstPrompt ? 1 : 2;
-			if (y < top) return r;
+		for (const [r, t] of pickerShown.entries()) {
+			top += entryHeight(t);
+			if (y < top) return pickerTop.current + r;
 		}
 	};
 
@@ -787,27 +826,32 @@ export function App() {
 					<Text bold>
 						Import a {picker.project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
 					</Text>
-					<Text dimColor>{'─'.repeat(Math.max(0, width - 1))}</Text>
-					{picker.threads.map((s, r) => {
-						const linked = linkedThread(s);
-						const active = recentlyActive(s.transcriptPath);
-						return (
-							<Box key={s.id} flexDirection="column">
-								<Text wrap="truncate" inverse={r === picker.row}>
-									<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
-									{linked ? <Text color="cyan">#{linked.id} </Text> : null}
-									{active ? <Text color="yellow">● active </Text> : null}
-									{s.title}
-								</Text>
-								{s.title !== s.firstPrompt ? (
-									<Text wrap="truncate" dimColor>
-										{'         '}
-										{s.firstPrompt}
+					<Text dimColor>
+						{'─'.repeat(Math.max(0, width - 13))} {String(picker.row + 1).padStart(4)} of {String(picker.threads.length).padEnd(3)}
+					</Text>
+					<Box ref={pickerList} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
+						{pickerShown.map((s, i) => {
+							const r = pickerTop.current + i;
+							const linked = linkedThread(s);
+							const active = recentlyActive(s.transcriptPath);
+							return (
+								<Box key={s.id} flexDirection="column" flexShrink={0}>
+									<Text wrap="truncate" inverse={r === picker.row}>
+										<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
+										{linked ? <Text color="cyan">#{linked.id} </Text> : null}
+										{active ? <Text color="yellow">● active </Text> : null}
+										{s.title}
 									</Text>
-								) : null}
-							</Box>
-						);
-					})}
+									{s.title !== s.firstPrompt ? (
+										<Text wrap="truncate" dimColor>
+											{'         '}
+											{s.firstPrompt}
+										</Text>
+									) : null}
+								</Box>
+							);
+						})}
+					</Box>
 				</Box>
 			) : (
 				<Box flexGrow={1} overflow="hidden">
@@ -849,19 +893,20 @@ export function App() {
 				</Box>
 			)}
 			<Box marginTop={1} flexDirection="column" display={showProjects || editing ? 'none' : 'flex'}>
-				{selected?.plan ? (
+				{/* About the highlighted card, so not while the import list covers the board. */}
+				{selected?.plan && !picker ? (
 					<Text dimColor wrap="truncate-end">
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
 					</Text>
 				) : null}
-				{selected?.pr ? (
+				{selected?.pr && !picker ? (
 					<Text dimColor>
 						PR #{selected.pr.number} {selected.pr.url} (b opens it)
 					</Text>
 				) : null}
 				{prompt?.step === 'project' ? (
 					<Box flexDirection="column">
-						<Text bold>New thread — project? (j/k move, ⏎ choose, esc cancel)</Text>
+						<Text bold>{prompt.then === 'import' ? 'Import' : 'New thread'} — project? (j/k move, ⏎ choose, esc cancel)</Text>
 						{state.projects.map((p, i) => (
 							<Text key={p.name} inverse={i === prompt.index}>
 								{'  '}
