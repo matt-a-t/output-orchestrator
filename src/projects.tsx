@@ -160,7 +160,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			<Text dimColor>
 				{form
 					? isHook(FIELDS[form.field]!)
-						? 'shell command run in the project checkout (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  ↑/↓ or tab field  ⏎ save  esc cancel'
+						? `shell command run in the ${FIELDS[form.field]!.endsWith('Polish') ? "thread's worktree" : 'project checkout'} (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  ↑/↓ or tab field  ⏎ save  esc cancel`
 						: FIELDS[form.field] === 'wakePrompt'
 							? 'pasted into claude by w / W on the board; empty uses the default  ↑/↓ or tab field  ⏎ save  esc cancel'
 							: '↑/↓ or tab field  ←/→ colour  ⏎ save  esc cancel'
