@@ -49,8 +49,10 @@ take `y`; any other key cancels.
 
 To work beside claude, `s` opens a shell and `v` a diff on the right of the thread's claude
 window (starting claude if it isn't running) and jumps there. The diff is the step's, or the
-thread's when the step has none; `r` refreshes it as claude makes changes, and `q` closes it.
-Approving still happens from `d`. Pressing the other key swaps what's on the right, and either
+thread's when the step has none, and `t` switches between them; `r` refreshes it as claude makes
+changes, and `q` closes it. `a` commits everything uncommitted, like approving from `d`: claude
+drafts the message and it opens in `$EDITOR` (an empty subject cancels, leaving the changes
+staged). Pressing the other key swaps what's on the right, and either
 key jumps back to it later. From inside a thread's window, `M-s` / `M-d` do the same, and other
 `Alt` keys move between panes and threads, scroll and go back to the board (see [KEYS.md](KEYS.md)).
 
