@@ -16,8 +16,8 @@ const APPROVE_STATUS = 65;
 const PANE_KEYS = '#command\na quit A\nr quit R\nt quit T\n';
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// What delta's --navigate labels files and hunks with.
-const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:)';
+// What delta's --navigate labels files and hunks with. It takes the whole line so less highlights all of it.
+const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 
 /**
  * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
@@ -94,7 +94,18 @@ function gitCommand(args: string[]): string {
 /** less over delta's output, with n/N jumping between files and hunks. */
 function lessCommand(keys?: string): string {
 	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
-	const less = ['less', '-R', `--pattern=${NAVIGATE_PATTERN}`, '+g', ...(keys ? [`--lesskey-src=${keys}`] : [])];
+	// Headers are highlighted black on yellow (-DSkY), and -j4 lands a jump on the 4th row so the
+	// end of the hunk before shows above it.
+	const less = [
+		'less',
+		'-R',
+		'--use-color',
+		'-DSkY',
+		'-j4',
+		`--pattern=${NAVIGATE_PATTERN}`,
+		'+g',
+		...(keys ? [`--lesskey-src=${keys}`] : []),
+	];
 	return less.map(shellQuote).join(' ');
 }
 
