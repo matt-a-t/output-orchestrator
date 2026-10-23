@@ -5,7 +5,7 @@
 `oo` is installed with `npm link`, so it runs `dist/` from this checkout. Putting a thread in Local
 checks its branch out here, but nothing rebuilds unless the project's hooks do it:
 
-1. `rm -rf dist && npm run build` (a good enter local and leave local hook). tsc never deletes
+1. `npm run clean-build` (a good enter local and leave local hook). tsc never deletes
    output, so a clean build drops stale files from renamed or removed modules.
 2. Quit the board (`q`) and run `oo` again. The running board keeps the code it started with.
    Claude's hooks run `dist/hook.js` fresh on every event, so they're up to date as soon as the build is.
