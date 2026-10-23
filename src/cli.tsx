@@ -12,11 +12,13 @@ import { diffPaneCommand, draftCommit } from './review.js';
 import { OO_COMMAND, writeClaudeSettings, writeOoSkill } from './status.js';
 import { threadDir } from './threads.js';
 import {
+	BOARD_LABEL,
 	BOARD_WINDOW,
 	attachBoard,
 	bindBoardKeys,
 	enableTmuxMouse,
 	insideTmux,
+	labelWindow,
 	openSplit,
 	renameCurrentWindow,
 	selectExistingBoard,
@@ -120,6 +122,7 @@ if (cmd === 'project') {
 	}
 	if (await selectExistingBoard()) process.exit(0);
 	await renameCurrentWindow(BOARD_WINDOW);
+	await labelWindow(BOARD_WINDOW, BOARD_LABEL);
 	// Not just `oo`, so the keys don't depend on it being on tmux's PATH.
 	await bindBoardKeys([...OO_COMMAND, 'split'].map(arg => JSON.stringify(arg)).join(' '));
 	await enableTmuxMouse();
