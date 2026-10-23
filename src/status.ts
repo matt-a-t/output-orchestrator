@@ -19,6 +19,12 @@ const ooHook = (name: string) => [
 ];
 const PLAN_HOOK = ooHook('planHook');
 const SESSION_HOOK = ooHook('sessionHook');
+/** oo itself (this same dist or source), for tmux keys and panes that call back into it. */
+export const OO_COMMAND = [
+	process.execPath,
+	...(fromSource ? process.execArgv : []),
+	fileURLToPath(new URL(fromSource ? './cli.tsx' : './cli.js', import.meta.url)),
+];
 
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 

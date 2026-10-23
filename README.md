@@ -12,9 +12,9 @@ npm link            # puts `oo` on your PATH
 ```
 
 The board binds `prefix b` (`Ctrl-b b` by default) to jump back to it from any thread, and
-`prefix Ctrl-b` too for when you're still holding ctrl, plus `Alt-b` with no prefix in thread
-windows (where it no longer moves back a word), unless you've already bound those keys
-to something else. `prefix Ctrl-b` normally sends a literal `Ctrl-b` (send-prefix), which this
+`prefix Ctrl-b` too for when you're still holding ctrl, plus some `Alt` keys with no prefix in
+thread windows only (see [KEYS.md](KEYS.md)), unless you've already bound those keys to
+something else. `prefix Ctrl-b` normally sends a literal `Ctrl-b` (send-prefix), which this
 replaces.
 
 ## Use
@@ -28,7 +28,7 @@ oo
 inside tmux, it opens the board in the current window, or jumps to it if it's already
 running.
 
-Keys are listed at the bottom of the board. The mouse works too: click a card to select
+`?` on the board lists every key, and so does [KEYS.md](KEYS.md). The mouse works too: click a card to select
 it, double-click to open it, scroll to move up and down (the import list works the same way).
 For that the board turns on tmux's `mouse` option for its session, so in claude windows
 dragging selects into tmux's buffer; hold Shift while dragging for your terminal's own selection. `n` / `e` open `$EDITOR` (default vim)
@@ -47,12 +47,14 @@ claude drafts, whose subject you edit on the board (esc cancels, leaving the cha
 drafted body is kept as is). Confirmations (quit, archive, approve, resuming a busy thread) all
 take `y`; any other key cancels.
 
-To work beside claude, `s` opens a shell and `v` a diff on the right of the thread's claude
+To work beside claude, `s` opens a shell and `M-d` (alt-d) a diff on the right of the thread's claude
 window (starting claude if it isn't running) and jumps there. The diff is the step's, or the
-thread's when the step has none; `r` refreshes it as claude makes changes, and `q` closes it.
-Approving still happens from `d`. Pressing the other key swaps what's on the right, and either
-key jumps back to it later. In a thread's window `M-h` / `M-l` move between claude and the pane
-beside it, and `M-b` or `M-q` go back to the board.
+thread's when the step has none, and `t` switches between them; `r` refreshes it as claude makes
+changes, and `q` closes it. `a` commits everything uncommitted, like approving from `d`: claude
+drafts the message and it opens in `$EDITOR` (an empty subject cancels, leaving the changes
+staged). Pressing the other key swaps what's on the right, and either
+key jumps back to it later. From inside a thread's window, `M-s` / `M-d` do the same, and other
+`Alt` keys move between panes and threads, scroll and go back to the board (see [KEYS.md](KEYS.md)).
 
 `t` puts a thread in Local, a box beside the columns, to try it out in your usual dev setup:
 its branch is checked out in the project's own checkout (which needs no uncommitted changes to

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { loadState } from './state.js';
-import { planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
+import { approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { approvedTodo, inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
@@ -201,4 +201,14 @@ test('todoWindow keeps the current step in view', () => {
 	// Near the end, or all done, the last few.
 	assert.deepEqual(todoWindow(todos(8, 10), 5), { start: 5, end: 10 });
 	assert.deepEqual(todoWindow(todos(10, 10), 5), { start: 5, end: 10 });
+});
+
+test('committing outside the board ticks off the checkpoint in review', async () => {
+	const todos = [{ subject: 'a', status: 'review' as const }, { subject: 'b', status: 'pending' as const }];
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
+	assert.equal(await approveTodo('1', context(dir, '/')), '✓ a');
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos!.map(t => t.status), ['done', 'pending']);
+	// Nothing in review or active: nothing to tick off.
+	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
+	assert.equal(await approveTodo('2', context(dir, '/')), undefined);
 });

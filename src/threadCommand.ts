@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, inDir, threadDir, todoProgress, type Store } from './threads.js';
+import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, type Store } from './threads.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -271,6 +271,15 @@ export function todoBriefing(todos: Todo[]): string | undefined {
 	if (!todos.length || todos.every(t => t.status === 'done')) return;
 	const list = todos.map((t, i) => `  ${i + 1}. [${t.status}] ${t.subject}`).join('\n');
 	return `This thread's checkpoints (${todoProgress(todos)} done):\n${list}\nOnes in review are waiting for the user to approve them on the board; otherwise carry on from the first one that isn't done. Keep their status current with \`oo thread todo <n> <status>\`.`;
+}
+
+/** After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint, as approving it on the board does. */
+export async function approveTodo(thread: string, ctx: Context = defaultContext()): Promise<string | undefined> {
+	const todos = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread)?.todos ?? [];
+	const item = approvedTodo(todos);
+	if (item === -1) return;
+	const response = await change({ op: 'todo', thread, item: item + 1, status: 'done' }, ctx);
+	return response.ok ? `✓ ${todos[item]!.subject}` : `✗ ${response.message}`;
 }
 
 /** Claude hook for SessionStart (see sessionHook.ts): the thread's checkpoints, for claude; undefined if it has none to do. */
