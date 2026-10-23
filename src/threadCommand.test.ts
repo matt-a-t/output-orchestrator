@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { loadState } from './state.js';
-import { approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
+import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { approvedTodo, inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
@@ -211,4 +211,14 @@ test('committing outside the board ticks off the checkpoint in review', async ()
 	// Nothing in review or active: nothing to tick off.
 	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
 	assert.equal(await approveTodo('2', context(dir, '/')), undefined);
+});
+
+test('a stopped claude is told which step was committed and what comes next', () => {
+	const todo = (subject: string, status: 'pending' | 'done') => ({ subject, status });
+	assert.equal(
+		approvedPrompt([todo('a', 'done'), todo('b', 'pending')], 0, 'Add a'),
+		'The user approved and committed your step "a" (commit: Add a). Move on to the next checkpoint: 2. b. Mark it active with `oo thread todo 2 active`.',
+	);
+	assert.match(approvedPrompt([todo('a', 'done'), todo('b', 'done')], 1, 'Add b'), /"b" \(commit: Add b\)\. All checkpoints are done/);
+	assert.equal(approvedPrompt([], -1, 'Fix'), 'The user approved your changes and committed them (commit: Fix). Move on to the next step.');
 });

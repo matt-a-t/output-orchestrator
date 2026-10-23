@@ -12,6 +12,7 @@ import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond } from './requests.js';
 import { diffPaneCommand, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
 import { ThreadView } from './thread.js';
+import { approvedPrompt } from './threadCommand.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
@@ -110,6 +111,8 @@ export function App() {
 	const [editing, setEditing] = useState<string | null>(null);
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
+	const statusesRef = useRef(statuses);
+	statusesRef.current = statuses;
 	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
 	const sessionStarts = useRef(new Map<string, number>());
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
@@ -551,9 +554,16 @@ export function App() {
 		setMessage(`Created #${thread.id} — e to add a plan`);
 	};
 
-	/** Approve the step: stage everything in `cwd`, have claude draft the message, and commit it once it's edited. */
+	/**
+	 * Approve the step: stage everything in `cwd`, have claude draft the message, and commit it once
+	 * it's edited. A claude stopped for the review is then told to move on.
+	 */
 	const approveStep = async (cwd: string, thread: Thread) => {
 		if (!(await stageAll(cwd))) return setMessage('Nothing to commit');
+		const window = threadWindowName(thread.id);
+		// Not one that's working or waiting on a question, where the paste would land as an answer.
+		const waiting = statusesRef.current[thread.id] === 'stopped' && (await windowNames()).includes(window);
+		let message: string | null;
 		const progress = progressPopup(' commit ', EDITOR);
 		try {
 			const drafted = await progress.cancellable('claude is writing the commit message', signal => draftCommit(cwd, thread, signal));
@@ -561,7 +571,7 @@ export function App() {
 				drafted === CLOSED
 					? CLOSED
 					: await progress.edit(drafted ? commitText(drafted) : commitText('', "claude couldn't write a commit message; write one."));
-			const message = edited === CLOSED ? null : parseCommit(edited);
+			message = edited === CLOSED ? null : parseCommit(edited);
 			if (!message) return setMessage('⚠ Commit cancelled (changes left staged)');
 			progress.status('committing');
 			await commit(cwd, message);
@@ -571,8 +581,11 @@ export function App() {
 		// Approving the step is what ticks off the checkpoint claude handed over.
 		const todos = stateRef.current.threads.find(t => t.id === thread.id)?.todos ?? [];
 		const item = approvedTodo(todos);
-		if (item !== -1) updateThread(thread.id, { todos: setTodoStatus(todos, item, 'done') });
-		setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}`);
+		const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
+		if (item !== -1) updateThread(thread.id, { todos: ticked });
+		const told = waiting && (await windowNames()).includes(window);
+		if (told) await pasteInto(window, approvedPrompt(ticked, item, message.split('\n')[0]!));
+		setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${told ? ' · told claude' : ''}`);
 	};
 
 	const promptInput = (prompt: Prompt, input: string, key: Key) => {
