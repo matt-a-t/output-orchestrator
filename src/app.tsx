@@ -1067,7 +1067,10 @@ export function App() {
 	const card = (t: Thread, isSelected: boolean) => {
 		const oneLine = cardHeight(t.column) === 1;
 		const color = t.color ?? projectByName(t.project)?.color;
-		const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
+		const live = liveWindows.has(threadWindowName(t.id));
+		// Changes aren't ready to review until claude stops working on them.
+		const working = live && statuses[t.id] === 'working';
+		const [badge, badgeColor] = live
 			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
 			: resumeId(t)
 				? ['↻', stalled(t) ? 'red' : 'gray']
@@ -1078,7 +1081,7 @@ export function App() {
 					<Text color={badgeColor}>{badge} </Text>
 					<Text bold>#{t.id} </Text>
 					<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
-					{unreviewed.has(t.id) ? (
+					{unreviewed.has(t.id) && !working ? (
 						<Text color="magenta" bold>
 							{' '}±
 						</Text>
