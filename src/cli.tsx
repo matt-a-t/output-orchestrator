@@ -4,7 +4,7 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
-import { THREAD_USAGE, threadCommand } from './threadCommand.js';
+import { approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { editCommit } from './editor.js';
 import { commit, stageAll } from './git.js';
@@ -100,6 +100,8 @@ async function commitCommand([id]: string[]): Promise<number> {
 	}
 	await commit(cwd, message);
 	console.log(`Committed on ${thread.branch ?? cwd}: ${message.split('\n')[0]}`);
+	const ticked = await approveTodo(thread.id);
+	if (ticked) console.log(ticked);
 	return 0;
 }
 

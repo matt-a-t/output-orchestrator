@@ -33,6 +33,13 @@ const ProjectSchema = z.object({
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
+/** A thread's checkpoints: each is worked on (active), handed over (review), then approved and committed (done). */
+export const TODO_STATUSES = ['pending', 'active', 'review', 'done'] as const;
+export type TodoStatus = (typeof TODO_STATUSES)[number];
+const TodoSchema = z.object({ subject: z.string(), status: z.enum(TODO_STATUSES) });
+export type Todo = z.infer<typeof TodoSchema>;
+export const TODO_MARKS: Record<TodoStatus, string> = { pending: '○', active: '▸', review: '●', done: '✓' };
+
 const ThreadSchema = z.preprocess(
 	// Local used to be a column, "uitest", between Polish and PR.
 	(t: any) => (t?.column === 'uitest' ? { ...t, column: 'polish', local: true } : t),
@@ -59,6 +66,8 @@ const ThreadSchema = z.preprocess(
 		worktree: z.string().optional(),
 		// Opened on moving to PR; polled so the thread moves to Done once it's merged.
 		pr: z.object({ number: z.number(), url: z.string() }).optional(),
+		// Checkpoints to review and commit, kept across claude runs (see `oo thread todo`).
+		todos: z.array(TodoSchema).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

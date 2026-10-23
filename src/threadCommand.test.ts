@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { loadState } from './state.js';
-import { planApproved, resolveProject, resolveThreadId, threadCommand, type Context } from './threadCommand.js';
-import { inDir } from './threads.js';
+import { approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
+import { approvedTodo, inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -134,7 +134,9 @@ test('plan replaces the thread\'s plan', async t => {
 test('approving a Planned thread\'s plan saves it and moves the thread to Active', async () => {
 	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two', column: 'polish', plan: 'kept' }]);
 	const input = (cwd: string) => ({ cwd, tool_name: 'ExitPlanMode', tool_input: { plan: '# Do it\n' } });
-	assert.match((await planApproved(input('/work/one'), context(dir, '/', { OO_THREAD_ID: '1' })))!, /Moved #1 to ACTIVE/);
+	const message = (await planApproved(input('/work/one'), context(dir, '/', { OO_THREAD_ID: '1' })))!;
+	assert.match(message, /Moved #1 to ACTIVE/);
+	assert.match(message, /oo thread todo set/);
 	// Not Planned: left alone.
 	assert.equal(await planApproved(input('/work/two'), context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
 	// No thread to go with it.
@@ -144,4 +146,69 @@ test('approving a Planned thread\'s plan saves it and moves the thread to Active
 		threads.map(t => [t.id, t.plan, t.column]),
 		[['2', 'kept', 'polish'], ['1', '# Do it', 'active']],
 	);
+});
+
+test('todo set replaces the checkpoints, keeping the status of ones already there', async t => {
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos: [{ subject: 'b', status: 'review' }] }]);
+	const output = capture(t);
+	const ctx = { ...context(dir, '/work/one', { OO_THREAD_ID: '1' }), stdin: () => '- a\n\n2. [x] b\n* [ ] c\n' };
+	assert.equal(await threadCommand(['todo', 'set', '--file', '-'], ctx), 0);
+	assert.match(output.out(), /Updated #1's todos: 0\/3 done/);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos, [
+		{ subject: 'a', status: 'pending' },
+		{ subject: 'b', status: 'review' },
+		{ subject: 'c', status: 'pending' },
+	]);
+});
+
+test('todo <n> <status> sets one checkpoint\'s status, with or without a thread id', async t => {
+	const todos = [{ subject: 'a', status: 'pending' as const }, { subject: 'b', status: 'pending' as const }];
+	const { dir, project } = fixture([{ cwd: '/work/one', column: 'active', todos }]);
+	const output = capture(t);
+	assert.equal(await threadCommand(['todo', '1', 'done'], context(dir, '/work/one', { OO_THREAD_ID: '1' })), 0);
+	assert.equal(await threadCommand(['todo', '1', '2', 'review'], context(dir, project)), 0);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos!.map(t => t.status), ['done', 'review']);
+	assert.equal(await threadCommand(['todo', '1', '3', 'done'], context(dir, project)), 1);
+	assert.match(output.err(), /no todo 3 \(it has 2\)/);
+	assert.equal(await threadCommand(['todo', '1', '1', 'finished'], context(dir, project)), 1);
+	assert.match(output.err(), /Unknown status "finished"/);
+});
+
+test('a starting claude is told where the checkpoints stand, until they\'re all done', () => {
+	const todos = [{ subject: 'a', status: 'done' as const }, { subject: 'b', status: 'active' as const }];
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
+	const briefing = sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	assert.match(briefing, /\(1\/2 done\)/);
+	assert.match(briefing, /2\. \[active\] b/);
+	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
+	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
+});
+
+test('approving a step ticks off the checkpoint in review, else the active one', () => {
+	const todo = (status: 'pending' | 'active' | 'review' | 'done') => ({ subject: status, status });
+	assert.equal(approvedTodo([todo('done'), todo('active'), todo('review')]), 2);
+	assert.equal(approvedTodo([todo('done'), todo('active'), todo('pending')]), 1);
+	assert.equal(approvedTodo([todo('done'), todo('pending')]), -1);
+});
+
+test('todoWindow keeps the current step in view', () => {
+	const todos = (done: number, total: number) =>
+		Array.from({ length: total }, (_, i) => ({ subject: String(i), status: i < done ? ('done' as const) : ('pending' as const) }));
+	assert.deepEqual(todoWindow(todos(0, 3), 5), { start: 0, end: 3 });
+	assert.deepEqual(todoWindow(todos(0, 8), 5), { start: 0, end: 5 });
+	// One finished step before the current one.
+	assert.deepEqual(todoWindow(todos(3, 10), 5), { start: 2, end: 7 });
+	// Near the end, or all done, the last few.
+	assert.deepEqual(todoWindow(todos(8, 10), 5), { start: 5, end: 10 });
+	assert.deepEqual(todoWindow(todos(10, 10), 5), { start: 5, end: 10 });
+});
+
+test('committing outside the board ticks off the checkpoint in review', async () => {
+	const todos = [{ subject: 'a', status: 'review' as const }, { subject: 'b', status: 'pending' as const }];
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
+	assert.equal(await approveTodo('1', context(dir, '/')), '✓ a');
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos!.map(t => t.status), ['done', 'pending']);
+	// Nothing in review or active: nothing to tick off.
+	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
+	assert.equal(await approveTodo('2', context(dir, '/')), undefined);
 });
