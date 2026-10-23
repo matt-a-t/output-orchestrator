@@ -18,7 +18,7 @@ const ooHook = (name: string) => [
 	fileURLToPath(new URL(fromSource ? `./${name}.ts` : `./${name}.js`, import.meta.url)),
 ];
 const PLAN_HOOK = ooHook('planHook');
-const TODOS_HOOK = ooHook('todosHook');
+const SESSION_HOOK = ooHook('sessionHook');
 
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 
@@ -26,12 +26,11 @@ const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notific
 export function writeClaudeSettings(): void {
 	const node = (args: string[]) => [process.execPath, '--no-warnings', ...args].map(arg => JSON.stringify(arg)).join(' ');
 	const command = node([HOOK_SCRIPT]);
-	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string; async?: boolean }[] }[]> = Object.fromEntries(
+	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]> = Object.fromEntries(
 		HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]),
 	);
 	hooks.PostToolUse!.push({ matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: node(PLAN_HOOK) }] });
-	// Claude doesn't need to wait for the board to catch up.
-	hooks.PostToolUse!.push({ matcher: 'TaskCreate|TaskUpdate|TodoWrite', hooks: [{ type: 'command', command: node(TODOS_HOOK), async: true }] });
+	hooks.SessionStart!.push({ matcher: '*', hooks: [{ type: 'command', command: node(SESSION_HOOK) }] });
 	mkdirSync(DATA_DIR, { recursive: true });
 	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
 }
@@ -63,9 +62,11 @@ ${THREAD_USAGE}
   create files or commit: its claude starts in plan mode. Work out what to build (read the code, ask questions)
   and save it with \`oo thread plan --plan-file - <<'EOF'\`. When the user approves your plan as you leave plan
   mode, the board saves it as the thread's plan and moves the thread to Active, and the work can start.
-- **Track the plan's steps as tasks.** Once the plan is approved, create a task per step (TaskCreate) and keep
-  their status current (TaskUpdate). The board copies your task list onto the thread's card, so the user can
-  see how far along it is at a glance.
+- **Work through the thread's checkpoints.** Once the plan is approved, save its checkpoints with
+  \`oo thread todo set --file - <<'EOF'\`, one per line: each a step the user can review and commit on its own.
+  Mark one \`active\` as you start it and \`review\` when it's ready, then stop for the user to review it;
+  approving the step on the board commits it and marks it \`done\`. The list stays on the thread across claude
+  runs and shows on its card, so keep it current.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
   and why, then tell the user its id. Keep the title short; put the detail in the plan.

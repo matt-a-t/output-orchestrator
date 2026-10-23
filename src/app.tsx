@@ -26,6 +26,7 @@ import {
 	type State,
 	type Thread,
 	type Todo,
+	type TodoStatus,
 } from './state.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
 import { mouse, type MouseEvent } from './mouse.js';
@@ -39,6 +40,8 @@ import {
 	moveWarning,
 	setColumn as moveTo,
 	syncWorktree as syncWorktreeFor,
+	approvedTodo,
+	setTodoStatus,
 	threadDir,
 	todoProgress,
 	todoWindow,
@@ -88,7 +91,7 @@ const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 // The highlighted thread's todos shown below the board; the rest are summed up as "N more".
 const MAX_TODO_LINES = 5;
-const TODO_COLORS: Record<Todo['status'], string> = { completed: 'green', in_progress: 'yellow', pending: 'gray' };
+const TODO_COLORS: Record<TodoStatus, string> = { pending: 'gray', active: 'yellow', review: 'magenta', done: 'green' };
 
 const HELP =
 	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  s/v claude + shell/diff  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
@@ -555,7 +558,12 @@ export function App() {
 				setPrompt(null);
 				return void run(async () => {
 					await commit(prompt.cwd, prompt.body ? `${subject}\n\n${prompt.body}\n` : `${subject}\n`);
-					setMessage(`Committed step on ${prompt.thread.branch ?? prompt.cwd}`);
+					// Approving the step is what ticks off the checkpoint claude handed over.
+					const todos = stateRef.current.threads.find(t => t.id === prompt.thread.id)?.todos ?? [];
+					const item = approvedTodo(todos);
+					if (item !== -1) updateThread(prompt.thread.id, { todos: setTodoStatus(todos, item, 'done') });
+					const ticked = item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`;
+					setMessage(`Committed step on ${prompt.thread.branch ?? prompt.cwd}${ticked}`);
 				}, 'committing');
 			}
 			const subject = editText(prompt.subject, input, key);
@@ -962,7 +970,7 @@ export function App() {
 					<Text key={start + i} wrap="truncate">
 						{'  '}
 						<Text color={TODO_COLORS[todo.status]}>{TODO_MARKS[todo.status]}</Text>{' '}
-						<Text bold={todo.status === 'in_progress'} dimColor={todo.status === 'completed'}>
+						<Text bold={todo.status === 'active' || todo.status === 'review'} dimColor={todo.status === 'done'}>
 							{todo.subject}
 						</Text>
 					</Text>

@@ -3,7 +3,7 @@ import { relative, resolve, isAbsolute } from 'node:path';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
 import { prState } from './github.js';
 import type { Request, Response } from './requests.js';
-import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread, type Todo } from './state.js';
+import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
 /** Where the thread's work happens, if it has anywhere yet. */
@@ -21,7 +21,22 @@ export function inDir(cwd: string, dir: string): boolean {
 
 /** How many of the todos are done, as `3/7`. */
 export function todoProgress(todos: Todo[]): string {
-	return `${todos.filter(t => t.status === 'completed').length}/${todos.length}`;
+	return `${todos.filter(t => t.status === 'done').length}/${todos.length}`;
+}
+
+/** The new list, keeping the status of items that were already on it. */
+export function replaceTodos(todos: Todo[], subjects: string[]): Todo[] {
+	return subjects.map(subject => ({ subject, status: todos.find(t => t.subject === subject)?.status ?? 'pending' }));
+}
+
+/** Which item approving a step ticks off: the first waiting for review, else the first being worked on. */
+export function approvedTodo(todos: Todo[]): number {
+	const review = todos.findIndex(t => t.status === 'review');
+	return review === -1 ? todos.findIndex(t => t.status === 'active') : review;
+}
+
+export function setTodoStatus(todos: Todo[], index: number, status: TodoStatus): Todo[] {
+	return todos.map((t, i) => (i === index ? { ...t, status } : t));
 }
 
 /**
@@ -29,7 +44,7 @@ export function todoProgress(todos: Todo[]): string {
  * view with the one finished before it, pulled back if that would leave space at the end.
  */
 export function todoWindow(todos: Todo[], max: number): { start: number; end: number } {
-	const current = todos.findIndex(t => t.status !== 'completed');
+	const current = todos.findIndex(t => t.status !== 'done');
 	const first = current === -1 ? todos.length : Math.max(0, current - 1);
 	const start = Math.max(0, Math.min(first, todos.length - max));
 	return { start, end: Math.min(todos.length, start + max) };
@@ -138,10 +153,17 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));
 		return done(`Saved #${thread.id}'s plan`);
 	}
-	if (request.op === 'todos') {
+	if (request.op === 'todos' || request.op === 'todo') {
+		const current = thread.todos ?? [];
+		if (request.op === 'todo' && !current[request.item - 1]) {
+			return { id, ok: false, message: `#${thread.id} has no todo ${request.item} (it has ${current.length})` };
+		}
+		const todos =
+			request.op === 'todos' ? replaceTodos(current, request.subjects) : setTodoStatus(current, request.item - 1, request.status);
 		const now = new Date().toISOString();
-		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, todos: request.todos, updatedAt: now } : t)) }));
-		return done(`Updated #${thread.id}'s todos (${todoProgress(request.todos)} done)`);
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, todos, updatedAt: now } : t)) }));
+		const what = request.op === 'todos' ? 'todos' : `todo ${request.item} (${request.status})`;
+		return done(`Updated #${thread.id}'s ${what}: ${todoProgress(todos)} done`);
 	}
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem =

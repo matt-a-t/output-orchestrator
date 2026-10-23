@@ -1,17 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { loadState } from './state.js';
-import { planApproved, resolveProject, resolveThreadId, tasksChanged, threadCommand, type Context } from './threadCommand.js';
-import { inDir, todoWindow } from './threads.js';
+import { planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
+import { approvedTodo, inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
 	env,
 	dir,
-	tasksDir: join(dir, 'tasks'),
 	stdin: () => 'plan from stdin\n',
 });
 
@@ -137,7 +136,7 @@ test('approving a Planned thread\'s plan saves it and moves the thread to Active
 	const input = (cwd: string) => ({ cwd, tool_name: 'ExitPlanMode', tool_input: { plan: '# Do it\n' } });
 	const message = (await planApproved(input('/work/one'), context(dir, '/', { OO_THREAD_ID: '1' })))!;
 	assert.match(message, /Moved #1 to ACTIVE/);
-	assert.match(message, /TaskCreate/);
+	assert.match(message, /oo thread todo set/);
 	// Not Planned: left alone.
 	assert.equal(await planApproved(input('/work/two'), context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
 	// No thread to go with it.
@@ -149,49 +148,52 @@ test('approving a Planned thread\'s plan saves it and moves the thread to Active
 	);
 });
 
-test('claude\'s task list is copied onto its thread, in order, without deleted tasks', async () => {
-	const { dir } = fixture([{ cwd: '/work/one', column: 'active' }]);
-	const tasks = join(dir, 'tasks', 'session-1');
-	mkdirSync(tasks, { recursive: true });
-	const task = (id: number, status: string) =>
-		writeFileSync(join(tasks, `${id}.json`), JSON.stringify({ id: String(id), subject: `step ${id}`, description: '', status }));
-	task(10, 'pending');
-	task(2, 'in_progress');
-	task(1, 'completed');
-	task(3, 'deleted');
-	const input = (cwd: string) => ({ cwd, session_id: 'session-1', tool_name: 'TaskUpdate' });
-	const ctx = context(dir, '/', { OO_THREAD_ID: '1' });
-	assert.match((await tasksChanged(input('/work/one'), ctx))!, /Updated #1's todos \(1\/3 done\)/);
+test('todo set replaces the checkpoints, keeping the status of ones already there', async t => {
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos: [{ subject: 'b', status: 'review' }] }]);
+	const output = capture(t);
+	const ctx = { ...context(dir, '/work/one', { OO_THREAD_ID: '1' }), stdin: () => '- a\n\n2. [x] b\n* [ ] c\n' };
+	assert.equal(await threadCommand(['todo', 'set', '--file', '-'], ctx), 0);
+	assert.match(output.out(), /Updated #1's todos: 0\/3 done/);
 	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos, [
-		{ subject: 'step 1', status: 'completed' },
-		{ subject: 'step 2', status: 'in_progress' },
-		{ subject: 'step 10', status: 'pending' },
+		{ subject: 'a', status: 'pending' },
+		{ subject: 'b', status: 'review' },
+		{ subject: 'c', status: 'pending' },
 	]);
-	// Nothing changed, nothing to save.
-	assert.equal(await tasksChanged(input('/work/one'), ctx), undefined);
-	// Not from the thread's directory.
-	task(10, 'completed');
-	assert.equal(await tasksChanged(input('/elsewhere'), ctx), undefined);
-	assert.equal(await tasksChanged(input('/work/one'), context(dir, '/', {})), undefined);
 });
 
-test('TodoWrite\'s list is copied onto the thread too', async () => {
-	const { dir } = fixture([{ cwd: '/work/one', column: 'active' }]);
-	const input = {
-		cwd: '/work/one',
-		tool_name: 'TodoWrite',
-		tool_input: { todos: [{ content: 'a', status: 'completed', activeForm: 'A-ing' }, { content: 'b', status: 'pending' }] },
-	};
-	await tasksChanged(input, context(dir, '/', { OO_THREAD_ID: '1' }));
-	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos, [
-		{ subject: 'a', status: 'completed' },
-		{ subject: 'b', status: 'pending' },
-	]);
+test('todo <n> <status> sets one checkpoint\'s status, with or without a thread id', async t => {
+	const todos = [{ subject: 'a', status: 'pending' as const }, { subject: 'b', status: 'pending' as const }];
+	const { dir, project } = fixture([{ cwd: '/work/one', column: 'active', todos }]);
+	const output = capture(t);
+	assert.equal(await threadCommand(['todo', '1', 'done'], context(dir, '/work/one', { OO_THREAD_ID: '1' })), 0);
+	assert.equal(await threadCommand(['todo', '1', '2', 'review'], context(dir, project)), 0);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos!.map(t => t.status), ['done', 'review']);
+	assert.equal(await threadCommand(['todo', '1', '3', 'done'], context(dir, project)), 1);
+	assert.match(output.err(), /no todo 3 \(it has 2\)/);
+	assert.equal(await threadCommand(['todo', '1', '1', 'finished'], context(dir, project)), 1);
+	assert.match(output.err(), /Unknown status "finished"/);
+});
+
+test('a starting claude is told where the checkpoints stand, until they\'re all done', () => {
+	const todos = [{ subject: 'a', status: 'done' as const }, { subject: 'b', status: 'active' as const }];
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
+	const briefing = sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	assert.match(briefing, /\(1\/2 done\)/);
+	assert.match(briefing, /2\. \[active\] b/);
+	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
+	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
+});
+
+test('approving a step ticks off the checkpoint in review, else the active one', () => {
+	const todo = (status: 'pending' | 'active' | 'review' | 'done') => ({ subject: status, status });
+	assert.equal(approvedTodo([todo('done'), todo('active'), todo('review')]), 2);
+	assert.equal(approvedTodo([todo('done'), todo('active'), todo('pending')]), 1);
+	assert.equal(approvedTodo([todo('done'), todo('pending')]), -1);
 });
 
 test('todoWindow keeps the current step in view', () => {
 	const todos = (done: number, total: number) =>
-		Array.from({ length: total }, (_, i) => ({ subject: String(i), status: i < done ? ('completed' as const) : ('pending' as const) }));
+		Array.from({ length: total }, (_, i) => ({ subject: String(i), status: i < done ? ('done' as const) : ('pending' as const) }));
 	assert.deepEqual(todoWindow(todos(0, 3), 5), { start: 0, end: 3 });
 	assert.deepEqual(todoWindow(todos(0, 8), 5), { start: 0, end: 5 });
 	// One finished step before the current one.

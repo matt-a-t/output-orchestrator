@@ -1,9 +1,8 @@
 // `oo thread …`: drive the board from the shell (and from claude, see the oo skill).
-import { readdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
-import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type State, type Thread, type Todo } from './state.js';
+import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, inDir, threadDir, todoProgress, type Store } from './threads.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-]
@@ -16,16 +15,19 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               a thread in Local can't move until it's back.
   oo thread plan [id] --plan-file <path>|-
                               replace the thread's plan
+  oo thread todo [id] set --file <path>|-
+                              replace the thread's checkpoints, one per line (items already on it keep their status)
+  oo thread todo [id] <n> <${TODO_STATUSES.join('|')}>
+                              set checkpoint n's status (numbered as \`oo thread show\` lists them)
   Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
 
-/** What the command runs against; tests swap these out. `tasksDir` is where claude keeps its task lists. */
-export type Context = { cwd: string; env: NodeJS.ProcessEnv; dir: string; tasksDir: string; stdin: () => string };
+/** What the command runs against; tests swap these out. */
+export type Context = { cwd: string; env: NodeJS.ProcessEnv; dir: string; stdin: () => string };
 
 export const defaultContext = (): Context => ({
 	cwd: process.cwd(),
 	env: process.env,
 	dir: DATA_DIR,
-	tasksDir: join(homedir(), '.claude', 'tasks'),
 	stdin: () => readFileSync(0, 'utf8'),
 });
 
@@ -193,7 +195,37 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		console.log(response.message);
 		return 0;
 	}
+	if (sub === 'todo') {
+		const { positional, flag } = parseArgs(rest, ['file'], []);
+		if (positional.at(-1) === 'set') {
+			const file = flag('file');
+			if (positional.length > 2 || file === undefined) throw new UsageError('oo thread todo [id] set --file <path>|-');
+			const subjects = todoLines(file === '-' ? ctx.stdin() : readFileSync(file, 'utf8'));
+			const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
+			return report(await change({ op: 'todos', thread, subjects }, ctx));
+		}
+		if (positional.length < 2 || positional.length > 3) throw new UsageError('oo thread todo [id] <n> <status>');
+		const [item, status] = positional.slice(-2) as [string, string];
+		if (!TODO_STATUSES.includes(status as TodoStatus)) throw new UsageError(`Unknown status "${status}"; one of ${TODO_STATUSES.join(', ')}`);
+		if (!/^[1-9]\d*$/.test(item)) throw new UsageError(`"${item}" isn't a checkpoint number`);
+		const thread = resolveThreadId(state, positional.length === 3 ? positional[0] : undefined, ctx.env, ctx.cwd);
+		return report(await change({ op: 'todo', thread, item: Number(item), status: status as TodoStatus }, ctx));
+	}
 	throw new UsageError('');
+}
+
+/** One checkpoint per line, without list markers or checkboxes. */
+function todoLines(text: string): string[] {
+	return text
+		.split('\n')
+		.map(line => line.replace(/^\s*(?:[-*]|\d+[.)])?\s*(?:\[[ xX]\]\s*)?/, '').trim())
+		.filter(Boolean);
+}
+
+function report(response: Response): number {
+	if (!response.ok) return fail(response.message);
+	console.log(response.message);
+	return 0;
 }
 
 /** The plan claude had approved, from ExitPlanMode's PostToolUse input: inline, or in the file it was written to. */
@@ -226,53 +258,23 @@ export async function planApproved(input: any, ctx: Context): Promise<string | u
 		await change({ op: 'move', thread, column: 'active' }, ctx),
 	];
 	const messages = responses.map(r => `${r.ok ? '' : '✗ '}${r.message}`);
-	if (responses.at(-1)!.ok) messages.push(TASKS_PROMPT);
+	if (responses.at(-1)!.ok) messages.push(TODOS_PROMPT);
 	return messages.join('\n');
 }
 
-// Its task list is mirrored onto the thread's card (see tasksChanged).
-const TASKS_PROMPT =
-	'Before starting, break the plan into tasks with TaskCreate (one per step, short subjects), and keep their status current with TaskUpdate as you work: the board shows them on this thread\'s card.';
+// The checkpoints carry across claude runs, so the work can stop for review at each one.
+const TODOS_PROMPT = `Before starting, save the plan's checkpoints with \`oo thread todo set --file - <<'EOF'\` (one per line, each a step the user can review and commit on its own).
+Mark one active (\`oo thread todo <n> active\`) when you start it and review when it's ready, then stop and let the user review it; approving the step on the board commits it and marks it done.`;
 
-const isTodoStatus = (status: unknown): status is Todo['status'] => TODO_STATUSES.includes(status as any);
-
-/**
- * Claude's task list after a TaskCreate/TaskUpdate, read from where claude keeps it (one file per task,
- * in a folder named after the session), or the list a TodoWrite (older claudes) was given.
- */
-function claudeTodos(input: any, ctx: Context): Todo[] | undefined {
-	if (input?.tool_name === 'TodoWrite') {
-		const todos = input.tool_input?.todos;
-		if (!Array.isArray(todos)) return;
-		return todos.filter(t => typeof t?.content === 'string' && isTodoStatus(t.status)).map(t => ({ subject: t.content, status: t.status }));
-	}
-	if (typeof input?.session_id !== 'string') return;
-	const dir = join(ctx.tasksDir, input.session_id);
-	let names: string[];
-	try {
-		names = readdirSync(dir).filter(name => name.endsWith('.json'));
-	} catch {
-		return;
-	}
-	const tasks = names.flatMap(name => {
-		try {
-			return [JSON.parse(readFileSync(join(dir, name), 'utf8'))];
-		} catch {
-			return [];
-		}
-	});
-	return tasks
-		// Deleted tasks, and anything else unrecognised, are left out.
-		.filter(t => typeof t?.subject === 'string' && isTodoStatus(t.status))
-		.sort((a, b) => Number(a.id) - Number(b.id))
-		.map(t => ({ subject: t.subject, status: t.status }));
+/** What a thread's claude is told as it starts: where the thread's checkpoints stand. */
+export function todoBriefing(todos: Todo[]): string | undefined {
+	if (!todos.length || todos.every(t => t.status === 'done')) return;
+	const list = todos.map((t, i) => `  ${i + 1}. [${t.status}] ${t.subject}`).join('\n');
+	return `This thread's checkpoints (${todoProgress(todos)} done):\n${list}\nOnes in review are waiting for the user to approve them on the board; otherwise carry on from the first one that isn't done. Keep their status current with \`oo thread todo <n> <status>\`.`;
 }
 
-/**
- * Claude hook for claude's task tools (see todosHook.ts): copy claude's task list onto its thread, for the board.
- * Returns what happened; undefined if nothing did.
- */
-export async function tasksChanged(input: any, ctx: Context): Promise<string | undefined> {
+/** Claude hook for SessionStart (see sessionHook.ts): the thread's checkpoints, for claude; undefined if it has none to do. */
+export function sessionStarted(input: any, ctx: Context): string | undefined {
 	const state = loadState(join(ctx.dir, 'state.json'));
 	let thread: string;
 	try {
@@ -280,11 +282,7 @@ export async function tasksChanged(input: any, ctx: Context): Promise<string | u
 	} catch {
 		return;
 	}
-	const todos = claudeTodos(input, ctx);
-	if (!todos) return;
-	const current = state.threads.find(t => t.id === thread)?.todos ?? [];
-	if (JSON.stringify(current) === JSON.stringify(todos)) return;
-	return (await change({ op: 'todos', thread, todos }, ctx)).message;
+	return todoBriefing(state.threads.find(t => t.id === thread)?.todos ?? []);
 }
 
 function fail(message: string): number {
