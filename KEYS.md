@@ -29,7 +29,7 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 | Key | |
 |---|---|
 | `d` / `D` | step / whole thread diff |
-| `s` / `v` | claude with a shell / live diff beside it |
+| `s` / `M-d` | claude with a shell / live diff beside it |
 | `c` | comment on the diff in vim |
 | `o` | changed hunks as a vim quickfix list |
 | `b` | open the PR in your browser |
@@ -55,7 +55,7 @@ reaches the program, and a key you've bound yourself is left alone.
 |---|---|
 | `M-h` / `M-l` | claude / the pane beside it |
 | `M-j` / `M-k` | next / previous thread window |
-| `M-s` / `M-d` | shell / live diff beside claude (like `s` / `v` on the board) |
+| `M-s` / `M-d` | shell / live diff beside claude (like `s` / `M-d` on the board) |
 | `M-u` | scroll up: tmux copy mode, with your `mode-keys` (`q` leaves) |
 | `M-z` | zoom the pane |
 | `M-q` / `M-b` | back to the board |

@@ -63,7 +63,7 @@ function projectCommand(args: string[]): number {
 	return 1;
 }
 
-/** `oo split <shell|diff> <id>`, for M-s / M-d in a thread's window: what `s` / `v` do on the board. */
+/** `oo split <shell|diff> <id>`, for M-s / M-d in a thread's window: what `s` / `M-d` do on the board. */
 async function splitCommand([role, id]: string[]): Promise<number> {
 	const state = loadState();
 	const thread = state.threads.find(t => t.id === id);

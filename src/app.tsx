@@ -77,7 +77,7 @@ const CARD_HEIGHT = 2;
 const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 
-const HELP = '? all keys  h/l j/k move  ⏎ open  n new  d diff  s/v shell/diff beside claude  q quit';
+const HELP = 'h/l j/k move  ⏎ open  n new  d diff  s/M-d shell/diff beside claude  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -775,6 +775,7 @@ export function App() {
 				);
 			}, 'checking for uncommitted changes');
 		}
+		if (key.meta && (input === 'd' || input === 'D')) return openBeside(selected, 'diff');
 		if (input === 'd' || input === 'D') {
 			const kind = input === 'd' ? 'step' : 'thread';
 			return inWorktree(selected, async cwd => {
@@ -784,7 +785,6 @@ export function App() {
 			});
 		}
 		if (input === 's') return openBeside(selected, 'shell');
-		if (input === 'v') return openBeside(selected, 'diff');
 		if (input === 'c') {
 			return inWorktree(selected, async cwd => {
 				const window = threadWindowName(selected.id);
@@ -1084,7 +1084,15 @@ export function App() {
 						</Text>
 					))}
 				</Text>
-				<Text dimColor>{HELP}</Text>
+				{/* The way into every other key, kept in the corner so it's always in the same place. */}
+				<Box justifyContent="space-between" width={width}>
+					<Text dimColor wrap="truncate-end">
+						{HELP}
+					</Text>
+					<Box flexShrink={0} marginLeft={2}>
+						<Text dimColor>? all keys</Text>
+					</Box>
+				</Box>
 			</Box>
 		</Box>
 	);

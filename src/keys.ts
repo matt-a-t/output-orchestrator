@@ -27,7 +27,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		title: 'Reviewing',
 		keys: [
 			['d / D', 'step / whole thread diff'],
-			['s / v', 'claude + a shell / live diff beside it'],
+			['s / M-d', 'claude + a shell / live diff beside it'],
 			['c', 'comment on the diff in vim'],
 			['o', 'changed hunks as a vim quickfix list'],
 			['b', 'open the PR in your browser'],
