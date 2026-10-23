@@ -25,6 +25,6 @@ export async function runHook(project: Project, hook: ProjectHook, thread: Threa
 		OO_PROJECT: project.name,
 		OO_BRANCH: thread.branch ?? '',
 	};
-	await openWindow(window, cwd, ['sh', '-c', script], env, { background: true });
+	await openWindow(window, `hook:${project.name}`, cwd, ['sh', '-c', script], env, { background: true });
 	return `running ${project.name}'s ${HOOK_LABELS[hook]} hook in window ${window}`;
 }

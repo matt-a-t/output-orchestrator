@@ -6,6 +6,7 @@ import { setTimeout } from 'node:timers/promises';
 import { execa } from 'execa';
 
 export const BOARD_WINDOW = 'oo-board';
+export const BOARD_LABEL = 'board';
 export const SESSION = 'oo';
 
 export function insideTmux(): boolean {
@@ -14,6 +15,27 @@ export function insideTmux(): boolean {
 
 export function threadWindowName(threadId: string): string {
 	return `oo-${threadId}`;
+}
+
+/** What a thread's window shows in the status bar: its #id and the start of its title. */
+export function threadWindowLabel(thread: { id: string; title: string }): string {
+	const title = thread.title.length > 16 ? `${thread.title.slice(0, 15)}…` : thread.title;
+	return `#${thread.id} ${title}`;
+}
+
+/**
+ * Show `label` in the status bar in place of the window's name, which stays as the key code finds
+ * it by. Only this window's formats change, keeping the user's own (theme and all) apart from the name.
+ */
+export async function labelWindow(name: string, label: string): Promise<void> {
+	const target = ['-w', '-t', `:${name}`];
+	// The status bar reads #[ as a style, so a title's # is doubled; ## shows as one #.
+	await execa('tmux', ['set-option', ...target, '@oo-label', label.replaceAll('#', '##')]);
+	for (const option of ['window-status-format', 'window-status-current-format']) {
+		const { stdout } = await execa('tmux', ['show-options', '-gwv', option]);
+		const format = stdout.replaceAll('#{window_name}', '#{@oo-label}').replaceAll('#W', '#{@oo-label}');
+		await execa('tmux', ['set-option', ...target, option, format]);
+	}
 }
 
 export async function renameCurrentWindow(name: string): Promise<void> {
@@ -29,20 +51,27 @@ export async function killWindow(name: string): Promise<void> {
 	if ((await windowNames()).includes(name)) await execa('tmux', ['kill-window', '-t', `:${name}`]);
 }
 
-/** Jump to the thread's window, creating it (running `command` in `cwd`) if needed; `background` creates it without jumping. */
+/**
+ * Jump to the thread's window, creating it (running `command` in `cwd`) if needed; `background`
+ * creates it without jumping. Either way it's shown in the status bar as `label`.
+ */
 export async function openWindow(
 	name: string,
+	label: string,
 	cwd: string,
 	command: string[],
 	env: Record<string, string> = {},
 	{ background = false } = {},
 ): Promise<'created' | 'selected'> {
 	if ((await windowNames()).includes(name)) {
+		// Relabelled so a title changed since it opened shows up.
+		await labelWindow(name, label);
 		if (!background) await execa('tmux', ['select-window', '-t', `:${name}`]);
 		return 'selected';
 	}
 	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 	await execa('tmux', ['new-window', ...(background ? ['-d'] : []), '-n', name, '-c', cwd, ...envArgs, ...command]);
+	await labelWindow(name, label);
 	return 'created';
 }
 
