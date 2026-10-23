@@ -4,16 +4,36 @@ import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
 import { editText, loop } from './input.js';
-import { COLORS, HOOK_EVENTS, HOOK_LABELS, projectProblem, type Project, type ProjectHook, type State } from './state.js';
+import { COLORS, HOOK_EVENTS, HOOK_LABELS, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path', ...HOOK_EVENTS] as const;
+const FIELDS = ['name', 'abbrev', 'color', 'path', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
 type Field = (typeof FIELDS)[number];
-const FIELD_LABELS: Record<Field, string> = { name: 'name', abbrev: 'abbrev', color: 'colour', path: 'path', ...HOOK_LABELS };
+const FIELD_LABELS: Record<Field, string> = {
+	name: 'name',
+	abbrev: 'abbrev',
+	color: 'colour',
+	path: 'path',
+	tracker: 'tickets',
+	jiraSite: 'jira site',
+	jiraProject: 'jira project',
+	...HOOK_LABELS,
+};
+// Changed with ←/→ through a fixed list rather than typed.
+type Choice = 'color' | 'tracker';
+const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, tracker: TRACKERS };
+const isChoice = (field: Field): field is Choice => field in CHOICES;
+// Shown at the bottom while the field is selected.
+const FIELD_HINTS: Partial<Record<Field, string>> = {
+	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
+	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
+	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
+	...Object.fromEntries(HOOK_EVENTS.map(e => [e, 'shell command run in the project checkout (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  '])),
+};
 const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
 
 const isHook = (field: Field): field is ProjectHook => (HOOK_EVENTS as readonly string[]).includes(field);
-const fieldValue = (project: Project, field: Exclude<Field, 'color'>) => (isHook(field) ? (project.hooks[field] ?? '') : project[field]);
-const withField = (project: Project, field: Exclude<Field, 'color'>, value: string): Project =>
+const fieldValue = (project: Project, field: Exclude<Field, Choice>) => (isHook(field) ? (project.hooks[field] ?? '') : project[field]);
+const withField = (project: Project, field: Exclude<Field, Choice>, value: string): Project =>
 	isHook(field) ? { ...project, hooks: { ...project.hooks, [field]: value } } : { ...project, [field]: value };
 
 /** `original` is the name of the project being edited; undefined when adding one. */
@@ -29,7 +49,7 @@ function expandPath(path: string): string {
 	return resolve(path.replace(/^~(?=$|\/)/, homedir()));
 }
 
-/** Full-screen list of projects: add, edit (name, abbreviation, colour, path) and remove. */
+/** Full-screen list of projects: add, edit (name, abbreviation, colour, path, tickets, hooks) and remove. */
 export function ProjectsView({ state, setState, onClose }: Props) {
 	const [index, setIndex] = useState(0);
 	const [form, setForm] = useState<Form | null>(null);
@@ -41,7 +61,15 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 	const save = (form: Form) => {
 		// Hooks left empty aren't kept.
 		const hooks = Object.fromEntries(Object.entries(form.project.hooks).map(([k, v]) => [k, v?.trim()]).filter(([, v]) => v));
-		const project = { ...form.project, name: form.project.name.trim(), abbrev: form.project.abbrev.trim(), path: expandPath(form.project.path.trim()), hooks };
+		const project = {
+			...form.project,
+			name: form.project.name.trim(),
+			abbrev: form.project.abbrev.trim(),
+			path: expandPath(form.project.path.trim()),
+			jiraSite: form.project.jiraSite.trim().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
+			jiraProject: form.project.jiraProject.trim().toUpperCase(),
+			hooks,
+		};
 		const problem = projectProblem(state, project, form.original);
 		if (problem) return setMessage(`✗ ${problem}`);
 		const old = state.projects.find(p => p.name === form.original);
@@ -73,11 +101,12 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			if (key.return) return save(form);
 			if (key.upArrow || (key.tab && key.shift)) return setForm({ ...form, field: (form.field + FIELDS.length - 1) % FIELDS.length });
 			if (key.downArrow || key.tab) return setForm({ ...form, field: (form.field + 1) % FIELDS.length });
-			if (field === 'color') {
+			if (isChoice(field)) {
 				const delta = key.leftArrow ? -1 : key.rightArrow || input === ' ' ? 1 : 0;
 				if (!delta) return;
-				const color = COLORS[(COLORS.indexOf(form.project.color) + delta + COLORS.length) % COLORS.length]!;
-				return setForm({ ...form, project: { ...form.project, color } });
+				const choices = CHOICES[field] as readonly string[];
+				const value = choices[(choices.indexOf(form.project[field]) + delta + choices.length) % choices.length];
+				return setForm({ ...form, project: { ...form.project, [field]: value } });
 			}
 			const value = editText(fieldValue(form.project, field), input, key);
 			if (value !== undefined) setForm({ ...form, project: withField(form.project, field, value) });
@@ -141,8 +170,10 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 									{active ? '› ' : '  '}
 									{pad(`${FIELD_LABELS[field]}:`, LABEL_WIDTH)}
 								</Text>
-								{field === 'color' ? (
-									<Text color={form.project.color}>{active ? `‹ ${form.project.color} ›` : form.project.color}</Text>
+								{isChoice(field) ? (
+									<Text color={field === 'color' ? form.project.color : undefined}>
+										{active ? `‹ ${form.project[field]} ›` : form.project[field]}
+									</Text>
 								) : (
 									<Text>
 										{fieldValue(form.project, field)}
@@ -158,9 +189,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			<Text color={message.startsWith('✗') ? 'red' : confirmRemove ? 'yellow' : 'green'}>{message}</Text>
 			<Text dimColor>
 				{form
-					? isHook(FIELDS[form.field]!)
-						? 'shell command run in the project checkout (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  ↑/↓ or tab field  ⏎ save  esc cancel'
-						: '↑/↓ or tab field  ←/→ colour  ⏎ save  esc cancel'
+					? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}↑/↓ or tab field  ${isChoice(FIELDS[form.field]!) ? '←/→ change  ' : ''}⏎ save  esc cancel`
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>

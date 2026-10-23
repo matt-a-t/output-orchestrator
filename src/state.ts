@@ -118,6 +118,7 @@ export function projectProblem(state: State, project: Project, original?: string
 	if (!project.name) return 'Name is empty';
 	if (project.name !== original && state.projects.some(p => p.name === project.name)) return `Project "${project.name}" already exists`;
 	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
+	if (project.tracker === 'jira' && !project.jiraSite) return 'Jira tickets need a jira site';
 }
 
 export function newThreadId(state: State): string {
