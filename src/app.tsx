@@ -8,7 +8,7 @@ import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js
 import { editText, loop } from './input.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond } from './requests.js';
-import { draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
+import { diffPaneCommand, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
 import { ThreadView } from './thread.js';
 import {
 	COLORS,
@@ -41,7 +41,7 @@ import {
 	type Store,
 	type WorktreeChange,
 } from './threads.js';
-import { killWindow, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
+import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
 
 type PermissionMode = 'plan' | 'auto';
 
@@ -84,7 +84,7 @@ const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 
 const HELP =
-	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  s/v claude + shell/diff  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -626,6 +626,19 @@ export function App() {
 			await launchClaude(thread, cwd);
 		});
 
+	/** Open claude with a shell or a live diff beside it, starting claude first if it isn't running. */
+	const openBeside = (thread: Thread, role: 'shell' | 'diff') =>
+		inWorktree(thread, async cwd => {
+			const window = threadWindowName(thread.id);
+			if (!(await windowNames()).includes(window)) {
+				await launchClaude(thread, cwd, { background: true });
+				// It may be waiting on "resume anyway?" instead.
+				if (!(await windowNames()).includes(window)) return;
+			}
+			const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
+			await openSplit(window, cwd, role, command, { OO_THREAD_ID: thread.id });
+		});
+
 	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
 	const startImport = () => {
 		if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
@@ -760,6 +773,8 @@ export function App() {
 				if (result === 'approved') await approveStep(cwd, selected);
 			});
 		}
+		if (input === 's') return openBeside(selected, 'shell');
+		if (input === 'v') return openBeside(selected, 'diff');
 		if (input === 'c') {
 			return inWorktree(selected, async cwd => {
 				const window = threadWindowName(selected.id);
