@@ -26,6 +26,18 @@ export async function editPlan(plan: string, thread: string): Promise<string> {
 	return lines.join('\n').trim();
 }
 
+/** Edit a drafted commit message. Returns the message, or null if the subject is left empty. */
+export async function editCommit(draft: string, branch: string): Promise<string | null> {
+	const lines = await editLines(
+		[draft, '', `# Line 1: subject. Everything after: body. Committed on ${branch} on save.`, '# Leave the subject empty to cancel.', ''].join('\n'),
+		' commit ',
+	);
+	const subject = lines.shift()?.trim() ?? '';
+	if (!subject) return null;
+	const body = lines.join('\n').trim();
+	return body ? `${subject}\n\n${body}\n` : `${subject}\n`;
+}
+
 export type PrDraft = { title: string; body: string };
 
 /** Edit a PR's title (first line) and body (the rest). Returns null if the title is left empty. */

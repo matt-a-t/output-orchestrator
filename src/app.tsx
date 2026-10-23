@@ -6,6 +6,7 @@ import { runHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js';
 import { editText, loop } from './input.js';
+import { KEY_SECTIONS } from './keys.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond } from './requests.js';
 import { diffPaneCommand, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
@@ -41,7 +42,7 @@ import {
 	type Store,
 	type WorktreeChange,
 } from './threads.js';
-import { killWindow, openSplit, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
+import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
 
 type PermissionMode = 'plan' | 'auto';
 
@@ -83,8 +84,7 @@ const CARD_HEIGHT = 2;
 const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 
-const HELP =
-	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  s/M-d claude + shell/diff  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
+const HELP = 'h/l j/k move  ⏎ open  n new  d diff  s/M-d shell/diff beside claude  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -99,6 +99,7 @@ export function App() {
 	const [busy, setBusy] = useState<string | null>(null);
 	const [prompt, setPrompt] = useState<Prompt | null>(null);
 	const [showProjects, setShowProjects] = useState(false);
+	const [showKeys, setShowKeys] = useState(false);
 	// The thread form (e), replacing the board while it's open.
 	const [editing, setEditing] = useState<string | null>(null);
 	const lastWritten = useRef<string | null>(null);
@@ -612,7 +613,7 @@ export function App() {
 			...(sessionId ? ['--resume', sessionId] : []),
 			...(mode ? ['--permission-mode', mode] : []),
 		];
-		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id }, { background });
+		const result = await openWindow(window, threadWindowLabel(thread), cwd, command, { OO_THREAD_ID: thread.id }, { background });
 		await refreshWindows();
 		if (result === 'selected') setMessage('');
 		else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
@@ -699,6 +700,10 @@ export function App() {
 	useInput((input, key) => {
 		if (busy || showProjects || editing) return;
 		setMessage('');
+		if (showKeys) {
+			if (input === '?' || input === 'q' || key.escape) setShowKeys(false);
+			return;
+		}
 		if (confirm) {
 			setConfirm(null);
 			return input === 'y' ? confirm() : setMessage('Cancelled');
@@ -725,6 +730,7 @@ export function App() {
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
+		if (input === '?') return setShowKeys(true);
 		if (input === 'i') return startImport();
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
@@ -875,7 +881,7 @@ export function App() {
 
 	// The layout is a fixed grid, so a press's cell says what it's on. The wheel stops at the ends rather than looping.
 	const onMouse = ({ button, x, y }: MouseEvent) => {
-		if (busy || showProjects || editing || prompt || confirm) return;
+		if (busy || showProjects || showKeys || editing || prompt || confirm) return;
 		setMessage('');
 		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
 		if (picker) {
@@ -965,6 +971,8 @@ export function App() {
 						setMessage(closing);
 					}}
 				/>
+			) : showKeys ? (
+				<KeysView />
 			) : picker ? (
 				<Box flexGrow={1} overflow="hidden" flexDirection="column">
 					<Text bold>
@@ -1025,7 +1033,7 @@ export function App() {
 					</Box>
 				</Box>
 			)}
-			<Box marginTop={1} flexDirection="column" display={showProjects || editing ? 'none' : 'flex'}>
+			<Box marginTop={1} flexDirection="column" display={showProjects || showKeys || editing ? 'none' : 'flex'}>
 				{/* About the highlighted card, so not while the import list covers the board. */}
 				{selected?.plan && !picker ? (
 					<Text dimColor wrap="truncate-end">
@@ -1087,7 +1095,46 @@ export function App() {
 						</Text>
 					))}
 				</Text>
-				<Text dimColor>{HELP}</Text>
+				{/* The way into every other key, kept in the corner so it's always in the same place. */}
+				<Box justifyContent="space-between" width={width}>
+					<Text dimColor wrap="truncate-end">
+						{HELP}
+					</Text>
+					<Box flexShrink={0} marginLeft={2}>
+						<Text dimColor>? all keys</Text>
+					</Box>
+				</Box>
+			</Box>
+		</Box>
+	);
+}
+
+/** The `?` screen: every key, a section per box, as many side by side as fit. */
+function KeysView() {
+	return (
+		<Box flexGrow={1} overflow="hidden" flexDirection="column">
+			<Text bold>
+				Keys <Text dimColor>(? / q / esc close · also in KEYS.md)</Text>
+			</Text>
+			<Box flexWrap="wrap">
+				{KEY_SECTIONS.map(section => {
+					const keyWidth = Math.max(...section.keys.map(([k]) => k.length)) + 2;
+					return (
+						<Box key={section.title} flexDirection="column" width={48} marginTop={1} marginRight={2}>
+							<Text bold color="cyan">
+								{section.title}
+							</Text>
+							{section.keys.map(([k, what]) => (
+								<Box key={k}>
+									<Box width={keyWidth} flexShrink={0}>
+										<Text>{k}</Text>
+									</Box>
+									<Text dimColor>{what}</Text>
+								</Box>
+							))}
+						</Box>
+					);
+				})}
 			</Box>
 		</Box>
 	);
