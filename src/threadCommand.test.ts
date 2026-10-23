@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { loadState } from './state.js';
-import { planApproved, resolveProject, resolveThreadId, threadCommand, type Context } from './threadCommand.js';
-import { inDir } from './threads.js';
+import { planApproved, resolveProject, resolveThreadId, tasksChanged, threadCommand, type Context } from './threadCommand.js';
+import { inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
 	env,
 	dir,
+	tasksDir: join(dir, 'tasks'),
 	stdin: () => 'plan from stdin\n',
 });
 
@@ -134,7 +135,9 @@ test('plan replaces the thread\'s plan', async t => {
 test('approving a Planned thread\'s plan saves it and moves the thread to Active', async () => {
 	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two', column: 'polish', plan: 'kept' }]);
 	const input = (cwd: string) => ({ cwd, tool_name: 'ExitPlanMode', tool_input: { plan: '# Do it\n' } });
-	assert.match((await planApproved(input('/work/one'), context(dir, '/', { OO_THREAD_ID: '1' })))!, /Moved #1 to ACTIVE/);
+	const message = (await planApproved(input('/work/one'), context(dir, '/', { OO_THREAD_ID: '1' })))!;
+	assert.match(message, /Moved #1 to ACTIVE/);
+	assert.match(message, /TaskCreate/);
 	// Not Planned: left alone.
 	assert.equal(await planApproved(input('/work/two'), context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
 	// No thread to go with it.
@@ -144,4 +147,56 @@ test('approving a Planned thread\'s plan saves it and moves the thread to Active
 		threads.map(t => [t.id, t.plan, t.column]),
 		[['2', 'kept', 'polish'], ['1', '# Do it', 'active']],
 	);
+});
+
+test('claude\'s task list is copied onto its thread, in order, without deleted tasks', async () => {
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active' }]);
+	const tasks = join(dir, 'tasks', 'session-1');
+	mkdirSync(tasks, { recursive: true });
+	const task = (id: number, status: string) =>
+		writeFileSync(join(tasks, `${id}.json`), JSON.stringify({ id: String(id), subject: `step ${id}`, description: '', status }));
+	task(10, 'pending');
+	task(2, 'in_progress');
+	task(1, 'completed');
+	task(3, 'deleted');
+	const input = (cwd: string) => ({ cwd, session_id: 'session-1', tool_name: 'TaskUpdate' });
+	const ctx = context(dir, '/', { OO_THREAD_ID: '1' });
+	assert.match((await tasksChanged(input('/work/one'), ctx))!, /Updated #1's todos \(1\/3 done\)/);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos, [
+		{ subject: 'step 1', status: 'completed' },
+		{ subject: 'step 2', status: 'in_progress' },
+		{ subject: 'step 10', status: 'pending' },
+	]);
+	// Nothing changed, nothing to save.
+	assert.equal(await tasksChanged(input('/work/one'), ctx), undefined);
+	// Not from the thread's directory.
+	task(10, 'completed');
+	assert.equal(await tasksChanged(input('/elsewhere'), ctx), undefined);
+	assert.equal(await tasksChanged(input('/work/one'), context(dir, '/', {})), undefined);
+});
+
+test('TodoWrite\'s list is copied onto the thread too', async () => {
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active' }]);
+	const input = {
+		cwd: '/work/one',
+		tool_name: 'TodoWrite',
+		tool_input: { todos: [{ content: 'a', status: 'completed', activeForm: 'A-ing' }, { content: 'b', status: 'pending' }] },
+	};
+	await tasksChanged(input, context(dir, '/', { OO_THREAD_ID: '1' }));
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos, [
+		{ subject: 'a', status: 'completed' },
+		{ subject: 'b', status: 'pending' },
+	]);
+});
+
+test('todoWindow keeps the current step in view', () => {
+	const todos = (done: number, total: number) =>
+		Array.from({ length: total }, (_, i) => ({ subject: String(i), status: i < done ? ('completed' as const) : ('pending' as const) }));
+	assert.deepEqual(todoWindow(todos(0, 3), 5), { start: 0, end: 3 });
+	assert.deepEqual(todoWindow(todos(0, 8), 5), { start: 0, end: 5 });
+	// One finished step before the current one.
+	assert.deepEqual(todoWindow(todos(3, 10), 5), { start: 2, end: 7 });
+	// Near the end, or all done, the last few.
+	assert.deepEqual(todoWindow(todos(8, 10), 5), { start: 5, end: 10 });
+	assert.deepEqual(todoWindow(todos(10, 10), 5), { start: 5, end: 10 });
 });

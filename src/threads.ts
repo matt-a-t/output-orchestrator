@@ -3,7 +3,7 @@ import { relative, resolve, isAbsolute } from 'node:path';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
 import { prState } from './github.js';
 import type { Request, Response } from './requests.js';
-import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread } from './state.js';
+import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread, type Todo } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
 /** Where the thread's work happens, if it has anywhere yet. */
@@ -17,6 +17,22 @@ export function threadDir(state: State, thread: Thread): string | undefined {
 export function inDir(cwd: string, dir: string): boolean {
 	const rel = relative(resolve(dir), resolve(cwd));
 	return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/** How many of the todos are done, as `3/7`. */
+export function todoProgress(todos: Todo[]): string {
+	return `${todos.filter(t => t.status === 'completed').length}/${todos.length}`;
+}
+
+/**
+ * Which `max` todos to show: from just before the first unfinished one, so the current step stays in
+ * view with the one finished before it, pulled back if that would leave space at the end.
+ */
+export function todoWindow(todos: Todo[], max: number): { start: number; end: number } {
+	const current = todos.findIndex(t => t.status !== 'completed');
+	const first = current === -1 ? todos.length : Math.max(0, current - 1);
+	const start = Math.max(0, Math.min(first, todos.length - max));
+	return { start, end: Math.min(todos.length, start + max) };
 }
 
 /** Add a thread to the bottom of Planned. */
@@ -121,6 +137,11 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		const now = new Date().toISOString();
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));
 		return done(`Saved #${thread.id}'s plan`);
+	}
+	if (request.op === 'todos') {
+		const now = new Date().toISOString();
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, todos: request.todos, updatedAt: now } : t)) }));
+		return done(`Updated #${thread.id}'s todos (${todoProgress(request.todos)} done)`);
 	}
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem =

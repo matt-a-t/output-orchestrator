@@ -12,11 +12,13 @@ export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
 // Run from source (tsx) we point at hook.ts and let Node strip the types.
 const fromSource = import.meta.url.endsWith('.ts');
 const HOOK_SCRIPT = fileURLToPath(new URL(fromSource ? './hook.ts' : './hook.js', import.meta.url));
-// This one imports the rest of oo, so from source it needs tsx's loader too, which execArgv carries.
-const PLAN_HOOK = [
+// These import the rest of oo, so from source they need tsx's loader too, which execArgv carries.
+const ooHook = (name: string) => [
 	...(fromSource ? process.execArgv : []),
-	fileURLToPath(new URL(fromSource ? './planHook.ts' : './planHook.js', import.meta.url)),
+	fileURLToPath(new URL(fromSource ? `./${name}.ts` : `./${name}.js`, import.meta.url)),
 ];
+const PLAN_HOOK = ooHook('planHook');
+const TODOS_HOOK = ooHook('todosHook');
 
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 
@@ -24,10 +26,12 @@ const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notific
 export function writeClaudeSettings(): void {
 	const node = (args: string[]) => [process.execPath, '--no-warnings', ...args].map(arg => JSON.stringify(arg)).join(' ');
 	const command = node([HOOK_SCRIPT]);
-	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]> = Object.fromEntries(
+	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string; async?: boolean }[] }[]> = Object.fromEntries(
 		HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]),
 	);
 	hooks.PostToolUse!.push({ matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: node(PLAN_HOOK) }] });
+	// Claude doesn't need to wait for the board to catch up.
+	hooks.PostToolUse!.push({ matcher: 'TaskCreate|TaskUpdate|TodoWrite', hooks: [{ type: 'command', command: node(TODOS_HOOK), async: true }] });
 	mkdirSync(DATA_DIR, { recursive: true });
 	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
 }
@@ -59,6 +63,9 @@ ${THREAD_USAGE}
   create files or commit: its claude starts in plan mode. Work out what to build (read the code, ask questions)
   and save it with \`oo thread plan --plan-file - <<'EOF'\`. When the user approves your plan as you leave plan
   mode, the board saves it as the thread's plan and moves the thread to Active, and the work can start.
+- **Track the plan's steps as tasks.** Once the plan is approved, create a task per step (TaskCreate) and keep
+  their status current (TaskUpdate). The board copies your task list onto the thread's card, so the user can
+  see how far along it is at a glance.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
   and why, then tell the user its id. Keep the title short; put the detail in the plan.

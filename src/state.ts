@@ -33,6 +33,11 @@ const ProjectSchema = z.object({
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
+export const TODO_STATUSES = ['pending', 'in_progress', 'completed'] as const;
+const TodoSchema = z.object({ subject: z.string(), status: z.enum(TODO_STATUSES) });
+export type Todo = z.infer<typeof TodoSchema>;
+export const TODO_MARKS: Record<Todo['status'], string> = { completed: '✓', in_progress: '▸', pending: '○' };
+
 const ThreadSchema = z.preprocess(
 	// Local used to be a column, "uitest", between Polish and PR.
 	(t: any) => (t?.column === 'uitest' ? { ...t, column: 'polish', local: true } : t),
@@ -59,6 +64,8 @@ const ThreadSchema = z.preprocess(
 		worktree: z.string().optional(),
 		// Opened on moving to PR; polled so the thread moves to Done once it's merged.
 		pr: z.object({ number: z.number(), url: z.string() }).optional(),
+		// Claude's task list for the thread, mirrored by a claude hook (see todosHook.ts).
+		todos: z.array(TodoSchema).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

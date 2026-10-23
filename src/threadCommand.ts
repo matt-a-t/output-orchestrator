@@ -1,9 +1,10 @@
 // `oo thread …`: drive the board from the shell (and from claude, see the oo skill).
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
-import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, type Column, type State, type Thread } from './state.js';
-import { applyRequest, inDir, threadDir, type Store } from './threads.js';
+import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type State, type Thread, type Todo } from './state.js';
+import { applyRequest, inDir, threadDir, todoProgress, type Store } from './threads.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -17,13 +18,14 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               replace the thread's plan
   Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
 
-/** What the command runs against; tests swap these out. */
-export type Context = { cwd: string; env: NodeJS.ProcessEnv; dir: string; stdin: () => string };
+/** What the command runs against; tests swap these out. `tasksDir` is where claude keeps its task lists. */
+export type Context = { cwd: string; env: NodeJS.ProcessEnv; dir: string; tasksDir: string; stdin: () => string };
 
 export const defaultContext = (): Context => ({
 	cwd: process.cwd(),
 	env: process.env,
 	dir: DATA_DIR,
+	tasksDir: join(homedir(), '.claude', 'tasks'),
 	stdin: () => readFileSync(0, 'utf8'),
 });
 
@@ -124,6 +126,7 @@ function details(state: State, t: Thread): string {
 	if (dir) lines.push(`dir:     ${dir}`);
 	if (t.pr) lines.push(`PR:      #${t.pr.number} ${t.pr.url}`);
 	if (t.sessionId) lines.push(`session: ${t.sessionId}`);
+	if (t.todos?.length) lines.push(`todos:   ${todoProgress(t.todos)} done`, ...t.todos.map(todo => `  ${TODO_MARKS[todo.status]} ${todo.subject}`));
 	if (t.plan) lines.push('', t.plan);
 	return lines.join('\n');
 }
@@ -222,7 +225,66 @@ export async function planApproved(input: any, ctx: Context): Promise<string | u
 		...(plan ? [await change({ op: 'plan', thread, plan }, ctx)] : []),
 		await change({ op: 'move', thread, column: 'active' }, ctx),
 	];
-	return responses.map(r => `${r.ok ? '' : '✗ '}${r.message}`).join('\n');
+	const messages = responses.map(r => `${r.ok ? '' : '✗ '}${r.message}`);
+	if (responses.at(-1)!.ok) messages.push(TASKS_PROMPT);
+	return messages.join('\n');
+}
+
+// Its task list is mirrored onto the thread's card (see tasksChanged).
+const TASKS_PROMPT =
+	'Before starting, break the plan into tasks with TaskCreate (one per step, short subjects), and keep their status current with TaskUpdate as you work: the board shows them on this thread\'s card.';
+
+const isTodoStatus = (status: unknown): status is Todo['status'] => TODO_STATUSES.includes(status as any);
+
+/**
+ * Claude's task list after a TaskCreate/TaskUpdate, read from where claude keeps it (one file per task,
+ * in a folder named after the session), or the list a TodoWrite (older claudes) was given.
+ */
+function claudeTodos(input: any, ctx: Context): Todo[] | undefined {
+	if (input?.tool_name === 'TodoWrite') {
+		const todos = input.tool_input?.todos;
+		if (!Array.isArray(todos)) return;
+		return todos.filter(t => typeof t?.content === 'string' && isTodoStatus(t.status)).map(t => ({ subject: t.content, status: t.status }));
+	}
+	if (typeof input?.session_id !== 'string') return;
+	const dir = join(ctx.tasksDir, input.session_id);
+	let names: string[];
+	try {
+		names = readdirSync(dir).filter(name => name.endsWith('.json'));
+	} catch {
+		return;
+	}
+	const tasks = names.flatMap(name => {
+		try {
+			return [JSON.parse(readFileSync(join(dir, name), 'utf8'))];
+		} catch {
+			return [];
+		}
+	});
+	return tasks
+		// Deleted tasks, and anything else unrecognised, are left out.
+		.filter(t => typeof t?.subject === 'string' && isTodoStatus(t.status))
+		.sort((a, b) => Number(a.id) - Number(b.id))
+		.map(t => ({ subject: t.subject, status: t.status }));
+}
+
+/**
+ * Claude hook for claude's task tools (see todosHook.ts): copy claude's task list onto its thread, for the board.
+ * Returns what happened; undefined if nothing did.
+ */
+export async function tasksChanged(input: any, ctx: Context): Promise<string | undefined> {
+	const state = loadState(join(ctx.dir, 'state.json'));
+	let thread: string;
+	try {
+		thread = resolveThreadId(state, undefined, ctx.env, typeof input?.cwd === 'string' ? input.cwd : ctx.cwd);
+	} catch {
+		return;
+	}
+	const todos = claudeTodos(input, ctx);
+	if (!todos) return;
+	const current = state.threads.find(t => t.id === thread)?.todos ?? [];
+	if (JSON.stringify(current) === JSON.stringify(todos)) return;
+	return (await change({ op: 'todos', thread, todos }, ctx)).message;
 }
 
 function fail(message: string): number {
