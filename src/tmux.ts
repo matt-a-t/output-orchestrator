@@ -47,6 +47,29 @@ export async function openWindow(
 }
 
 /**
+ * Open `command` in a pane on the right of the thread's window (or swap the one already there,
+ * if it's showing something else), then jump to it. `role` tags the pane so it's found again.
+ */
+export async function openSplit(window: string, cwd: string, role: string, command: string[], env: Record<string, string> = {}): Promise<void> {
+	const { stdout } = await execa('tmux', ['list-panes', '-t', `:${window}`, '-F', '#{pane_id}\t#{@oo-split}']);
+	const split = stdout
+		.split('\n')
+		.map(line => line.split('\t'))
+		.find(([, r]) => r);
+	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+	let pane = split?.[0];
+	if (!pane) {
+		const created = await execa('tmux', ['split-window', '-h', '-l', '50%', '-P', '-F', '#{pane_id}', '-t', `:${window}`, '-c', cwd, ...envArgs, ...command]);
+		pane = created.stdout.trim();
+	} else if (split![1] !== role) {
+		await execa('tmux', ['respawn-pane', '-k', '-t', pane, '-c', cwd, ...envArgs, ...command]);
+	}
+	await execa('tmux', ['set-option', '-p', '-t', pane, '@oo-split', role]);
+	await execa('tmux', ['select-pane', '-t', pane]);
+	await execa('tmux', ['select-window', '-t', `:${window}`]);
+}
+
+/**
  * From outside tmux: attach to the `oo` session, starting it (or a board window in it) with
  * `command` if needed. Resolves with tmux's exit code once detached.
  */
@@ -86,22 +109,30 @@ export async function pasteInto(name: string, text: string): Promise<void> {
 	await execa('tmux', ['send-keys', '-t', `:${name}`, 'Enter']);
 }
 
+const IN_THREAD_WINDOW = '#{m:oo-*,#{window_name}}';
+
 /**
- * Bind `prefix b`, `prefix C-b` (for when ctrl is still held) and `M-b` (no prefix) to jump back
- * to the board, unless the user has bound them to something themselves.
+ * Bind `prefix b`, `prefix C-b` (for when ctrl is still held), `M-b` and `M-q` (no prefix) to
+ * jump back to the board, and `M-h` / `M-l` to move between claude and the pane beside it, unless
+ * the user has bound them to something themselves.
  */
 export async function bindBoardKeys(): Promise<void> {
 	const back = ['select-window', '-t', BOARD_WINDOW];
+	// Only in thread windows; everywhere else the key still reaches the program (e.g. readline's M-b back-a-word).
+	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, command.join(' '), `send-keys ${key}`];
 	const bindings: [table: string, key: string, command: string[]][] = [
 		['prefix', 'b', back],
 		['prefix', 'C-b', back],
-		// Only in thread windows; everywhere else M-b still reaches the program (e.g. readline's back-a-word).
-		['root', 'M-b', ['if-shell', '-F', `#{m:oo-*,#{window_name}}`, back.join(' '), 'send-keys M-b']],
+		['root', 'M-b', inThreads('M-b', back)],
+		['root', 'M-q', inThreads('M-q', back)],
+		['root', 'M-h', inThreads('M-h', ['select-pane', '-L'])],
+		['root', 'M-l', inThreads('M-l', ['select-pane', '-R'])],
 	];
 	for (const [table, key, command] of bindings) {
 		const existing = await execa('tmux', ['list-keys', '-T', table, key], { reject: false });
 		// C-b is send-prefix out of the box, which is worth giving up for this.
-		const taken = existing.exitCode === 0 && !existing.stdout.includes(BOARD_WINDOW) && !existing.stdout.includes('send-prefix');
+		const ours = existing.stdout.includes(BOARD_WINDOW) || existing.stdout.includes('oo-*') || existing.stdout.includes('send-prefix');
+		const taken = existing.exitCode === 0 && !ours;
 		if (!taken) await execa('tmux', ['bind-key', '-T', table, key, ...command]);
 	}
 }
