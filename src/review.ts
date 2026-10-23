@@ -93,7 +93,8 @@ function gitCommand(args: string[]): string {
 
 /** less over delta's output, with n/N jumping between files and hunks. */
 function lessCommand(keys?: string): string {
-	const less = ['less', '-R', `--pattern=${NAVIGATE_PATTERN}`, ...(keys ? [`--lesskey-src=${keys}`] : [])];
+	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
+	const less = ['less', '-R', `--pattern=${NAVIGATE_PATTERN}`, '+g', ...(keys ? [`--lesskey-src=${keys}`] : [])];
 	return less.map(shellQuote).join(' ');
 }
 
