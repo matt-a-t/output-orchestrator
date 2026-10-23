@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { commitText, EDITOR, parseCommit, parsePr, prText } from './editor.js';
@@ -15,6 +16,7 @@ import {
 	COLORS,
 	COLUMN_LABELS,
 	COLUMNS,
+	DEFAULT_WAKE_PROMPT,
 	HOOK_LABELS,
 	LOCAL_LABEL,
 	STATE_FILE,
@@ -70,6 +72,7 @@ const LEGEND: [string, string | undefined, string][] = [
 	['✓', 'green', 'stopped'],
 	['○', 'gray', 'open, no activity yet'],
 	['↻', 'gray', 'closed, resumable'],
+	['↻', 'red', 'closed mid-work, w wakes it'],
 	['±', 'magenta', 'changes to review'],
 ];
 
@@ -107,6 +110,8 @@ export function App() {
 	const [editing, setEditing] = useState<string | null>(null);
 	const lastWritten = useRef<string | null>(null);
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
+	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
+	const sessionStarts = useRef(new Map<string, number>());
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
 	// Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved.
 	const [unreviewed, setUnreviewed] = useState<Set<string>>(new Set());
@@ -159,6 +164,7 @@ export function App() {
 			});
 			const started = new Map<string, { sessionId: string; transcriptPath?: string }>();
 			for (const e of events) {
+				if (e.event === 'SessionStart') sessionStarts.current.set(e.thread, (sessionStarts.current.get(e.thread) ?? 0) + 1);
 				if (e.event === 'SessionStart' && e.session) {
 					started.set(e.thread, { sessionId: e.session, transcriptPath: e.transcript });
 				}
@@ -645,6 +651,43 @@ export function App() {
 			await launchClaude(thread, cwd);
 		});
 
+	/**
+	 * Closed while claude was still working, e.g. its window was killed. Still working with no window
+	 * covers a claude killed too hard to report SessionEnd.
+	 */
+	const stalled = (thread: Thread) =>
+		!liveWindows.has(threadWindowName(thread.id)) && (statuses[thread.id] === 'interrupted' || statuses[thread.id] === 'working');
+
+	/** Resume the thread's claude in the background if it's closed, then tell it to keep going; returns whether it did. */
+	const wakeThread = async (thread: Thread): Promise<boolean> => {
+		const project = projectByName(thread.project);
+		if (!project) {
+			setMessage(`✗ Unknown project "${thread.project}"`);
+			return false;
+		}
+		const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(project, thread));
+		const window = threadWindowName(thread.id);
+		if (!(await windowNames()).includes(window)) {
+			const starts = sessionStarts.current.get(thread.id) ?? 0;
+			await launchClaude(thread, cwd, { background: true });
+			// It may be waiting on "resume anyway?" instead.
+			if (!(await windowNames()).includes(window)) return false;
+			const deadline = Date.now() + 30_000;
+			while ((sessionStarts.current.get(thread.id) ?? 0) === starts) {
+				if (Date.now() > deadline) {
+					setMessage(`✗ #${thread.id}'s claude didn't start in time; not woken`);
+					return false;
+				}
+				await sleep(250);
+			}
+			// SessionStart comes a little before the prompt takes input.
+			await sleep(1000);
+		}
+		await pasteInto(window, project.wakePrompt || DEFAULT_WAKE_PROMPT);
+		setMessage(`Woke #${thread.id}`);
+		return true;
+	};
+
 	/** Open claude with a shell or a live diff beside it, starting claude first if it isn't running. */
 	const openBeside = (thread: Thread, role: 'shell' | 'diff') =>
 		inWorktree(thread, async cwd => {
@@ -747,6 +790,17 @@ export function App() {
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
+		if (input === 'W') {
+			const woken = state.threads.filter(t => visible(t) && t.column !== 'done' && stalled(t));
+			if (woken.length === 0) return setMessage('No interrupted threads');
+			const ids = (threads: Thread[]) => threads.map(t => `#${t.id}`).join(', ');
+			return ask(`Wake ${ids(woken)}?`, async () => {
+				const failed: Thread[] = [];
+				// One at a time, as each waits for its claude to start.
+				for (const t of woken) await run(async () => void ((await wakeThread(t)) || failed.push(t)), `waking #${t.id}`);
+				if (woken.length > 1) setMessage(failed.length ? `⚠ Woke all but ${ids(failed)}` : `Woke ${ids(woken)}`);
+			});
+		}
 		if (input === 'P') return setShowProjects(true);
 		if (input === '?') return setShowKeys(true);
 		if (input === 'i') return startImport();
@@ -772,6 +826,10 @@ export function App() {
 		}
 		if (input === 'e') return setEditing(selected.id);
 		if (key.return) return openThread(selected);
+		if (input === 'w') {
+			if (statuses[selected.id] === 'working' && !stalled(selected)) return setMessage(`⚠ claude is still working on #${selected.id}`);
+			return run(async () => void (await wakeThread(selected)), `waking #${selected.id}`);
+		}
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
@@ -940,7 +998,7 @@ export function App() {
 		const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
 			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
 			: resumeId(t)
-				? ['↻', 'gray']
+				? ['↻', stalled(t) ? 'red' : 'gray']
 				: [' ', undefined];
 		return (
 			<Box key={t.id} flexDirection="column">

@@ -99,8 +99,8 @@ export type HookEvent = {
 	ts: string;
 };
 
-/** working ⚙, waiting ⏸ (needs you), stopped ✓, idle (window open, nothing yet), ended. */
-export type Status = 'working' | 'waiting' | 'stopped' | 'idle' | 'ended';
+/** working ⚙, waiting ⏸ (needs you), stopped ✓, idle (window open, nothing yet), ended, or interrupted (ended mid-work). */
+export type Status = 'working' | 'waiting' | 'stopped' | 'idle' | 'ended' | 'interrupted';
 
 export function nextStatus(current: Status | undefined, e: HookEvent): Status | undefined {
 	switch (e.event) {
@@ -115,7 +115,8 @@ export function nextStatus(current: Status | undefined, e: HookEvent): Status | 
 		case 'Stop':
 			return 'stopped';
 		case 'SessionEnd':
-			return 'ended';
+			// Closed while it was still going, e.g. its window was killed: w wakes it.
+			return current === 'working' ? 'interrupted' : 'ended';
 		default:
 			return current;
 	}

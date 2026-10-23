@@ -4,11 +4,11 @@ import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
 import { editText, loop } from './input.js';
-import { COLORS, HOOK_EVENTS, HOOK_LABELS, projectProblem, type Project, type ProjectHook, type State } from './state.js';
+import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, projectProblem, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path', ...HOOK_EVENTS] as const;
+const FIELDS = ['name', 'abbrev', 'color', 'path', 'wakePrompt', ...HOOK_EVENTS] as const;
 type Field = (typeof FIELDS)[number];
-const FIELD_LABELS: Record<Field, string> = { name: 'name', abbrev: 'abbrev', color: 'colour', path: 'path', ...HOOK_LABELS };
+const FIELD_LABELS: Record<Field, string> = { name: 'name', abbrev: 'abbrev', color: 'colour', path: 'path', wakePrompt: 'wake prompt', ...HOOK_LABELS };
 const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
 
 const isHook = (field: Field): field is ProjectHook => (HOOK_EVENTS as readonly string[]).includes(field);
@@ -41,7 +41,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 	const save = (form: Form) => {
 		// Hooks left empty aren't kept.
 		const hooks = Object.fromEntries(Object.entries(form.project.hooks).map(([k, v]) => [k, v?.trim()]).filter(([, v]) => v));
-		const project = { ...form.project, name: form.project.name.trim(), abbrev: form.project.abbrev.trim(), path: expandPath(form.project.path.trim()), hooks };
+		const project = { ...form.project, name: form.project.name.trim(), abbrev: form.project.abbrev.trim(), wakePrompt: form.project.wakePrompt.trim(), path: expandPath(form.project.path.trim()), hooks };
 		const problem = projectProblem(state, project, form.original);
 		if (problem) return setMessage(`✗ ${problem}`);
 		const old = state.projects.find(p => p.name === form.original);
@@ -94,7 +94,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', hooks: {} }, field: 0 });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', wakePrompt: '', hooks: {} }, field: 0 });
 		}
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0 });
@@ -147,6 +147,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 									<Text>
 										{fieldValue(form.project, field)}
 										{active ? <Text inverse> </Text> : null}
+										{field === 'wakePrompt' && !form.project.wakePrompt ? <Text dimColor>{DEFAULT_WAKE_PROMPT}</Text> : null}
 									</Text>
 								)}
 							</Text>
@@ -160,7 +161,9 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				{form
 					? isHook(FIELDS[form.field]!)
 						? 'shell command run in the project checkout (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  ↑/↓ or tab field  ⏎ save  esc cancel'
-						: '↑/↓ or tab field  ←/→ colour  ⏎ save  esc cancel'
+						: FIELDS[form.field] === 'wakePrompt'
+							? 'pasted into claude by w / W on the board; empty uses the default  ↑/↓ or tab field  ⏎ save  esc cancel'
+							: '↑/↓ or tab field  ←/→ colour  ⏎ save  esc cancel'
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>

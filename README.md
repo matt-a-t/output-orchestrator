@@ -61,13 +61,16 @@ Planned has claude make a plan and you approve it, the plan is saved to the thre
 moves to Active.
 
 Enter opens or jumps to the thread's `claude` window. If the window was closed (e.g. after a
-restart), Enter resumes the thread where it left off. `e` opens a thread's own screen. Its title,
+restart), Enter resumes the thread where it left off. If the window was closed while claude was
+still working, `w` resumes it in the background and tells it to keep going without you leaving
+the board, and `W` does the same for every thread like that, after asking first. The project's
+wake prompt (`P`) changes what it's told. `e` opens a thread's own screen. Its title,
 project, colour and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
 the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
 already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
-activity yet, ↻ no window but resumable, ± uncommitted changes waiting to be reviewed and
+activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
 approved. Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath.
 
