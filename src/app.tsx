@@ -4,7 +4,7 @@ import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMEle
 import { commitText, EDITOR, parseCommit, parsePr, prText } from './editor.js';
 import { runHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
-import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js';
+import { createPr, draftPr, findPr, openPrInBrowser, prState, withTicket } from './github.js';
 import { editText, loop } from './input.js';
 import { KEY_SECTIONS } from './keys.js';
 import { ProjectsView } from './projects.js';
@@ -486,8 +486,12 @@ export function App() {
 				if (written === CLOSED) return setMessage('Cancelled');
 				const edited = await progress.edit(
 					written
-						? prText(written, thread.branch)
-						: prText({ title: thread.title, body: thread.plan }, thread.branch, "claude couldn't write the PR description; this is from the thread."),
+						? prText(withTicket(written, thread.ticket), thread.branch)
+						: prText(
+								withTicket({ title: thread.title, body: thread.plan }, thread.ticket),
+								thread.branch,
+								"claude couldn't write the PR description; this is from the thread.",
+							),
 				);
 				const draft = edited === CLOSED ? null : parsePr(edited);
 				if (!draft) return setMessage('Cancelled');
