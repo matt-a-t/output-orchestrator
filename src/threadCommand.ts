@@ -2,11 +2,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
-import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, type Store } from './threads.js';
+import { normalizeKey, ticketUrl } from './tickets.js';
 
-export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-]
+export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
+                              --ticket: the Jira key (AV-123, or 123 for the project's prefix) or GitHub issue (#45) it's for
   oo thread list [--json] [--project <name>] [--column <column>]
   oo thread show [id] [--json]
   oo thread move [id] <column>
@@ -54,6 +56,15 @@ function parseArgs(args: string[], valued: string[], boolean: string[]) {
 		else throw new UsageError(`Unknown option ${arg}`);
 	}
 	return { positional, flag: (name: string) => (typeof flags[name] === 'string' ? (flags[name] as string) : undefined), has: (name: string) => flags[name] === true };
+}
+
+/** The ticket `--ticket` names, in the project's form; its url is left empty if gh can't say. */
+async function resolveTicket(project: Project, input: string | undefined): Promise<Thread['ticket']> {
+	if (input === undefined) return;
+	if (project.tracker === 'none') throw new CommandError(`${project.name} has no ticket tracker; set one in the board's projects screen (P)`);
+	const key = normalizeKey(project, input);
+	if (!key) throw new CommandError(`Not a ${project.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${input}`);
+	return { key, url: await ticketUrl(project, key).catch(() => '') };
 }
 
 function parseColumn(name: string): Column {
@@ -123,6 +134,7 @@ function summary(t: Thread): string {
 
 function details(state: State, t: Thread): string {
 	const lines = [`#${t.id} ${t.title}`, `column:  ${where(t)}`, `project: ${t.project}`];
+	if (t.ticket) lines.push(`ticket:  ${t.ticket.key}${t.ticket.url ? ` ${t.ticket.url}` : ''}`);
 	if (t.branch) lines.push(`branch:  ${t.branch}${t.base ? ` (from ${t.base})` : ''}`);
 	const dir = threadDir(state, t);
 	if (dir) lines.push(`dir:     ${dir}`);
@@ -137,13 +149,14 @@ async function run(args: string[], ctx: Context): Promise<number> {
 	const [sub, ...rest] = args;
 	const state = loadState(join(ctx.dir, 'state.json'));
 	if (sub === 'add') {
-		const { positional, flag } = parseArgs(rest, ['project', 'plan-file'], []);
+		const { positional, flag } = parseArgs(rest, ['project', 'plan-file', 'ticket'], []);
 		const title = positional.join(' ').trim();
 		if (!title) throw new UsageError('Give the thread a title');
 		const planFile = flag('plan-file');
 		const plan = planFile === undefined ? '' : (planFile === '-' ? ctx.stdin() : readFileSync(planFile, 'utf8')).trim();
 		const project = resolveProject(state, ctx.cwd, flag('project'));
-		const response = await change({ op: 'add', project, title, plan }, ctx);
+		const ticket = await resolveTicket(state.projects.find(p => p.name === project)!, flag('ticket'));
+		const response = await change({ op: 'add', project, title, plan, ticket }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.thread);
 		return 0;

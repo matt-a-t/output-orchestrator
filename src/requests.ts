@@ -6,11 +6,11 @@ import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from '
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { JsonlReader } from './jsonl.js';
-import { DATA_DIR, type Column, type TodoStatus } from './state.js';
+import { DATA_DIR, type Column, type Thread, type TodoStatus } from './state.js';
 
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
-	| { id: string; op: 'add'; project: string; title: string; plan: string }
+	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: Thread['ticket'] }
 	| { id: string; op: 'move'; thread: string; column: Column }
 	| { id: string; op: 'plan'; thread: string; plan: string }
 	| { id: string; op: 'todos'; thread: string; subjects: string[] }
