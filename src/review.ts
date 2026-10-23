@@ -3,13 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
-import { diffArgs, hunkLocations, type DiffKind } from './git.js';
+import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
 import type { Thread } from './state.js';
 import { confirmPopup, popup, shellQuote } from './tmux.js';
 
 // less quits with the first character of the extra string as its status: 'A' is 65.
 const APPROVE_KEYS = '#command\na quit A\n';
 const APPROVE_STATUS = 65;
+// The same trick gives the diff beside claude an r to refresh it: 'R' is 82.
+const REFRESH_KEYS = '#command\nr quit R\n';
+const REFRESH_STATUS = 82;
 // What delta's --navigate labels files and hunks with.
 const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:)';
 
@@ -22,20 +25,55 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 	const args = await diffArgs(cwd, kind, thread);
 	if (!args) return 'empty';
 	const approvable = kind === 'step';
-	const less = ['less', '-R', `--pattern=${NAVIGATE_PATTERN}`];
-	if (approvable) {
-		const keys = join(tmpdir(), 'oo-approve.lesskey');
-		writeFileSync(keys, APPROVE_KEYS);
-		less.push(`--lesskey-src=${keys}`);
-	}
 	const label = kind === 'step' ? 'step diff' : `thread diff vs ${args.at(-1)}`;
 	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}q close `;
-	const command = `git ${args.map(shellQuote).join(' ')} | delta --paging=never --navigate | ${less.map(shellQuote).join(' ')}`;
+	const command = `${gitCommand(args)} | delta --paging=never --navigate | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : undefined)}`;
 	for (;;) {
 		if ((await popup(command, { cwd, title })) !== APPROVE_STATUS) return 'closed';
 		// Anything but y goes back to the diff.
 		if (await confirmPopup(`Approve #${thread.id}'s step?`)) return 'approved';
 	}
+}
+
+/**
+ * A shell command for the diff beside claude: the step's, or the thread's if the step has none,
+ * re-run with `r` so it keeps up with claude's edits. No approving here; the board isn't waiting on it.
+ */
+export async function diffPaneCommand(cwd: string, thread: Thread): Promise<string[]> {
+	const step = ['diff', ...(await diffRevs(cwd, 'step', thread))];
+	const whole = ['diff', ...(await diffRevs(cwd, 'thread', thread))];
+	const keys = lesskey('refresh', REFRESH_KEYS);
+	// less starts at the first file, so the label goes in its (short, the s) prompt; these characters are special there.
+	const prompt = (label: string) => `--prompt=s${`${label} — n/N next/prev hunk  r refresh  q close`.replace(/[?:.%\\]/g, '\\$&')}`;
+	const show = (args: string[], label: string) =>
+		`${gitCommand(args)} | delta --paging=never --navigate | ${lessCommand(keys)} ${shellQuote(prompt(label))}`;
+	const script = [
+		'while :; do',
+		'git add --all --intent-to-add',
+		`if ! ${gitCommand([...step, '--quiet'])}; then ${show(step, 'step diff')}`,
+		`elif ! ${gitCommand([...whole, '--quiet'])}; then ${show(whole, `thread diff vs ${whole.at(-1)}`)}`,
+		`else clear; printf 'No changes yet — r to refresh, any other key to close'; read -rsn1 key; clear; [ "$key" = r ] && (exit ${REFRESH_STATUS})`,
+		'fi',
+		`[ $? = ${REFRESH_STATUS} ] || break`,
+		'done',
+	].join('\n');
+	return ['bash', '-c', script];
+}
+
+function gitCommand(args: string[]): string {
+	return `git ${args.map(shellQuote).join(' ')}`;
+}
+
+/** less over delta's output, with n/N jumping between files and hunks. */
+function lessCommand(keys?: string): string {
+	const less = ['less', '-R', `--pattern=${NAVIGATE_PATTERN}`, ...(keys ? [`--lesskey-src=${keys}`] : [])];
+	return less.map(shellQuote).join(' ');
+}
+
+function lesskey(name: string, keys: string): string {
+	const file = join(tmpdir(), `oo-${name}.lesskey`);
+	writeFileSync(file, keys);
+	return file;
 }
 
 /**
