@@ -12,11 +12,13 @@ export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
 // Run from source (tsx) we point at hook.ts and let Node strip the types.
 const fromSource = import.meta.url.endsWith('.ts');
 const HOOK_SCRIPT = fileURLToPath(new URL(fromSource ? './hook.ts' : './hook.js', import.meta.url));
-// This one imports the rest of oo, so from source it needs tsx's loader too, which execArgv carries.
-const PLAN_HOOK = [
+// These import the rest of oo, so from source they need tsx's loader too, which execArgv carries.
+const ooHook = (name: string) => [
 	...(fromSource ? process.execArgv : []),
-	fileURLToPath(new URL(fromSource ? './planHook.ts' : './planHook.js', import.meta.url)),
+	fileURLToPath(new URL(fromSource ? `./${name}.ts` : `./${name}.js`, import.meta.url)),
 ];
+const PLAN_HOOK = ooHook('planHook');
+const SESSION_HOOK = ooHook('sessionHook');
 /** oo itself (this same dist or source), for tmux keys and panes that call back into it. */
 export const OO_COMMAND = [
 	process.execPath,
@@ -34,6 +36,7 @@ export function writeClaudeSettings(): void {
 		HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]),
 	);
 	hooks.PostToolUse!.push({ matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: node(PLAN_HOOK) }] });
+	hooks.SessionStart!.push({ matcher: '*', hooks: [{ type: 'command', command: node(SESSION_HOOK) }] });
 	mkdirSync(DATA_DIR, { recursive: true });
 	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
 }
@@ -65,6 +68,11 @@ ${THREAD_USAGE}
   create files or commit: its claude starts in plan mode. Work out what to build (read the code, ask questions)
   and save it with \`oo thread plan --plan-file - <<'EOF'\`. When the user approves your plan as you leave plan
   mode, the board saves it as the thread's plan and moves the thread to Active, and the work can start.
+- **Work through the thread's checkpoints.** Once the plan is approved, save its checkpoints with
+  \`oo thread todo set --file - <<'EOF'\`, one per line: each a step the user can review and commit on its own.
+  Mark one \`active\` as you start it and \`review\` when it's ready, then stop for the user to review it;
+  approving the step on the board commits it and marks it \`done\`. The list stays on the thread across claude
+  runs and shows on its card, so keep it current.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
   and why, then tell the user its id. Keep the title short; put the detail in the plan.

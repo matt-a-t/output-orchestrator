@@ -20,6 +20,7 @@ import {
 	HOOK_LABELS,
 	LOCAL_LABEL,
 	STATE_FILE,
+	TODO_MARKS,
 	loadState,
 	saveState,
 	type Column,
@@ -27,6 +28,8 @@ import {
 	type ProjectHook,
 	type State,
 	type Thread,
+	type Todo,
+	type TodoStatus,
 } from './state.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
 import { mouse, type MouseEvent } from './mouse.js';
@@ -40,7 +43,11 @@ import {
 	moveWarning,
 	setColumn as moveTo,
 	syncWorktree as syncWorktreeFor,
+	approvedTodo,
+	setTodoStatus,
 	threadDir,
+	todoProgress,
+	todoWindow,
 	type Store,
 	type WorktreeChange,
 } from './threads.js';
@@ -79,6 +86,9 @@ const LOCAL_COL = COLUMNS.length;
 const CARD_HEIGHT = 2;
 const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
+// The highlighted thread's todos shown below the board; the rest are summed up as "N more".
+const MAX_TODO_LINES = 5;
+const TODO_COLORS: Record<TodoStatus, string> = { pending: 'gray', active: 'yellow', review: 'magenta', done: 'green' };
 
 const HELP = 'h/l j/k move  ⏎ open  n new  d diff  s/M-d shell/diff beside claude  q quit';
 
@@ -558,7 +568,11 @@ export function App() {
 		} finally {
 			await progress.close();
 		}
-		setMessage(`Committed step on ${thread.branch ?? cwd}`);
+		// Approving the step is what ticks off the checkpoint claude handed over.
+		const todos = stateRef.current.threads.find(t => t.id === thread.id)?.todos ?? [];
+		const item = approvedTodo(todos);
+		if (item !== -1) updateThread(thread.id, { todos: setTodoStatus(todos, item, 'done') });
+		setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}`);
 	};
 
 	const promptInput = (prompt: Prompt, input: string, key: Key) => {
@@ -1011,6 +1025,28 @@ export function App() {
 		);
 	};
 
+	/** The highlighted thread's progress through claude's task list, with the current step in view. */
+	const todoList = (todos: Todo[]) => {
+		const { start, end } = todoWindow(todos, MAX_TODO_LINES);
+		const more = (n: number, arrow: string) => (n > 0 ? <Text dimColor>  {arrow} {n} more</Text> : null);
+		return (
+			<Box flexDirection="column">
+				<Text dimColor>todo {todoProgress(todos)}</Text>
+				{more(start, '↑')}
+				{todos.slice(start, end).map((todo, i) => (
+					<Text key={start + i} wrap="truncate">
+						{'  '}
+						<Text color={TODO_COLORS[todo.status]}>{TODO_MARKS[todo.status]}</Text>{' '}
+						<Text bold={todo.status === 'active' || todo.status === 'review'} dimColor={todo.status === 'done'}>
+							{todo.subject}
+						</Text>
+					</Text>
+				))}
+				{more(todos.length - end, '↓')}
+			</Box>
+		);
+	};
+
 	return (
 		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
@@ -1102,6 +1138,7 @@ export function App() {
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
 					</Text>
 				) : null}
+				{selected?.todos?.length && !picker ? todoList(selected.todos) : null}
 				{selected?.pr && !picker ? (
 					<Text dimColor>
 						PR #{selected.pr.number} {selected.pr.url} (b opens it)
