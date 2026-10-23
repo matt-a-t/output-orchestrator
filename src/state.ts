@@ -19,9 +19,14 @@ const ColumnSchema = z.enum([...COLUMNS, 'archived']);
 export type Column = z.infer<typeof ColumnSchema>;
 
 /** Shell commands a project runs when things happen on the board (see hooks.ts). */
-export const HOOK_EVENTS = ['enterLocal', 'leaveLocal'] as const;
+export const HOOK_EVENTS = ['enterLocal', 'leaveLocal', 'enterPolish', 'leavePolish'] as const;
 export type ProjectHook = (typeof HOOK_EVENTS)[number];
-export const HOOK_LABELS: Record<ProjectHook, string> = { enterLocal: 'enter local', leaveLocal: 'leave local' };
+export const HOOK_LABELS: Record<ProjectHook, string> = {
+	enterLocal: 'enter local',
+	leaveLocal: 'leave local',
+	enterPolish: 'enter polish',
+	leavePolish: 'leave polish',
+};
 
 const ProjectSchema = z.object({
 	name: z.string(),
