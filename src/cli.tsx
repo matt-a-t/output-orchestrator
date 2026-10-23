@@ -8,11 +8,13 @@ import { THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { writeClaudeSettings, writeOoSkill } from './status.js';
 import {
+	BOARD_LABEL,
 	BOARD_WINDOW,
 	attachBoard,
 	bindBoardKeys,
 	enableTmuxMouse,
 	insideTmux,
+	labelWindow,
 	renameCurrentWindow,
 	selectExistingBoard,
 } from './tmux.js';
@@ -70,6 +72,7 @@ if (cmd === 'project') {
 	}
 	if (await selectExistingBoard()) process.exit(0);
 	await renameCurrentWindow(BOARD_WINDOW);
+	await labelWindow(BOARD_WINDOW, BOARD_LABEL);
 	await bindBoardKeys();
 	await enableTmuxMouse();
 	writeClaudeSettings();

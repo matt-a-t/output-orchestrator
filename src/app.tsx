@@ -41,7 +41,7 @@ import {
 	type Store,
 	type WorktreeChange,
 } from './threads.js';
-import { killWindow, openSplit, openWindow, pasteInto, threadWindowName, windowNames } from './tmux.js';
+import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
 
 type PermissionMode = 'plan' | 'auto';
 
@@ -612,7 +612,7 @@ export function App() {
 			...(sessionId ? ['--resume', sessionId] : []),
 			...(mode ? ['--permission-mode', mode] : []),
 		];
-		const result = await openWindow(window, cwd, command, { OO_THREAD_ID: thread.id }, { background });
+		const result = await openWindow(window, threadWindowLabel(thread), cwd, command, { OO_THREAD_ID: thread.id }, { background });
 		await refreshWindows();
 		if (result === 'selected') setMessage('');
 		else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
