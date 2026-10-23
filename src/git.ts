@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execa } from 'execa';
 import { DATA_DIR, type Thread } from './state.js';
+import { ticketBranchPart } from './tickets.js';
 
 const git = (cwd: string, args: string[]) => execa('git', ['-C', cwd, ...args]);
 
@@ -20,6 +21,49 @@ function slug(title: string): string {
 		.replace(/[^a-z0-9]+/g, '-')
 		.slice(0, 40)
 		.replace(/^-+|-+$/g, '');
+}
+
+/**
+ * The branch the thread should be on: `av-123-<slug>` for a ticket, `oo/<slug>` without one. Not
+ * the thread's id, which only means something on this machine.
+ */
+export function branchName(thread: Pick<Thread, 'title' | 'ticket'>): string {
+	const name = slug(thread.title);
+	if (thread.ticket) return [ticketBranchPart(thread.ticket), name].filter(Boolean).join('-');
+	return `oo/${name || 'thread'}`;
+}
+
+const refExists = async (repo: string, ref: string) =>
+	(await execa('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', ref], { reject: false })).exitCode === 0;
+
+/** `name`, or `name-2`, `name-3`… if a local or origin branch already has it. */
+async function freeBranchName(repo: string, name: string): Promise<string> {
+	for (let n = 1; ; n++) {
+		const candidate = n === 1 ? name : `${name}-${n}`;
+		if (!(await refExists(repo, `refs/heads/${candidate}`)) && !(await refExists(repo, `refs/remotes/origin/${candidate}`))) return candidate;
+	}
+}
+
+/** Whether the branch has gone to origin: it tracks something, or origin has a copy we've fetched. */
+async function isPushed(repo: string, branch: string): Promise<boolean> {
+	const upstream = await execa('git', ['-C', repo, 'config', `branch.${branch}.remote`], { reject: false });
+	return upstream.exitCode === 0 || (await refExists(repo, `refs/remotes/origin/${branch}`));
+}
+
+/**
+ * Rename the thread's branch to match its ticket and title (see branchName), unless it's been
+ * pushed or has a PR, since that would leave them pointing at the old name.
+ */
+export async function renameBranch(repo: string, thread: Thread): Promise<{ branch?: string; message?: string }> {
+	const old = thread.branch;
+	if (!old) return {};
+	const wanted = branchName(thread);
+	// Already there, give or take a collision suffix.
+	if (old === wanted || (old.startsWith(`${wanted}-`) && /^\d+$/.test(old.slice(wanted.length + 1)))) return {};
+	if (thread.pr || (await isPushed(repo, old))) return { message: `⚠ Kept #${thread.id}'s branch ${old}: it's already pushed` };
+	const branch = await freeBranchName(repo, wanted);
+	await git(repo, ['branch', '-m', old, branch]);
+	return { branch, message: `Renamed #${thread.id}'s branch to ${branch}` };
 }
 
 /**
@@ -42,7 +86,7 @@ export async function ensureWorktree(repo: string, thread: Thread): Promise<Pick
 	// Start from origin's copy when we can fetch it, so the branch isn't behind a stale local main.
 	const fetched = await execa('git', ['-C', repo, 'fetch', 'origin', base], { reject: false });
 	const start = fetched.exitCode === 0 ? `origin/${base}` : base;
-	const branch = `oo/${thread.id}${slug(thread.title) ? `-${slug(thread.title)}` : ''}`;
+	const branch = await freeBranchName(repo, branchName(thread));
 	await git(repo, ['worktree', 'add', '-b', branch, '--no-track', path, start]);
 	return { branch, base };
 }

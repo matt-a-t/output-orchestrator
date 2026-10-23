@@ -55,7 +55,7 @@ A **thread** is one piece of work: a git worktree, a branch, possibly a PR, and 
 that worked on it. Its columns are **Planned → Active → Polish → PR → Done**. `H` / `L` move the
 selected thread between columns, and `J` / `K` reorder it within one.
 
-Leaving Planned (or opening a thread) gives it its own worktree and branch (`oo/<id>-<title>`),
+Leaving Planned (or opening a thread) gives it its own worktree and branch (`av-123-<title>` from its ticket, or `oo/<title>` without one),
 under `~/.local/share/output-orchestrator/worktrees/`, and claude runs there. If a thread in
 Planned has claude make a plan and you approve it, the plan is saved to the thread and the thread
 moves to Active.
