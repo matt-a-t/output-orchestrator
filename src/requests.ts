@@ -12,6 +12,8 @@ import { DATA_DIR, type Column, type TodoStatus } from './state.js';
 export type Request =
 	| { id: string; op: 'add'; project: string; title: string; plan: string }
 	| { id: string; op: 'move'; thread: string; column: Column }
+	// Only the board can do this one (it checks out, moves claude and runs hooks); 'toggle' is what t does.
+	| { id: string; op: 'local'; thread: string; local: boolean | 'toggle' }
 	| { id: string; op: 'plan'; thread: string; plan: string }
 	| { id: string; op: 'todos'; thread: string; subjects: string[] }
 	// `item` counts from 1, as `oo thread show` lists them.
@@ -55,7 +57,7 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'plan', 'todos', 'todo'].includes(r.op);
+const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'plan', 'todos', 'todo'].includes(r.op);
 const isResponse = (r: any) => typeof r.id === 'string' && typeof r.ok === 'boolean';
 
 /** The board's side: new requests since the last read. */

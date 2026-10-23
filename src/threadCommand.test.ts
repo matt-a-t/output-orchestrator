@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
+import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState } from './state.js';
 import { approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { approvedTodo, inDir, todoWindow } from './threads.js';
@@ -120,6 +121,35 @@ test('usage: shown for mistakes in the command line, not for failed lookups', as
 	const quiet = capture(t);
 	assert.equal(await threadCommand(['show', '9'], context(lookup.dir, lookup.project)), 1);
 	assert.doesNotMatch(quiet.err(), /usage:/);
+});
+
+test('local sends the direction to the board, toggling without one, and needs the board running', async t => {
+	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const output = capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['local', 'in'], ctx), 1);
+	assert.match(output.err(), /needs the board running/);
+
+	// Stand in for the board, answering with what it was asked.
+	claimBoard(dir);
+	const reader = new RequestReader(dir);
+	const timer = setInterval(() => {
+		for (const r of reader.read()) {
+			const { thread, local } = r as Extract<Request, { op: 'local' }>;
+			respond({ id: r.id, ok: true, message: `${r.op} #${thread} ${local}` }, dir);
+		}
+	}, 20);
+	t.after(() => {
+		clearInterval(timer);
+		releaseBoard(dir);
+	});
+	assert.equal(await threadCommand(['local', 'in'], ctx), 0);
+	assert.equal(await threadCommand(['local', 'out'], ctx), 0);
+	assert.equal(await threadCommand(['local', '2'], ctx), 0);
+	assert.equal(await threadCommand(['local', '#2', 'in'], ctx), 0);
+	assert.equal(output.out(), 'local #1 true\nlocal #1 false\nlocal #2 toggle\nlocal #2 true');
+	assert.equal(await threadCommand(['local', '2', 'sideways'], ctx), 1);
+	assert.match(output.err(), /Unknown direction "sideways"[^]*usage:[^]*oo thread local \[id\] \[in\|out\]/);
 });
 
 test('plan replaces the thread\'s plan', async t => {

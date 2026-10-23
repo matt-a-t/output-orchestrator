@@ -11,8 +11,10 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread show [id] [--json]
   oo thread move [id] <column>
                               columns: ${[...COLUMNS, 'archived'].join(', ')}
-                              Moving to pr, and into or out of Local, is done on the board;
-                              a thread in Local can't move until it's back.
+                              Moving to pr is done on the board; a thread in Local can't move until it's back.
+  oo thread local [id] [in|out]
+                              put the thread in Local, checking its branch out in the project's own checkout,
+                              or bring it back (no direction: toggle, like t on the board). Needs the board running.
   oo thread plan [id] --plan-file <path>|-
                               replace the thread's plan
   oo thread todo [id] set --file <path>|-
@@ -182,6 +184,18 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (!response.ok) return fail(response.message);
 		console.log(response.message);
 		return 0;
+	}
+	if (sub === 'local') {
+		const { positional } = parseArgs(rest, [], []);
+		if (positional.length > 2) throw new UsageError('oo thread local [id] [in|out]');
+		const last = positional.at(-1);
+		const direction = last === 'in' || last === 'out' ? last : undefined;
+		const ids = direction ? positional.slice(0, -1) : positional;
+		if (ids.length > 1) throw new UsageError(`Unknown direction "${last}"; in or out`);
+		const thread = resolveThreadId(state, ids[0], ctx.env, ctx.cwd);
+		// It checks out, closes and resumes claude and runs hooks, which only the board can do.
+		if (!boardRunning(ctx.dir)) return fail('Moving into or out of Local needs the board running');
+		return report(await sendRequest({ op: 'local', thread, local: direction ? direction === 'in' : 'toggle' }, { dir: ctx.dir }));
 	}
 	if (sub === 'plan') {
 		const { positional, flag } = parseArgs(rest, ['plan-file'], []);

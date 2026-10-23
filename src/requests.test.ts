@@ -66,6 +66,15 @@ test('requests round trip through the board, which leaves state.json alone', asy
 	assert.match(refused.message, /from the board/);
 });
 
+test('local requests reach the board, which handles them itself', async () => {
+	const { dir, state } = fixture([{ cwd: '/work/one' }]);
+	board(dir, state);
+	// This stand-in only has applyRequest, which leaves Local to the real board.
+	const response = await sendRequest({ op: 'local', thread: '1', local: true }, { dir, timeoutMs: 2000 });
+	assert.equal(response.ok, false);
+	assert.match(response.message, /needs the board/);
+});
+
 test('sendRequest gives up when nothing answers', async () => {
 	const { dir } = fixture();
 	claimBoard(dir);
