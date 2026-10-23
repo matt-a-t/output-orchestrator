@@ -18,7 +18,7 @@ export async function findPr(cwd: string, branch: string): Promise<Pr | undefine
  * Have claude draft the PR's title and description from the thread's commits and diff against
  * `base`, what the PR will merge into. Returns undefined if claude fails or says nothing usable.
  */
-export async function draftPr(cwd: string, thread: Thread, base: string): Promise<{ title: string; body: string } | undefined> {
+export async function draftPr(cwd: string, thread: Thread, base: string, signal?: AbortSignal): Promise<{ title: string; body: string } | undefined> {
 	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
 	const log = await git(['log', '--reverse', '--format=commit %h%n%B', `${base}..HEAD`]);
 	const stat = await git(['diff', '--stat', `${base}...HEAD`]);
@@ -40,7 +40,7 @@ export async function draftPr(cwd: string, thread: Thread, base: string): Promis
 		'Diff:',
 		diff,
 	].join('\n');
-	const reply = await askClaude(cwd, prompt);
+	const reply = await askClaude(cwd, prompt, signal);
 	if (!reply) return;
 	const [title, ...rest] = reply.split('\n');
 	const cleanTitle = title?.replace(/^#+\s*/, '').trim();

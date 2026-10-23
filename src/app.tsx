@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
-import { editPr } from './editor.js';
+import { commitText, EDITOR, parseCommit, parsePr, prText } from './editor.js';
 import { runHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js';
@@ -42,7 +42,7 @@ import {
 	type Store,
 	type WorktreeChange,
 } from './threads.js';
-import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
+import { CLOSED, killWindow, openSplit, openWindow, pasteInto, progressPopup, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
 
 type PermissionMode = 'plan' | 'auto';
 
@@ -66,15 +66,8 @@ const LEGEND: [string, string | undefined, string][] = [
 	['±', 'magenta', 'changes to review'],
 ];
 
-/**
- * The `n` flow (pick a project, then type the title), picking the project to import from (`i`
- * with no filter), or approving a step from its diff: edit the
- * subject of the commit message claude drafted (its body is kept as is).
- */
-type Prompt =
-	| { step: 'project'; index: number; then: 'new' | 'import' }
-	| { step: 'title'; project: string; title: string }
-	| { step: 'commit'; thread: Thread; cwd: string; subject: string; body: string };
+/** The `n` flow (pick a project, then type the title), or picking the project to import from (`i` with no filter). */
+type Prompt = { step: 'project'; index: number; then: 'new' | 'import' } | { step: 'title'; project: string; title: string };
 
 // The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
 const LIST_TOP = 3;
@@ -454,21 +447,36 @@ export function App() {
 		// This reopens the worktree if the thread is coming back from Done.
 		const cwd = thread.cwd ?? (await createWorktree(project, thread));
 		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`);
-		const existing = thread.pr ?? (await findPr(cwd, thread.branch));
-		let pr = existing;
-		if (pr) {
-			await pushBranch(cwd, thread.branch);
-		} else {
-			setBusy('claude is writing the PR description');
-			// The PR goes into the default branch (see createPr), so describe the changes against that.
-			const target = await defaultBranch(cwd);
-			const written = await draftPr(cwd, thread, target ? `origin/${target}` : (thread.base ?? 'HEAD'));
-			if (!written) setMessage('⚠ claude couldn\'t write the PR description; starting from the thread');
-			setBusy('opening PR');
-			const draft = await editPr(written ?? { title: thread.title, body: thread.plan }, thread.branch);
-			if (!draft) return setMessage('Cancelled');
-			await pushBranch(cwd, thread.branch);
-			pr = await createPr(cwd, thread, draft.title, draft.body);
+		// Open from here until the PR is, so the board isn't left looking usable while it waits.
+		const progress = progressPopup(' pull request ', EDITOR);
+		let existing: Thread['pr'];
+		let pr: Thread['pr'];
+		try {
+			progress.status('looking for a PR');
+			existing = pr = thread.pr ?? (await findPr(cwd, thread.branch));
+			if (!pr) {
+				// The PR goes into the default branch (see createPr), so describe the changes against that.
+				const target = await defaultBranch(cwd);
+				const base = target ? `origin/${target}` : (thread.base ?? 'HEAD');
+				const written = await progress.cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal));
+				if (written === CLOSED) return setMessage('Cancelled');
+				const edited = await progress.edit(
+					written
+						? prText(written, thread.branch)
+						: prText({ title: thread.title, body: thread.plan }, thread.branch, "claude couldn't write the PR description; this is from the thread."),
+				);
+				const draft = edited === CLOSED ? null : parsePr(edited);
+				if (!draft) return setMessage('Cancelled');
+				progress.status(`pushing ${thread.branch}`);
+				await pushBranch(cwd, thread.branch);
+				progress.status('opening PR');
+				pr = await createPr(cwd, thread, draft.title, draft.body);
+			} else {
+				progress.status(`pushing ${thread.branch}`);
+				await pushBranch(cwd, thread.branch);
+			}
+		} finally {
+			await progress.close();
 		}
 		const patch = { pr, branch: thread.branch, base: thread.base };
 		setColumn(thread.id, 'pr', patch);
@@ -527,34 +535,30 @@ export function App() {
 		setMessage(`Created #${thread.id} — e to add a plan`);
 	};
 
-	/** Approve the step: stage everything in `cwd` and have claude draft the message to edit in the commit prompt. */
+	/** Approve the step: stage everything in `cwd`, have claude draft the message, and commit it once it's edited. */
 	const approveStep = async (cwd: string, thread: Thread) => {
 		if (!(await stageAll(cwd))) return setMessage('Nothing to commit');
-		setBusy('claude is writing the commit message');
-		const message = await draftCommit(cwd, thread);
-		if (!message) setMessage('⚠ claude couldn\'t write a commit message; type one');
-		const [subject = '', ...body] = (message ?? '').split('\n');
-		setPrompt({ step: 'commit', thread, cwd, subject, body: body.join('\n').trim() });
+		const progress = progressPopup(' commit ', EDITOR);
+		try {
+			const drafted = await progress.cancellable('claude is writing the commit message', signal => draftCommit(cwd, thread, signal));
+			const edited =
+				drafted === CLOSED
+					? CLOSED
+					: await progress.edit(drafted ? commitText(drafted) : commitText('', "claude couldn't write a commit message; write one."));
+			const message = edited === CLOSED ? null : parseCommit(edited);
+			if (!message) return setMessage('⚠ Commit cancelled (changes left staged)');
+			progress.status('committing');
+			await commit(cwd, message);
+		} finally {
+			await progress.close();
+		}
+		setMessage(`Committed step on ${thread.branch ?? cwd}`);
 	};
 
 	const promptInput = (prompt: Prompt, input: string, key: Key) => {
 		if (key.escape) {
 			setPrompt(null);
-			return setMessage(prompt.step === 'commit' ? '⚠ Commit cancelled (changes left staged)' : 'Cancelled');
-		}
-		if (prompt.step === 'commit') {
-			if (key.return) {
-				const subject = prompt.subject.trim();
-				if (!subject) return;
-				setPrompt(null);
-				return void run(async () => {
-					await commit(prompt.cwd, prompt.body ? `${subject}\n\n${prompt.body}\n` : `${subject}\n`);
-					setMessage(`Committed step on ${prompt.thread.branch ?? prompt.cwd}`);
-				}, 'committing');
-			}
-			const subject = editText(prompt.subject, input, key);
-			if (subject !== undefined) setPrompt({ ...prompt, subject });
-			return;
+			return setMessage('Cancelled');
 		}
 		if (prompt.step === 'project') {
 			const count = state.projects.length;
@@ -1066,21 +1070,6 @@ export function App() {
 						<Text inverse> </Text>
 						<Text dimColor>  (⏎ create, esc cancel)</Text>
 					</Text>
-				) : null}
-				{prompt?.step === 'commit' ? (
-					<Box flexDirection="column">
-						<Text>
-							<Text bold>Commit #{prompt.thread.id}: </Text>
-							{prompt.subject}
-							<Text inverse> </Text>
-							<Text dimColor>  (⏎ commit, esc cancel)</Text>
-						</Text>
-						{prompt.body ? (
-							<Text dimColor wrap="truncate-end">
-								{prompt.body.split('\n').filter(Boolean).slice(0, 3).join(' · ')}
-							</Text>
-						) : null}
-					</Box>
 				) : null}
 				{busy ? (
 					<Text color="cyan">{busy}…</Text>
