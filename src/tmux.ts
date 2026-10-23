@@ -47,6 +47,29 @@ export async function openWindow(
 }
 
 /**
+ * Open `command` in a pane on the right of the thread's window (or swap the one already there,
+ * if it's showing something else), then jump to it. `role` tags the pane so it's found again.
+ */
+export async function openSplit(window: string, cwd: string, role: string, command: string[], env: Record<string, string> = {}): Promise<void> {
+	const { stdout } = await execa('tmux', ['list-panes', '-t', `:${window}`, '-F', '#{pane_id}\t#{@oo-split}']);
+	const split = stdout
+		.split('\n')
+		.map(line => line.split('\t'))
+		.find(([, r]) => r);
+	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+	let pane = split?.[0];
+	if (!pane) {
+		const created = await execa('tmux', ['split-window', '-h', '-l', '50%', '-P', '-F', '#{pane_id}', '-t', `:${window}`, '-c', cwd, ...envArgs, ...command]);
+		pane = created.stdout.trim();
+	} else if (split![1] !== role) {
+		await execa('tmux', ['respawn-pane', '-k', '-t', pane, '-c', cwd, ...envArgs, ...command]);
+	}
+	await execa('tmux', ['set-option', '-p', '-t', pane, '@oo-split', role]);
+	await execa('tmux', ['select-pane', '-t', pane]);
+	await execa('tmux', ['select-window', '-t', `:${window}`]);
+}
+
+/**
  * From outside tmux: attach to the `oo` session, starting it (or a board window in it) with
  * `command` if needed. Resolves with tmux's exit code once detached.
  */

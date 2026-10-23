@@ -86,7 +86,7 @@ export async function diffBase(cwd: string, thread: Thread): Promise<string> {
 }
 
 /** `git diff` arguments: the step is everything since HEAD; the thread is everything since branching from base. */
-async function diffRevs(cwd: string, kind: DiffKind, thread: Thread): Promise<string[]> {
+export async function diffRevs(cwd: string, kind: DiffKind, thread: Thread): Promise<string[]> {
 	return kind === 'step' ? ['HEAD'] : ['--merge-base', await diffBase(cwd, thread)];
 }
 
