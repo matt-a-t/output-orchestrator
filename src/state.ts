@@ -23,6 +23,9 @@ export const HOOK_EVENTS = ['enterLocal', 'leaveLocal'] as const;
 export type ProjectHook = (typeof HOOK_EVENTS)[number];
 export const HOOK_LABELS: Record<ProjectHook, string> = { enterLocal: 'enter local', leaveLocal: 'leave local' };
 
+export const TRACKERS = ['none', 'github', 'jira'] as const;
+export type Tracker = (typeof TRACKERS)[number];
+
 const ProjectSchema = z.object({
 	name: z.string(),
 	// Shown on board cards in place of the name, when set.
@@ -30,6 +33,10 @@ const ProjectSchema = z.object({
 	path: z.string(),
 	color: z.enum(COLORS),
 	hooks: z.partialRecord(z.enum(HOOK_EVENTS), z.string()).default({}),
+	// Where the project's tickets live (see tickets.ts); jira needs the site and the key prefix.
+	tracker: z.enum(TRACKERS).default('none'),
+	jiraSite: z.string().default(''),
+	jiraProject: z.string().default(''),
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
@@ -64,6 +71,8 @@ const ThreadSchema = z.preprocess(
 		base: z.string().optional(),
 		// Where the worktree lives; recorded when the project is renamed (see worktreePath).
 		worktree: z.string().optional(),
+		// The Jira ticket (AV-123) or GitHub issue (#45) the thread works on; names the branch and PR.
+		ticket: z.object({ key: z.string(), url: z.string() }).optional(),
 		// Opened on moving to PR; polled so the thread moves to Done once it's merged.
 		pr: z.object({ number: z.number(), url: z.string() }).optional(),
 		// Checkpoints to review and commit, kept across claude runs (see `oo thread todo`).

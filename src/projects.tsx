@@ -94,7 +94,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', hooks: {} }, field: 0 });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0 });
 		}
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0 });
