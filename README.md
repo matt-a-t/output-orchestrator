@@ -74,8 +74,8 @@ with the title beneath.
 ### Reviewing and approving
 
 - `d` shows the diff since the last commit (the current **step**), and `D` the whole thread
-  against the branch it came from. Both go through `delta` in `less`, where `n` / `N` jump between
-  files and hunks.
+  against the branch it came from. Both go through `delta` in `less`, under a `git diff --stat` of
+  the changed files and how much each changed, and `n` / `N` jump between files and hunks.
 - In a step diff, `a` approves the step (after a y/n confirm). Approving commits everything with
   a message claude drafts, and you edit its subject on the board (esc cancels, leaving the changes
   staged; the drafted body is kept as is).

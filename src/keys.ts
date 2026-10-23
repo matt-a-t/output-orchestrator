@@ -36,7 +36,7 @@ export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'In a diff',
 		keys: [
-			['n/N', 'next / previous file or hunk'],
+			['n/N', 'next / previous file or hunk (the stat is on top)'],
 			['a', 'approve the step (d) / commit (beside claude)'],
 			['t', 'uncommitted / whole thread (beside claude)'],
 			['r', 'refresh (beside claude)'],
