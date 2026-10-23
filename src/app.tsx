@@ -18,7 +18,6 @@ import {
 	COLUMNS,
 	DEFAULT_WAKE_PROMPT,
 	HOOK_LABELS,
-	LOCAL_LABEL,
 	STATE_FILE,
 	TODO_MARKS,
 	loadState,
@@ -81,10 +80,11 @@ type Prompt = { step: 'project'; index: number; then: 'new' | 'import' } | { ste
 
 // The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
 const LIST_TOP = 3;
-// Local is drawn as a box after the columns, and the cursor reaches it like one more column.
-const LOCAL_COL = COLUMNS.length;
 const CARD_HEIGHT = 2;
 const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
+// A thread in Local stays in its column, its card outlined in yellow, which takes a line above and below.
+const LOCAL_BORDER_LINES = 2;
+const cardLines = (t: Thread) => cardHeight(t.column) + (t.local ? LOCAL_BORDER_LINES : 0);
 const DOUBLE_CLICK_MS = 400;
 // The highlighted thread's todos shown below the board; the rest are summed up as "N more".
 const MAX_TODO_LINES = 5;
@@ -248,12 +248,9 @@ export function App() {
 		return () => clearInterval(timer);
 	}, []);
 	const visible = (t: Thread, f = filter) => t.column !== 'archived' && (!f || t.project === f);
-	const columnThreads = (column: Column, f = filter) => state.threads.filter(t => t.column === column && !t.local && visible(t, f));
-	const localThreads = (f = filter) => state.threads.filter(t => t.local && visible(t, f));
-	/** A column's threads, or Local's. */
-	const laneThreads = (col: number) => (col === LOCAL_COL ? localThreads() : columnThreads(COLUMNS[col]!));
+	const columnThreads = (column: Column, f = filter) => state.threads.filter(t => t.column === column && visible(t, f));
 
-	const colThreads = laneThreads(cursor.col);
+	const colThreads = columnThreads(COLUMNS[cursor.col]!);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
 	const selected: Thread | undefined = colThreads[row];
 
@@ -366,9 +363,6 @@ export function App() {
 		return transcriptPath ? { transcriptPath } : {};
 	};
 
-	/** Put the cursor on the thread in Local, where it's been added at the bottom. */
-	const showInLocal = () => setCursor({ col: LOCAL_COL, row: localThreads().length });
-
 	/** Run the project's hook, saying so; a hook that can't start doesn't undo the move. */
 	const hook = async (project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string) => {
 		const ran = await runHook(project, event, thread, cwd).catch(
@@ -390,8 +384,7 @@ export function App() {
 		if (thread.column === 'done') return setMessage(`#${thread.id} is done — move it back to Polish first`);
 		// Imported threads already run in their own directory, with no branch to move.
 		if (thread.cwd) {
-			setColumn(thread.id, thread.column, { local: true });
-			showInLocal();
+			updateThread(thread.id, { local: true });
 			return hook(project, 'enterLocal', thread, thread.cwd, `#${thread.id} is in Local`);
 		}
 		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
@@ -407,24 +400,21 @@ export function App() {
 		if (hasWorktree(thread)) await removeWorktree(project.path, thread);
 		await checkout(project.path, thread.branch);
 		const moved: Thread = { ...thread, local: true, ...moveTranscript(thread, project.path) };
-		setColumn(thread.id, thread.column, moved);
-		showInLocal();
+		updateThread(thread.id, moved);
 		if (wasOpen) await launchClaude(moved, project.path, { background: true });
 		await hook(project, 'enterLocal', moved, project.path, `${project.name} checkout is on ${thread.branch}; claude works there until it leaves Local`);
 	};
 
 	/**
 	 * Put the project's checkout back on the default branch and move the thread back into its
-	 * worktree, in the column it came from, then run the project's leave local hook.
+	 * worktree, then run the project's leave local hook.
 	 */
 	const leaveLocal = async (thread: Thread) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		const showBack = () => setCursor({ col: COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]), row: columnThreads(thread.column).length });
 		if (thread.cwd) {
-			setColumn(thread.id, thread.column, { local: undefined });
-			showBack();
-			return hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is back in ${COLUMN_LABELS[thread.column]}`);
+			updateThread(thread.id, { local: undefined });
+			return hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is out of Local`);
 		}
 		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
 		// Including untracked files: anything new there is the thread's work.
@@ -437,9 +427,8 @@ export function App() {
 		const back: Thread = { ...thread, local: undefined };
 		const cwd = await createWorktree(project, back);
 		Object.assign(back, moveTranscript(thread, cwd));
-		setColumn(thread.id, thread.column, back);
+		updateThread(thread.id, back);
 		if (wasOpen) await launchClaude(back, cwd, { background: true });
-		showBack();
 		await hook(project, 'leaveLocal', back, project.path, `${project.name} checkout is back on ${main}; #${thread.id} is back in its worktree`);
 	};
 
@@ -718,11 +707,10 @@ export function App() {
 
 	const linkedThread = (outside: OutsideThread) => state.threads.find(t => t.sessionId === outside.id);
 
-	/** Where the thread is shown with `f` as the filter: its column or Local, and its row there. */
+	/** Where the thread is shown with `f` as the filter: its column, and its row there. */
 	const positionOf = (thread: Thread, f: string | null) => {
-		const col = thread.local ? LOCAL_COL : COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
-		const lane = thread.local ? localThreads(f) : columnThreads(thread.column, f);
-		return { col, row: lane.indexOf(thread) };
+		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
+		return { col, row: columnThreads(thread.column, f).indexOf(thread) };
 	};
 
 	/** Jump to the column/row a thread is shown at, clearing the filter if it hides it. */
@@ -785,8 +773,8 @@ export function App() {
 			if (selected) setCursor(positionOf(selected, null));
 			return;
 		}
-		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, LOCAL_COL + 1), row });
-		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, LOCAL_COL + 1), row });
+		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, COLUMNS.length), row });
+		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, COLUMNS.length), row });
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
@@ -892,8 +880,10 @@ export function App() {
 	});
 
 	/** The slice of a column's threads that fits, keeping the cursor in view; `top` is the lines its "more" line above takes. */
-	const visibleSlice = (column: Column, count: number, cursorRow: number | undefined) => {
-		const lines = boardHeight - (LIST_TOP - 1);
+	const visibleSlice = (column: Column, threads: Thread[], cursorRow: number | undefined) => {
+		const count = threads.length;
+		// Room for the borders of the cards in Local, whether or not they're scrolled into view.
+		const lines = boardHeight - (LIST_TOP - 1) - LOCAL_BORDER_LINES * threads.filter(t => t.local).length;
 		const rowLines = cardHeight(column);
 		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count, top: 0 };
 		// Room for the "more" lines above and below.
@@ -907,10 +897,9 @@ export function App() {
 		scrollOffsets.current[column] = start;
 		return { start, end: start + fits, top: start > 0 ? 1 : 0 };
 	};
-	const columnSlice = (c: number) => visibleSlice(COLUMNS[c]!, columnThreads(COLUMNS[c]!).length, c === cursor.col ? row : undefined);
+	const columnSlice = (c: number) => visibleSlice(COLUMNS[c]!, columnThreads(COLUMNS[c]!), c === cursor.col ? row : undefined);
 
-	// Local gets a column's width too.
-	const colWidth = Math.max(16, Math.floor(width / (COLUMNS.length + 1)));
+	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
 	// The import list scrolls to keep the selected entry in view; it shows what fits in the space
 	// measured after each render, starting at entry `pickerTop`.
@@ -971,14 +960,19 @@ export function App() {
 		}
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
 		const col = Math.floor(x / colWidth);
-		if (button !== 'left' || y < 1 || col > LOCAL_COL) return;
-		// Local's border pushes its contents down a line; it doesn't scroll.
-		const slice = col === LOCAL_COL ? { start: 0, end: Infinity, top: 1 } : columnSlice(col);
-		const top = LIST_TOP + slice.top;
+		if (button !== 'left' || y < 1 || col >= COLUMNS.length) return;
+		const slice = columnSlice(col);
+		let top = LIST_TOP + slice.top;
 		// The column's header, or its "more" line.
 		if (y < top) return setCursor({ col, row });
-		const r = slice.start + Math.floor((y - top) / (col === LOCAL_COL ? CARD_HEIGHT : cardHeight(COLUMNS[col]!)));
-		const thread = r < slice.end ? laneThreads(col)[r] : undefined;
+		// Cards in Local are taller, so count down through the ones shown.
+		const threads = columnThreads(COLUMNS[col]!);
+		let r = slice.start;
+		for (; r < Math.min(slice.end, threads.length); r++) {
+			top += cardLines(threads[r]!);
+			if (y < top) break;
+		}
+		const thread = r < slice.end ? threads[r] : undefined;
 		if (!thread) return;
 		setCursor({ col, row: r });
 		if (isDoubleClick(thread.id)) openThread(thread);
@@ -991,9 +985,9 @@ export function App() {
 		return () => void mouse.off('press', listener);
 	}, []);
 
-	/** A thread's two lines on the board (one in Done); `from` notes the column a thread in Local came from. */
-	const card = (t: Thread, isSelected: boolean, from?: string) => {
-		const oneLine = cardHeight(t.column) === 1 && !t.local;
+	/** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
+	const card = (t: Thread, isSelected: boolean) => {
+		const oneLine = cardHeight(t.column) === 1;
 		const color = t.color ?? projectByName(t.project)?.color;
 		const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
 			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
@@ -1001,7 +995,7 @@ export function App() {
 				? ['↻', stalled(t) ? 'red' : 'gray']
 				: [' ', undefined];
 		return (
-			<Box key={t.id} flexDirection="column">
+			<Box key={t.id} flexDirection="column" {...(t.local ? { borderStyle: 'round', borderColor: 'yellow' } : {})}>
 				<Text wrap="truncate" inverse={isSelected}>
 					<Text color={badgeColor}>{badge} </Text>
 					<Text bold>#{t.id} </Text>
@@ -1011,7 +1005,6 @@ export function App() {
 							{' '}±
 						</Text>
 					) : null}
-					{from ? <Text dimColor> ↩ {from}</Text> : null}
 					{/* Finished threads get one line each so more of them fit. */}
 					{oneLine ? ` ${t.title}` : null}
 				</Text>
@@ -1120,15 +1113,6 @@ export function App() {
 							</Box>
 						);
 					})}
-					{/* Not a column: a box off to the side that threads visit, one per project. */}
-					<Box flexDirection="column" width={colWidth} alignSelf="flex-start" borderStyle="round" borderColor="yellow">
-						<Text bold color={cursor.col === LOCAL_COL ? 'white' : 'gray'}>
-							{LOCAL_LABEL} ({localThreads().length})
-						</Text>
-						<Text dimColor>{'─'.repeat(Math.max(0, colWidth - 2))}</Text>
-						{localThreads().length === 0 ? <Text dimColor>t sends a thread here</Text> : null}
-						{localThreads().map((t, r) => card(t, cursor.col === LOCAL_COL && r === row, COLUMN_LABELS[t.column].toLowerCase()))}
-					</Box>
 				</Box>
 			)}
 			<Box marginTop={1} flexDirection="column" display={showProjects || showKeys || editing ? 'none' : 'flex'}>
