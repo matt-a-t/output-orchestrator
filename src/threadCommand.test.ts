@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
+import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { approvedTodo, inDir, todoWindow } from './threads.js';
@@ -122,6 +123,35 @@ test('usage: shown for mistakes in the command line, not for failed lookups', as
 	assert.doesNotMatch(quiet.err(), /usage:/);
 });
 
+test('local sends the direction to the board, toggling without one, and needs the board running', async t => {
+	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const output = capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['local', 'in'], ctx), 1);
+	assert.match(output.err(), /needs the board running/);
+
+	// Stand in for the board, answering with what it was asked.
+	claimBoard(dir);
+	const reader = new RequestReader(dir);
+	const timer = setInterval(() => {
+		for (const r of reader.read()) {
+			const { thread, local } = r as Extract<Request, { op: 'local' }>;
+			respond({ id: r.id, ok: true, message: `${r.op} #${thread} ${local}` }, dir);
+		}
+	}, 20);
+	t.after(() => {
+		clearInterval(timer);
+		releaseBoard(dir);
+	});
+	assert.equal(await threadCommand(['local', 'in'], ctx), 0);
+	assert.equal(await threadCommand(['local', 'out'], ctx), 0);
+	assert.equal(await threadCommand(['local', '2'], ctx), 0);
+	assert.equal(await threadCommand(['local', '#2', 'in'], ctx), 0);
+	assert.equal(output.out(), 'local #1 true\nlocal #1 false\nlocal #2 toggle\nlocal #2 true');
+	assert.equal(await threadCommand(['local', '2', 'sideways'], ctx), 1);
+	assert.match(output.err(), /Unknown direction "sideways"[^]*usage:[^]*oo thread local \[id\] \[in\|out\]/);
+});
+
 test('plan replaces the thread\'s plan', async t => {
 	const { dir } = fixture([{ cwd: '/work/one', plan: 'old' }]);
 	capture(t);
@@ -182,6 +212,15 @@ test('a starting claude is told where the checkpoints stand, until they\'re all 
 	assert.match(briefing, /2\. \[active\] b/);
 	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
 	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
+});
+
+test('a claude starting in Local is told so, with or without checkpoints', () => {
+	const { dir, project } = fixture([{ column: 'active', local: true, branch: 'oo/1-x' }, { cwd: '/work/two', column: 'active', local: true }]);
+	const briefing = sessionStarted({ cwd: project }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	assert.match(briefing, new RegExp(`You're in Local: working in the project's own checkout at ${project} on oo/1-x`));
+	assert.match(briefing, /oo thread local out/);
+	// Imported threads stay in their own directory, so there's nothing to say.
+	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
 });
 
 test('approving a step ticks off the checkpoint in review, else the active one', () => {

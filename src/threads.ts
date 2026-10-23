@@ -126,7 +126,7 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 
 /** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
 export function boardOnlyMove(thread: Thread, column: Column): string | undefined {
-	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back from the board first`;
+	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or t on the board)`;
 	if (column === 'pr') return `Moving #${thread.id} to PR opens the PR description editor — do it from the board`;
 }
 
@@ -148,6 +148,8 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const project = state.projects.find(p => p.name === thread.project);
 	if (!project) return { id, ok: false, message: `Unknown project "${thread.project}"` };
 	const done = (message: string) => ({ id, ok: true, message, thread: thread.id });
+	// The board handles these itself, before they get here.
+	if (request.op === 'local') return { id, ok: false, message: 'Moving into or out of Local needs the board running' };
 	if (request.op === 'plan') {
 		const now = new Date().toISOString();
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));

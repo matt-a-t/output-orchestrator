@@ -9,7 +9,7 @@ import { createPr, draftPr, findPr, openPrInBrowser, prState } from './github.js
 import { editText, loop } from './input.js';
 import { KEY_SECTIONS } from './keys.js';
 import { ProjectsView } from './projects.js';
-import { RequestReader, requestsFile, respond } from './requests.js';
+import { RequestReader, requestsFile, respond, type Request, type Response } from './requests.js';
 import { diffPaneCommand, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
 import { ThreadView } from './thread.js';
 import { approvedPrompt } from './threadCommand.js';
@@ -54,6 +54,12 @@ import {
 import { CLOSED, killWindow, openSplit, openWindow, pasteInto, progressPopup, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
 
 type PermissionMode = 'plan' | 'auto';
+type LocalOutcome = { ok: boolean; message: string };
+type LocalMoves = {
+	enterLocal: (thread: Thread) => Promise<LocalOutcome>;
+	leaveLocal: (thread: Thread) => Promise<LocalOutcome>;
+	localProblem: (thread: Thread, entering: boolean) => Promise<string | undefined>;
+};
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
@@ -113,6 +119,10 @@ export function App() {
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const statusesRef = useRef(statuses);
 	statusesRef.current = statuses;
+	// The latest render's Local moves, for the request poll, whose effect only sees the first render's.
+	const localMoves = useRef<LocalMoves>(null!);
+	// `oo thread local` moves waiting for the thread's claude to finish its turn: thread id → entering.
+	const pendingLocal = useRef(new Map<string, boolean>());
 	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
 	const sessionStarts = useRef(new Map<string, number>());
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
@@ -198,11 +208,33 @@ export function App() {
 				setState(fn);
 			},
 		};
+		// Like t, except that it waits for the thread's claude instead of refusing: it's often the one asking.
+		const localRequest = async ({ id, thread: threadId, local }: Extract<Request, { op: 'local' }>): Promise<Response> => {
+			const thread = stateRef.current.threads.find(t => t.id === threadId);
+			if (!thread) return { id, ok: false, message: `No thread #${threadId}` };
+			const answer = (outcome: LocalOutcome): Response => ({ id, ...outcome, thread: thread.id });
+			const entering = local === 'toggle' ? !thread.local : local;
+			if (entering === !!thread.local) return answer({ ok: true, message: `#${thread.id} is already ${entering ? 'in' : 'out of'} Local` });
+			const moves = localMoves.current;
+			const problem = await moves.localProblem(thread, entering);
+			if (problem) return answer({ ok: false, message: problem });
+			if (!thread.cwd && statusesRef.current[thread.id] === 'working') {
+				pendingLocal.current.set(thread.id, entering);
+				const where = entering ? 'goes into Local' : 'comes out of Local, back to its worktree,';
+				return answer({ ok: true, message: `#${thread.id} ${where} when its claude's turn ends` });
+			}
+			setBusy(entering ? 'checking out for Local' : 'leaving Local');
+			try {
+				return answer(await (entering ? moves.enterLocal : moves.leaveLocal)(thread));
+			} finally {
+				setBusy(null);
+			}
+		};
 		let queue = Promise.resolve();
 		const poll = () => {
 			for (const request of reader.read()) {
 				queue = queue.then(async () => {
-					const response = await applyRequest(store, request).catch(err => ({
+					const response = await (request.op === 'local' ? localRequest(request) : applyRequest(store, request)).catch(err => ({
 						id: request.id,
 						ok: false,
 						message: err instanceof Error ? err.message : String(err),
@@ -366,12 +398,39 @@ export function App() {
 		return transcriptPath ? { transcriptPath } : {};
 	};
 
-	/** Run the project's hook, saying so; a hook that can't start doesn't undo the move. */
-	const hook = async (project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string) => {
+	/** Run the project's hook; returns `done` with how it went. A hook that can't start doesn't undo the move. */
+	const hook = async (project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string): Promise<string> => {
 		const ran = await runHook(project, event, thread, cwd).catch(
 			err => `✗ ${HOOK_LABELS[event]} hook didn't start: ${err instanceof Error ? err.message : String(err)}`,
 		);
-		setMessage(ran ? `${done}; ${ran}` : done);
+		return ran ? `${done}; ${ran}` : done;
+	};
+
+	/**
+	 * Why the thread can't go into (`entering`) or come out of Local now, if it can't; shared by t and
+	 * `oo thread local`. Claude still working is checked separately, since the command waits for it instead.
+	 */
+	const localProblem = async (thread: Thread, entering: boolean): Promise<string | undefined> => {
+		const project = projectByName(thread.project);
+		if (!project) return `Unknown project "${thread.project}"`;
+		if (entering) {
+			const other = stateRef.current.threads.find(t => t.local && t.project === thread.project);
+			if (other) return `${thread.project} already has #${other.id} ${other.title} in Local`;
+			if (thread.column === 'done') return `#${thread.id} is done — move it back to Polish first`;
+		}
+		// Imported threads already run in their own directory, with no branch to move.
+		if (thread.cwd) return;
+		if (entering) {
+			if (!thread.branch) return `#${thread.id} has no branch yet — open it first`;
+			if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
+				return `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`;
+			}
+			// Untracked files there are yours and get in the way only if the branch has them too, which checkout catches.
+			if (await isDirty(project.path, { untracked: false })) return `${project.path} has uncommitted changes — commit or stash them first`;
+		} else if (await isDirty(project.path)) {
+			// Including untracked files: anything new there is the thread's work.
+			return `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`;
+		}
 	};
 
 	/**
@@ -379,51 +438,38 @@ export function App() {
 	 * dev environment, and move claude there with it, then run the project's enter local hook.
 	 * The worktree is removed meanwhile. Only one thread per project fits.
 	 */
-	const enterLocal = async (thread: Thread) => {
-		const project = projectByName(thread.project);
-		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		const other = stateRef.current.threads.find(t => t.local && t.project === thread.project);
-		if (other) return setMessage(`✗ ${thread.project} already has #${other.id} ${other.title} in Local`);
-		if (thread.column === 'done') return setMessage(`#${thread.id} is done — move it back to Polish first`);
-		// Imported threads already run in their own directory, with no branch to move.
+	const enterLocal = async (thread: Thread): Promise<LocalOutcome> => {
+		const problem = await localProblem(thread, true);
+		if (problem) return { ok: false, message: problem };
+		const project = projectByName(thread.project)!;
 		if (thread.cwd) {
 			updateThread(thread.id, { local: true });
-			return hook(project, 'enterLocal', thread, thread.cwd, `#${thread.id} is in Local`);
+			return { ok: true, message: await hook(project, 'enterLocal', thread, thread.cwd, `#${thread.id} is in Local`) };
 		}
-		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
-		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
-		if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
-			return setMessage(`⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`);
-		}
-		// Untracked files there are yours and get in the way only if the branch has them too, which checkout catches.
-		if (await isDirty(project.path, { untracked: false })) {
-			return setMessage(`⚠ ${project.path} has uncommitted changes — commit or stash them first`);
-		}
+		if (statuses[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
 		const wasOpen = await closeClaude(thread);
 		if (hasWorktree(thread)) await removeWorktree(project.path, thread);
-		await checkout(project.path, thread.branch);
+		await checkout(project.path, thread.branch!);
 		const moved: Thread = { ...thread, local: true, ...moveTranscript(thread, project.path) };
 		updateThread(thread.id, moved);
 		if (wasOpen) await launchClaude(moved, project.path, { background: true });
-		await hook(project, 'enterLocal', moved, project.path, `${project.name} checkout is on ${thread.branch}; claude works there until it leaves Local`);
+		const done = `${project.name} checkout is on ${thread.branch}; claude works there until it leaves Local`;
+		return { ok: true, message: await hook(project, 'enterLocal', moved, project.path, done) };
 	};
 
 	/**
 	 * Put the project's checkout back on the default branch and move the thread back into its
 	 * worktree, then run the project's leave local hook.
 	 */
-	const leaveLocal = async (thread: Thread) => {
-		const project = projectByName(thread.project);
-		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+	const leaveLocal = async (thread: Thread): Promise<LocalOutcome> => {
+		const problem = await localProblem(thread, false);
+		if (problem) return { ok: false, message: problem };
+		const project = projectByName(thread.project)!;
 		if (thread.cwd) {
 			updateThread(thread.id, { local: undefined });
-			return hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is out of Local`);
+			return { ok: true, message: await hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is out of Local`) };
 		}
-		if (statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
-		// Including untracked files: anything new there is the thread's work.
-		if (await isDirty(project.path)) {
-			return setMessage(`⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`);
-		}
+		if (statuses[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
 		const main = (await defaultBranch(project.path)) ?? 'main';
 		const wasOpen = await closeClaude(thread);
 		await checkout(project.path, main);
@@ -432,8 +478,27 @@ export function App() {
 		Object.assign(back, moveTranscript(thread, cwd));
 		updateThread(thread.id, back);
 		if (wasOpen) await launchClaude(back, cwd, { background: true });
-		await hook(project, 'leaveLocal', back, project.path, `${project.name} checkout is back on ${main}; #${thread.id} is back in its worktree`);
+		const done = `${project.name} checkout is back on ${main}; #${thread.id} is back in its worktree`;
+		return { ok: true, message: await hook(project, 'leaveLocal', back, project.path, done) };
 	};
+
+	/** Into or out of Local, saying how it went on the message line. */
+	const moveLocal = (thread: Thread, entering: boolean) =>
+		run(async () => {
+			const { ok, message } = await (entering ? enterLocal : leaveLocal)(thread);
+			setMessage(ok ? message : `⚠ ${message}`);
+		}, entering ? 'checking out for Local' : 'leaving Local');
+	localMoves.current = { enterLocal, leaveLocal, localProblem };
+
+	// Moves asked for while the thread's claude was working run once its turn ends (a permission prompt is still mid-turn).
+	useEffect(() => {
+		for (const [id, entering] of pendingLocal.current) {
+			if (statuses[id] === 'working' || statuses[id] === 'waiting') continue;
+			pendingLocal.current.delete(id);
+			const thread = stateRef.current.threads.find(t => t.id === id);
+			if (thread && entering !== !!thread.local) void moveLocal(thread, entering);
+		}
+	}, [statuses]);
 
 	/** Push the thread's branch and open its PR (unless it has one already), then move it to PR. */
 	const openPr = async (thread: Thread) => {
@@ -821,9 +886,8 @@ export function App() {
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
 		if (input === 't') {
-			return selected.local
-				? run(() => leaveLocal(selected), 'leaving Local')
-				: run(() => enterLocal(selected), 'checking out for Local');
+			pendingLocal.current.delete(selected.id);
+			return moveLocal(selected, !selected.local);
 		}
 		if (input === 'e') return setEditing(selected.id);
 		if (key.return) return openThread(selected);
