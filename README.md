@@ -38,7 +38,8 @@ the thread where it left off if its window was closed (e.g. after a restart).
 Leaving Planned (or opening a thread) gives it its own git worktree and branch
 (`oo/<id>-<title>`), under `~/.local/share/output-orchestrator/worktrees/`; claude runs
 there. Review a step with `d` (diff since the last commit) or `D` (whole thread vs the
-branch it came from), shown through `delta` in `less` — `n`/`N` jump between files and hunks,
+branch it came from), shown through `delta` in `less` under a `git diff --stat` of the changed
+files and how much each changed — `n`/`N` jump between files and hunks,
 and in a step diff `a` approves it (after a y/n confirm); `o` opens the changed hunks in vim as a
 quickfix list; `c` opens the diff in vim for comments — write notes on lines starting `>>`
 under the diff line they're about, and on save they're sent to the thread's claude as
