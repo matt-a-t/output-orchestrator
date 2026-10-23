@@ -51,7 +51,7 @@ description: Read and change the output-orchestrator (oo) board of threads with 
 # The oo board
 
 The user tracks work as threads on a kanban board (Planned → Active → Polish → PR → Done).
-A thread can also be put in Local, beside the board, which checks its branch out in the project's own checkout
+A thread can also be put in Local (it stays in its column, outlined in yellow), which checks its branch out in the project's own checkout
 (one per project) for trying it out; claude then works there until it comes back to its worktree.
 Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
 claude, and \`oo thread show\` describes your thread, including its plan.
