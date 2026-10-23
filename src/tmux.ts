@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { execa } from 'execa';
 
 export const BOARD_WINDOW = 'oo-board';
+export const BOARD_LABEL = 'board';
 export const SESSION = 'oo';
 
 export function insideTmux(): boolean {
@@ -27,6 +28,27 @@ export function threadWindowName(threadId: string): string {
 	return `oo-${threadId}`;
 }
 
+/** What a thread's window shows in the status bar: its #id and the start of its title. */
+export function threadWindowLabel(thread: { id: string; title: string }): string {
+	const title = thread.title.length > 16 ? `${thread.title.slice(0, 15)}…` : thread.title;
+	return `#${thread.id} ${title}`;
+}
+
+/**
+ * Show `label` in the status bar in place of the window's name, which stays as the key code finds
+ * it by. Only this window's formats change, keeping the user's own (theme and all) apart from the name.
+ */
+export async function labelWindow(name: string, label: string): Promise<void> {
+	const target = ['-w', '-t', `:${name}`];
+	// The status bar reads #[ as a style, so a title's # is doubled; ## shows as one #.
+	await execa('tmux', ['set-option', ...target, '@oo-label', label.replaceAll('#', '##')]);
+	for (const option of ['window-status-format', 'window-status-current-format']) {
+		const { stdout } = await execa('tmux', ['show-options', '-gwv', option]);
+		const format = stdout.replaceAll('#{window_name}', '#{@oo-label}').replaceAll('#W', '#{@oo-label}');
+		await execa('tmux', ['set-option', ...target, option, format]);
+	}
+}
+
 export async function renameCurrentWindow(name: string): Promise<void> {
 	await execa('tmux', ['rename-window', name]);
 }
@@ -40,20 +62,27 @@ export async function killWindow(name: string): Promise<void> {
 	if ((await windowNames()).includes(name)) await execa('tmux', ['kill-window', '-t', `:${name}`]);
 }
 
-/** Jump to the thread's window, creating it (running `command` in `cwd`) if needed; `background` creates it without jumping. */
+/**
+ * Jump to the thread's window, creating it (running `command` in `cwd`) if needed; `background`
+ * creates it without jumping. Either way it's shown in the status bar as `label`.
+ */
 export async function openWindow(
 	name: string,
+	label: string,
 	cwd: string,
 	command: string[],
 	env: Record<string, string> = {},
 	{ background = false } = {},
 ): Promise<'created' | 'selected'> {
 	if ((await windowNames()).includes(name)) {
+		// Relabelled so a title changed since it opened shows up.
+		await labelWindow(name, label);
 		if (!background) await execa('tmux', ['select-window', '-t', `:${name}`]);
 		return 'selected';
 	}
 	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 	await execa('tmux', ['new-window', ...(background ? ['-d'] : []), '-n', name, '-c', cwd, ...envArgs, ...command]);
+	await labelWindow(name, label);
 	return 'created';
 }
 
@@ -120,17 +149,34 @@ export async function pasteInto(name: string, text: string): Promise<void> {
 	await execa('tmux', ['send-keys', '-t', `:${name}`, 'Enter']);
 }
 
-const IN_THREAD_WINDOW = '#{m:oo-*,#{window_name}}';
+// Thread windows only, not the board or a project's hook window.
+const IN_THREAD_WINDOW = '#{m/r:^oo-[0-9]+$,#{window_name}}';
+
+/** Select the next (or, with -1, previous) thread window after the current one, wrapping around. */
+function cycleThreads(step: 1 | -1): string[] {
+	// run-shell expands formats, so ## leaves one for list-windows; no single quotes, as if-shell wraps this in them.
+	const awk = `{i[NR]=\\$1} END{for(n=1;n<=NR;n++) if(i[n]==cur) break; print i[(n-1+${step}+NR)%NR+1]}`;
+	const windows = 'tmux list-windows -F "##{window_index} ##{window_name}" | grep -E " oo-[0-9]+\\$"';
+	return ['run-shell', `w=$(${windows} | awk -v cur=#{window_index} "${awk}"); [ -n "$w" ] && tmux select-window -t ":$w"`];
+}
 
 /**
  * Bind `prefix b`, `prefix C-b` (for when ctrl is still held), `M-b` and `M-q` (no prefix) to
- * jump back to the board, and `M-h` / `M-l` to move between claude and the pane beside it, unless
- * the user has bound them to something themselves.
+ * jump back to the board, and in thread windows: `M-h` / `M-l` to move between claude and the pane
+ * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` / `M-d` to open a shell / diff
+ * beside claude (via `split`, the command prefix that runs `oo split`), `M-u` to scroll up (copy
+ * mode) and `M-z` to zoom the pane. Not `M-v` (claude's image paste) or `M-[` (the start of
+ * arrow keys' escape codes). Keys the user has bound to something themselves are left alone.
  */
-export async function bindBoardKeys(): Promise<void> {
+export async function bindBoardKeys(split: string): Promise<void> {
 	const back = ['select-window', '-t', BOARD_WINDOW];
 	// Only in thread windows; everywhere else the key still reaches the program (e.g. readline's M-b back-a-word).
-	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, command.join(' '), `send-keys ${key}`];
+	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, tmuxCommand(command), `send-keys ${key}`];
+	const beside = (role: string) => [
+		'run-shell',
+		'-b',
+		`out=$(${split} ${role} #{s/^oo-//:window_name} 2>&1) || tmux display-message "$out"`,
+	];
 	const bindings: [table: string, key: string, command: string[]][] = [
 		['prefix', 'b', back],
 		['prefix', 'C-b', back],
@@ -138,14 +184,25 @@ export async function bindBoardKeys(): Promise<void> {
 		['root', 'M-q', inThreads('M-q', back)],
 		['root', 'M-h', inThreads('M-h', ['select-pane', '-L'])],
 		['root', 'M-l', inThreads('M-l', ['select-pane', '-R'])],
+		['root', 'M-j', inThreads('M-j', cycleThreads(1))],
+		['root', 'M-k', inThreads('M-k', cycleThreads(-1))],
+		['root', 'M-s', inThreads('M-s', beside('shell'))],
+		['root', 'M-d', inThreads('M-d', beside('diff'))],
+		['root', 'M-u', inThreads('M-u', ['copy-mode', '-u'])],
+		['root', 'M-z', inThreads('M-z', ['resize-pane', '-Z'])],
 	];
 	for (const [table, key, command] of bindings) {
 		const existing = await execa('tmux', ['list-keys', '-T', table, key], { reject: false });
 		// C-b is send-prefix out of the box, which is worth giving up for this.
-		const ours = existing.stdout.includes(BOARD_WINDOW) || existing.stdout.includes('oo-*') || existing.stdout.includes('send-prefix');
+		const ours = existing.stdout.includes(BOARD_WINDOW) || existing.stdout.includes('oo-') || existing.stdout.includes('send-prefix');
 		const taken = existing.exitCode === 0 && !ours;
 		if (!taken) await execa('tmux', ['bind-key', '-T', table, key, ...command]);
 	}
+}
+
+/** One tmux command as a string, quoting arguments that need it (for if-shell). */
+function tmuxCommand(command: string[]): string {
+	return command.map(arg => (/^[\w./:#{}-]+$/.test(arg) ? arg : shellQuote(arg))).join(' ');
 }
 
 /** Pass clicks through to the board (and claude); only for this session, so other sessions keep their own setting. */
@@ -171,6 +228,96 @@ export async function popup(command: string, opts: { cwd?: string; title?: strin
 	} finally {
 		rmSync(statusFile, { force: true });
 	}
+}
+
+export const CLOSED = Symbol('closed');
+
+/** A popup the board keeps open through a slow flow: it shows a status, opens an editor when asked, and closes when told. */
+export type ProgressPopup = {
+	/** Show `text` with a spinner. */
+	status(text: string): void;
+	/** Show `text` while fn runs, which q, esc or ctrl-c cancel: then fn's signal aborts and this resolves with CLOSED. */
+	cancellable<T>(text: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T | typeof CLOSED>;
+	/** Open `editor` on `text`; resolves with what was saved, or CLOSED if the popup closed first. */
+	edit(text: string): Promise<string | typeof CLOSED>;
+	/** Resolves once the popup has closed, whether by close() or by being cancelled. */
+	closed: Promise<typeof CLOSED>;
+	close(): Promise<void>;
+};
+
+// Talks to the board through files in $1: shows status (and "q cancel" while cancellable exists), runs the
+// editor on edit.md each time go appears, and exits once done appears. Cancelling exits with 3.
+const PROGRESS_SCRIPT = `
+dir=$1 editor=$2 frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) i=0
+cancel() { [ -e "$dir/cancellable" ] && exit 3; }
+trap cancel INT
+tput civis
+while [ ! -e "$dir/done" ]; do
+	if [ -e "$dir/go" ]; then
+		rm -f "$dir/go"
+		tput cnorm
+		$editor "$dir/edit.md"
+		touch "$dir/edited"
+		tput civis
+		continue
+	fi
+	hint=
+	[ -e "$dir/cancellable" ] && hint='   q cancel'
+	printf '\\r\\033[K %s %s\\033[2m%s\\033[0m' "\${frames[i++ % 10]}" "$(cat "$dir/status" 2>/dev/null)" "$hint"
+	if read -rsn1 -t 0.15 key; then
+		case $key in
+		q) cancel ;;
+		# A lone esc cancels; one followed straight away by more is a key like an arrow, which is swallowed.
+		$'\\e') read -rsn1 -t 0.05 _ || cancel && read -rsn8 -t 0.01 _ ;;
+		esac
+	fi
+done
+`;
+
+export function progressPopup(title: string, editor: string): ProgressPopup {
+	const dir = mkdtempSync(join(tmpdir(), 'oo-progress-'));
+	const file = (name: string) => join(dir, name);
+	let open = true;
+	const closed = popup(`bash -c ${shellQuote(PROGRESS_SCRIPT)} oo ${shellQuote(dir)} ${shellQuote(editor)}`, { title }).then((): typeof CLOSED => {
+		open = false;
+		return CLOSED;
+	});
+	return {
+		status(text) {
+			writeFileSync(file('status'), text);
+		},
+		async cancellable(text, fn) {
+			writeFileSync(file('status'), text);
+			writeFileSync(file('cancellable'), '');
+			const abort = new AbortController();
+			const work = fn(abort.signal);
+			// It can still fail after being cancelled, when nothing's waiting on it.
+			work.catch(() => {});
+			try {
+				const result = await Promise.race([work, closed]);
+				if (result === CLOSED) abort.abort();
+				return result;
+			} finally {
+				rmSync(file('cancellable'), { force: true });
+			}
+		},
+		async edit(text) {
+			rmSync(file('edited'), { force: true });
+			writeFileSync(file('edit.md'), text);
+			writeFileSync(file('go'), '');
+			while (!existsSync(file('edited'))) {
+				if (!open) return CLOSED;
+				await setTimeout(100);
+			}
+			return readFileSync(file('edit.md'), 'utf8');
+		},
+		closed,
+		async close() {
+			writeFileSync(file('done'), '');
+			await closed;
+			rmSync(dir, { recursive: true, force: true });
+		},
+	};
 }
 
 /** Ask a question in a small popup; true if it's answered with y. */

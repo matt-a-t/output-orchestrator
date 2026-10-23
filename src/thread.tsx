@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { editText } from './input.js';
@@ -32,6 +32,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 	const [message, setMessage] = useState('');
 	// The plan's editor popup is open.
 	const [editing, setEditing] = useState(false);
+	const { rows } = useWindowSize();
 
 	const save = (thread: Thread, draft: Draft) => {
 		const title = draft.title.trim();
@@ -81,6 +82,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		);
 	}
 
+	const planLines = draft.plan ? draft.plan.split('\n') : [];
 	const project = state.projects.find(p => p.name === draft.project);
 	const pad = (s: string) => s.padEnd(LABEL_WIDTH);
 	const value = (name: Field, active: boolean) => {
@@ -89,7 +91,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		if (name === 'color') return draft.color ? choice(draft.color, draft.color) : choice(`project's (${project?.color ?? '?'})`, project?.color);
 		if (name === 'plan') {
 			if (!draft.plan) return <Text dimColor>{active ? 'space to write one' : 'none'}</Text>;
-			return <Text dimColor={!active}>{active ? 'space to edit' : `${draft.plan.split('\n').length} lines`}</Text>;
+			return <Text dimColor={!active}>{active ? 'space to edit' : `${planLines.length} lines`}</Text>;
 		}
 		return (
 			<Text>
@@ -110,7 +112,13 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		['PR', thread.pr && `#${thread.pr.number} ${thread.pr.url}`],
 		['created', new Date(thread.createdAt).toLocaleString()],
 		['updated', new Date(thread.updatedAt).toLocaleString()],
-	];
+	].filter(([, v]) => v) as [string, string][];
+	// What fits between the fields and the info below: the rest of the window, less the board's title bar,
+	// the #id header, the fields, the info and its margin, and the message and help lines.
+	const planRoom = Math.max(1, rows - (1 + 1 + FIELDS.length + 1 + info.length + 2));
+	// A plan too long for that ends with how much is left, for $EDITOR.
+	const shownPlan = planLines.length > planRoom ? planLines.slice(0, planRoom - 1) : planLines;
+	const hiddenPlan = planLines.length - shownPlan.length;
 
 	return (
 		<Box flexDirection="column" flexGrow={1} overflow="hidden">
@@ -129,25 +137,27 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 					</Text>
 				);
 			})}
-			{draft.plan
-				? draft.plan.split('\n').map((line, i) => (
-						<Text key={i} wrap="truncate" dimColor>
-							{'  '}
-							{' '.repeat(LABEL_WIDTH)}
-							{line}
-						</Text>
-					))
-				: null}
+			{shownPlan.map((line, i) => (
+				<Text key={i} wrap="truncate" dimColor>
+					{'  '}
+					{' '.repeat(LABEL_WIDTH)}
+					{line}
+				</Text>
+			))}
+			{hiddenPlan ? (
+				<Text wrap="truncate" dimColor>
+					{'  '}
+					{' '.repeat(LABEL_WIDTH)}… {hiddenPlan} more lines — space on plan opens $EDITOR
+				</Text>
+			) : null}
 			<Box flexDirection="column" marginTop={1}>
-				{info
-					.filter(([, v]) => v)
-					.map(([label, v]) => (
-						<Text key={label} wrap="truncate" dimColor>
-							{'  '}
-							{pad(`${label}:`)}
-							{v}
-						</Text>
-					))}
+				{info.map(([label, v]) => (
+					<Text key={label} wrap="truncate" dimColor>
+						{'  '}
+						{pad(`${label}:`)}
+						{v}
+					</Text>
+				))}
 			</Box>
 			<Box flexGrow={1} />
 			<Text color={message.startsWith('✗') ? 'red' : 'green'}>{editing ? '… editing plan' : message}</Text>

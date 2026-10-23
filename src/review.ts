@@ -5,14 +5,17 @@ import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
 import type { Thread } from './state.js';
+import { OO_COMMAND } from './status.js';
 import { confirmPopup, popup, shellQuote } from './tmux.js';
 
 // less quits with the first character of the extra string as its status: 'A' is 65.
 const APPROVE_KEYS = '#command\na quit A\n';
 const APPROVE_STATUS = 65;
-// The same trick gives the diff beside claude an r to refresh it: 'R' is 82.
-const REFRESH_KEYS = '#command\nr quit R\n';
+// The same trick gives the diff beside claude r to refresh it ('R' is 82), t to switch between the
+// step and thread diffs ('T' is 84) and a to commit.
+const PANE_KEYS = '#command\na quit A\nr quit R\nt quit T\n';
 const REFRESH_STATUS = 82;
+const TOGGLE_STATUS = 84;
 // What delta's --navigate labels files and hunks with.
 const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:)';
 
@@ -36,25 +39,41 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 }
 
 /**
- * A shell command for the diff beside claude: the step's, or the thread's if the step has none,
- * re-run with `r` so it keeps up with claude's edits. No approving here; the board isn't waiting on it.
+ * A shell command for the diff beside claude: the step's, or the thread's if the step has none.
+ * `t` switches between the two, `r` re-runs it to keep up with claude's edits, and `a` commits
+ * everything uncommitted (`oo commit`: claude drafts the message, you edit it).
  */
 export async function diffPaneCommand(cwd: string, thread: Thread): Promise<string[]> {
 	const step = ['diff', ...(await diffRevs(cwd, 'step', thread))];
 	const whole = ['diff', ...(await diffRevs(cwd, 'thread', thread))];
-	const keys = lesskey('refresh', REFRESH_KEYS);
+	const keys = lesskey('pane', PANE_KEYS);
+	const keysHint = (other: string) => `t ${other}  a commit  r refresh  q close`;
 	// less starts at the first file, so the label goes in its (short, the s) prompt; these characters are special there.
-	const prompt = (label: string) => `--prompt=s${`${label} — n/N next/prev hunk  r refresh  q close`.replace(/[?:.%\\]/g, '\\$&')}`;
-	const show = (args: string[], label: string) =>
-		`${gitCommand(args)} | delta --paging=never --navigate | ${lessCommand(keys)} ${shellQuote(prompt(label))}`;
+	const prompt = (label: string, other: string) => `--prompt=s${`${label} — n/N hunk  ${keysHint(other)}`.replace(/[?:.%\\]/g, '\\$&')}`;
+	const show = (fn: string, label: string, other: string) =>
+		`${fn} | delta --paging=never --navigate | ${lessCommand(keys)} ${shellQuote(prompt(label, other))}`;
+	const ooCommit = [...OO_COMMAND, 'commit', thread.id].map(shellQuote).join(' ');
 	const script = [
+		`step() { ${gitCommand(step)} "$@"; }`,
+		`thread() { ${gitCommand(whole)} "$@"; }`,
+		'git add --all --intent-to-add',
+		'mode=step; step --quiet && mode=thread',
 		'while :; do',
 		'git add --all --intent-to-add',
-		`if ! ${gitCommand([...step, '--quiet'])}; then ${show(step, 'step diff')}`,
-		`elif ! ${gitCommand([...whole, '--quiet'])}; then ${show(whole, `thread diff vs ${whole.at(-1)}`)}`,
-		`else clear; printf 'No changes yet — r to refresh, any other key to close'; read -rsn1 key; clear; [ "$key" = r ] && (exit ${REFRESH_STATUS})`,
+		`if ! $mode --quiet; then`,
+		`  if [ $mode = step ]; then ${show('step', 'uncommitted', 'whole thread')}; else ${show('thread', `thread vs ${whole.at(-1)}`, 'uncommitted')}; fi`,
+		'  status=$?',
+		'else',
+		`  clear; [ $mode = step ] && printf %s ${shellQuote(`No uncommitted changes — ${keysHint('whole thread')}`)} || printf %s ${shellQuote(`No changes in the thread — ${keysHint('uncommitted')}`)}`,
+		'  read -rsn1 key; clear',
+		`  case $key in t) status=${TOGGLE_STATUS};; a) status=${APPROVE_STATUS};; r) status=${REFRESH_STATUS};; *) status=0;; esac`,
 		'fi',
-		`[ $? = ${REFRESH_STATUS} ] || break`,
+		'case $status in',
+		`  ${TOGGLE_STATUS}) [ $mode = step ] && mode=thread || mode=step;;`,
+		`  ${APPROVE_STATUS}) clear; echo 'claude is writing the commit message…'; out=$(${ooCommit} 2>&1); clear; tmux display-message "$out";;`,
+		`  ${REFRESH_STATUS}) ;;`,
+		'  *) break;;',
+		'esac',
 		'done',
 	].join('\n');
 	return ['bash', '-c', script];
@@ -191,7 +210,7 @@ function formatComments(comments: Comment[]): string {
  * Have claude draft a commit message for the staged changes, in the style of the branch's recent
  * commits. Returns undefined if claude fails or says nothing.
  */
-export async function draftCommit(cwd: string, thread: Thread): Promise<string | undefined> {
+export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSignal): Promise<string | undefined> {
 	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
 	const log = await git(['log', '-5', '--format=%B---']).catch(() => '');
 	const stat = await git(['diff', '--cached', '--stat']);
@@ -214,5 +233,5 @@ export async function draftCommit(cwd: string, thread: Thread): Promise<string |
 		'Diff:',
 		diff,
 	].join('\n');
-	return (await askClaude(cwd, prompt)) || undefined;
+	return (await askClaude(cwd, prompt, signal)) || undefined;
 }

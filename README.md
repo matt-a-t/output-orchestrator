@@ -18,7 +18,7 @@ Works on macOS, Linux and WSL.
 | git | any recent | worktrees and branches | usually already there |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | | the threads themselves | `npm i -g @anthropic-ai/claude-code` |
 | [GitHub CLI](https://cli.github.com) | | opening PRs and noticing when they merge; run `gh auth login` once | `brew install gh` / [cli.github.com](https://github.com/cli/cli#installation) |
-| [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `v`) | `brew install git-delta` / `apt install git-delta` |
+| [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `M-d`) | `brew install git-delta` / `apt install git-delta` |
 | vim | | commenting on diffs (`c`) and the changed-hunks list (`o`) | usually already there |
 
 `oo` checks for these when it starts. It won't start without tmux, git and claude, and it warns
@@ -41,7 +41,7 @@ oo                               # open the board
 
 On the board, `n` starts a thread in Planned (you give it a project and a title, and `e` adds a
 plan if you want one), and Enter opens its claude. `Ctrl-b b` (or `Alt-b`) brings you back to the
-board. Keys are listed at the bottom of the board, and in the [key reference](#key-reference) below.
+board. `?` on the board lists every key, and so does [KEYS.md](KEYS.md).
 
 `oo` starts (or reattaches to) a tmux session called `oo` with the board in it. If you run it
 inside tmux, it opens the board in the current window, or jumps to the board if it's already
@@ -88,12 +88,14 @@ Confirmations (quit, archive, approve, resuming a busy thread) all take `y`. Any
 
 ### Working beside claude
 
-`s` opens a shell and `v` a diff to the right of the thread's claude window (starting claude if
-it isn't running) and jumps there. The diff is the step's, or the thread's when the step has
-none. `r` refreshes it as claude makes changes, and `q` closes it. Approving still happens from
-`d`. Pressing the other key swaps what's on the right, and either key jumps back to it later. In
-a thread's window, `M-h` / `M-l` move between claude and the pane beside it, and `M-b` or `M-q` go
-back to the board.
+`s` opens a shell and `M-d` (alt-d) a diff to the right of the thread's claude window (starting
+claude if it isn't running) and jumps there. The diff is the step's, or the thread's when the
+step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
+closes it. `a` commits everything uncommitted, like approving from `d`: claude drafts the message
+and it opens in `$EDITOR` (an empty subject cancels, leaving the changes staged). Pressing the
+other key swaps what's on the right, and either key jumps back to it later. From inside a
+thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
+scroll and go back to the board (see [KEYS.md](KEYS.md)).
 
 ### Local: trying a thread in your usual setup
 
@@ -145,35 +147,9 @@ thread's claude, where the thread id defaults to that thread. Run `oo help` to s
 claude learns these commands from an `oo` skill that the board installs (see below), so you can
 ask a thread's claude to file follow-up work as a new thread.
 
-## Key reference
+## Keys
 
-| Key | On the board |
-| --- | --- |
-| `h` `j` `k` `l` / arrows | move the cursor |
-| `H` / `L` | move the thread to the previous / next column |
-| `J` / `K` | reorder the thread within its column |
-| `F` | move the thread straight to Done |
-| `n` | new thread |
-| `e` | the thread's screen (title, project, colour, plan, …) |
-| Enter | open or resume the thread's claude |
-| `d` / `D` | step diff (`a` there approves) / whole-thread diff |
-| `c` | comment on the diff in vim |
-| `o` | changed hunks in vim |
-| `s` / `v` | shell / live diff beside the thread's claude |
-| `t` | into or out of Local |
-| `b` | open the thread's PR in the browser |
-| `i` | import a thread started outside the board |
-| `C` | cycle the thread's colour |
-| `p` / esc | filter by project / clear the filter |
-| `P` | projects screen (abbreviations, colours, hooks) |
-| `x` | archive |
-| `q` | quit |
-
-| Key | Anywhere in the `oo` tmux session |
-| --- | --- |
-| `prefix b`, `prefix Ctrl-b` | back to the board |
-| `M-b`, `M-q` | back to the board (in a thread's window) |
-| `M-h` / `M-l` | move between claude and the pane beside it |
+`?` on the board lists every key, and [KEYS.md](KEYS.md) has the same list.
 
 The mouse works too. Click a card to select it, double-click to open it, and scroll to move up
 and down (the import list works the same way). For this the board turns on tmux's `mouse` option
@@ -186,10 +162,10 @@ what's hidden. Done shows one line per thread and, while you're not in it, only 
 ## What oo changes outside its own folder
 
 - **tmux key bindings**, set when the board starts: `prefix b` and `prefix Ctrl-b` jump to the
-  board, plus `M-b`, `M-q`, `M-h` and `M-l` in thread windows only (everywhere else those keys
-  still reach the program, e.g. readline's `M-b` back-a-word). Keys you've already bound to
-  something else are left alone, except that `prefix Ctrl-b` replaces tmux's default send-prefix
-  (sending a literal `Ctrl-b`).
+  board, plus some `Alt` keys in thread windows only (see [KEYS.md](KEYS.md); everywhere else
+  those keys still reach the program, e.g. readline's `M-b` back-a-word). Keys you've already
+  bound to something else are left alone, except that `prefix Ctrl-b` replaces tmux's default
+  send-prefix (sending a literal `Ctrl-b`).
 - **tmux `mouse` on**, for the `oo` session only.
 - **`~/.claude/skills/oo/SKILL.md`**, rewritten each time the board starts, which teaches claude the
   `oo thread` commands.

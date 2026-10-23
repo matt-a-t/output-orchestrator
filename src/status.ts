@@ -17,6 +17,12 @@ const PLAN_HOOK = [
 	...(fromSource ? process.execArgv : []),
 	fileURLToPath(new URL(fromSource ? './planHook.ts' : './planHook.js', import.meta.url)),
 ];
+/** oo itself (this same dist or source), for tmux keys and panes that call back into it. */
+export const OO_COMMAND = [
+	process.execPath,
+	...(fromSource ? process.execArgv : []),
+	fileURLToPath(new URL(fromSource ? './cli.tsx' : './cli.js', import.meta.url)),
+];
 
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 
