@@ -296,16 +296,24 @@ export async function approveTodo(thread: string, ctx: Context = defaultContext(
 	return response.ok ? `✓ ${todos[item]!.subject}` : `✗ ${response.message}`;
 }
 
-/** Claude hook for SessionStart (see sessionHook.ts): the thread's checkpoints, for claude; undefined if it has none to do. */
+/** What a thread's claude is told as it starts in Local, which the move into it restarts claude for. Imported threads don't move. */
+function localBriefing(state: State, t: Thread): string | undefined {
+	if (!t.local || t.cwd) return;
+	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or t on the board) brings it back to its worktree.`;
+}
+
+/** Claude hook for SessionStart (see sessionHook.ts): whether it's in Local and the thread's checkpoints, for claude; undefined if there's neither. */
 export function sessionStarted(input: any, ctx: Context): string | undefined {
 	const state = loadState(join(ctx.dir, 'state.json'));
-	let thread: string;
+	let id: string;
 	try {
-		thread = resolveThreadId(state, undefined, ctx.env, typeof input?.cwd === 'string' ? input.cwd : ctx.cwd);
+		id = resolveThreadId(state, undefined, ctx.env, typeof input?.cwd === 'string' ? input.cwd : ctx.cwd);
 	} catch {
 		return;
 	}
-	return todoBriefing(state.threads.find(t => t.id === thread)?.todos ?? []);
+	const thread = state.threads.find(t => t.id === id)!;
+	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? [])].filter(Boolean);
+	return parts.length ? parts.join('\n') : undefined;
 }
 
 function fail(message: string): number {

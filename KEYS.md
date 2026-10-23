@@ -13,7 +13,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `w` / `W` | wake it / every thread closed mid-work ("keep going") |
 | `n` | new thread |
 | `e` | edit the thread |
-| `t` | into / out of Local |
+| `t` | into / out of Local (`oo thread local` from the shell) |
 | `F` | straight to Done |
 | `x` | archive |
 | `C` | cycle its colour |

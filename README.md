@@ -109,6 +109,9 @@ thread per project fits. The thread stays where it is in its column, its card ou
 but it can't move between columns until `t` brings it back. Bringing it back needs the checkout clean, puts
 the checkout back on the default branch, and gives the thread its worktree again.
 
+`oo thread local [id] [in|out]` does the same from the shell, and a thread's claude offers it when you want
+to try its change. If the thread's claude is working, the move waits until its turn ends.
+
 ### Project hooks
 
 Each project can set hooks in the projects screen (`P`). These are shell commands that run when

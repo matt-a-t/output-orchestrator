@@ -214,6 +214,15 @@ test('a starting claude is told where the checkpoints stand, until they\'re all 
 	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
 });
 
+test('a claude starting in Local is told so, with or without checkpoints', () => {
+	const { dir, project } = fixture([{ column: 'active', local: true, branch: 'oo/1-x' }, { cwd: '/work/two', column: 'active', local: true }]);
+	const briefing = sessionStarted({ cwd: project }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	assert.match(briefing, new RegExp(`You're in Local: working in the project's own checkout at ${project} on oo/1-x`));
+	assert.match(briefing, /oo thread local out/);
+	// Imported threads stay in their own directory, so there's nothing to say.
+	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
+});
+
 test('approving a step ticks off the checkpoint in review, else the active one', () => {
 	const todo = (status: 'pending' | 'active' | 'review' | 'done') => ({ subject: status, status });
 	assert.equal(approvedTodo([todo('done'), todo('active'), todo('review')]), 2);
