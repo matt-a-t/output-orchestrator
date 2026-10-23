@@ -71,7 +71,7 @@ ${THREAD_USAGE}
 - **Work through the thread's checkpoints.** Once the plan is approved, save its checkpoints with
   \`oo thread todo set --file - <<'EOF'\`, one per line: each a step the user can review and commit on its own.
   Mark one \`active\` as you start it and \`review\` when it's ready, then stop for the user to review it;
-  approving the step on the board commits it and marks it \`done\`. The list stays on the thread across claude
+  approving the step on the board commits it, marks it \`done\` and tells you to move on. The list stays on the thread across claude
   runs and shows on its card, so keep it current.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
@@ -138,7 +138,16 @@ export function fromThreadDir(e: HookEvent, dir: string | undefined): boolean {
 
 /** Incrementally reads hook events appended to the events file. */
 export class EventReader extends JsonlReader<HookEvent> {
-	constructor() {
-		super(EVENTS_FILE, e => typeof e.thread === 'string' && typeof e.event === 'string');
+	constructor(file = EVENTS_FILE) {
+		super(file, e => typeof e.thread === 'string' && typeof e.event === 'string');
 	}
+}
+
+/** The thread's status from all its events so far, as the board works it out, for commands run outside it. */
+export function threadStatus(thread: string, dir: string | undefined, file = EVENTS_FILE): Status | undefined {
+	let status: Status | undefined;
+	for (const e of new EventReader(file).read()) {
+		if (e.thread === thread && fromThreadDir(e, dir)) status = nextStatus(status, e) ?? status;
+	}
+	return status;
 }

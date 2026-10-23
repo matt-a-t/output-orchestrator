@@ -273,6 +273,22 @@ export function todoBriefing(todos: Todo[]): string | undefined {
 	return `This thread's checkpoints (${todoProgress(todos)} done):\n${list}\nOnes in review are waiting for the user to approve them on the board; otherwise carry on from the first one that isn't done. Keep their status current with \`oo thread todo <n> <status>\`.`;
 }
 
+/**
+ * What a stopped claude is told once its step is approved and committed: which checkpoint that was
+ * (`ticked`, -1 for none) and what to do next. `todos` are the checkpoints after ticking it off.
+ */
+export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: string): string {
+	const done = ticked === -1 ? 'The user approved your changes and committed them' : `The user approved and committed your step "${todos[ticked]!.subject}"`;
+	const next = todos.findIndex(t => t.status !== 'done');
+	const then =
+		next !== -1
+			? `Move on to the next checkpoint: ${next + 1}. ${todos[next]!.subject}. Mark it active with \`oo thread todo ${next + 1} active\`.`
+			: todos.length
+				? "All checkpoints are done; carry on with what's left (e.g. the PR)."
+				: 'Move on to the next step.';
+	return `${done} (commit: ${commitSubject}). ${then}`;
+}
+
 /** After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint, as approving it on the board does. */
 export async function approveTodo(thread: string, ctx: Context = defaultContext()): Promise<string | undefined> {
 	const todos = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread)?.todos ?? [];
