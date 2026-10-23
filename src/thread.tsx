@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
-import { hasWorktree, worktreePath } from './git.js';
+import { hasWorktree, renameBranch, worktreePath } from './git.js';
 import { editText } from './input.js';
 import { COLORS, COLUMN_LABELS, LOCAL_LABEL, type State, type Thread } from './state.js';
+import { normalizeKey, ticketUrl } from './tickets.js';
 
-const FIELDS = ['title', 'project', 'color', 'base', 'plan'] as const;
+const FIELDS = ['title', 'ticket', 'project', 'color', 'base', 'plan'] as const;
 type Field = (typeof FIELDS)[number];
-const FIELD_LABELS: Record<Field, string> = { title: 'title', project: 'project', color: 'colour', base: 'base', plan: 'plan' };
+const FIELD_LABELS: Record<Field, string> = { title: 'title', ticket: 'ticket', project: 'project', color: 'colour', base: 'base', plan: 'plan' };
 // undefined means the project's colour.
 const COLOR_CHOICES = [undefined, ...COLORS];
 
-type Draft = Pick<Thread, 'title' | 'project' | 'color' | 'plan'> & { base: string };
+// The ticket is edited as its key.
+type Draft = Pick<Thread, 'title' | 'project' | 'color' | 'plan'> & { base: string; ticket: string };
 
 type Props = {
 	state: State;
@@ -26,12 +28,16 @@ const LABEL_WIDTH = 13;
 export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 	const thread = state.threads.find(t => t.id === threadId);
 	const [draft, setDraft] = useState<Draft | null>(
-		thread ? { title: thread.title, project: thread.project, color: thread.color, plan: thread.plan, base: thread.base ?? '' } : null,
+		thread
+			? { title: thread.title, ticket: thread.ticket?.key ?? '', project: thread.project, color: thread.color, plan: thread.plan, base: thread.base ?? '' }
+			: null,
 	);
 	const [field, setField] = useState(0);
 	const [message, setMessage] = useState('');
 	// The plan's editor popup is open.
 	const [editing, setEditing] = useState(false);
+	// Looking up the ticket or renaming the branch.
+	const [saving, setSaving] = useState(false);
 	const { rows } = useWindowSize();
 
 	const save = (thread: Thread, draft: Draft) => {
@@ -41,12 +47,33 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		if (draft.project !== thread.project && (thread.branch || thread.cwd)) {
 			return setMessage(`✗ #${thread.id} already has work in ${thread.project}; it can't move project`);
 		}
-		updateThread(thread.id, { ...draft, title, base: draft.base.trim() || undefined });
-		onClose(`Saved #${thread.id}`);
+		const project = state.projects.find(p => p.name === draft.project);
+		const key = draft.ticket.trim() && project ? normalizeKey(project, draft.ticket) : undefined;
+		if (draft.ticket.trim() && !key) {
+			if (project?.tracker === 'none') return setMessage(`✗ ${draft.project} has no ticket tracker; set one on the projects screen (P)`);
+			return setMessage(`✗ Not a ${project?.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${draft.ticket.trim()}`);
+		}
+		const fields = { ...draft, title, base: draft.base.trim() || undefined };
+		if (key === thread.ticket?.key) {
+			updateThread(thread.id, { ...fields, ticket: thread.ticket });
+			return onClose(`Saved #${thread.id}`);
+		}
+		setSaving(true);
+		(async () => {
+			const ticket = key && project ? { key, url: await ticketUrl(project, key).catch(() => '') } : undefined;
+			// The branch is named after the ticket (see branchName), so follow it while that's still safe.
+			const renamed = project && thread.branch ? await renameBranch(project.path, { ...thread, title, ticket }) : {};
+			updateThread(thread.id, { ...fields, ticket, ...(renamed.branch ? { branch: renamed.branch } : {}) });
+			// "Renamed…" or "⚠ Kept…" says it was saved too.
+			onClose(renamed.message ?? `Saved #${thread.id}`);
+		})().catch((err: unknown) => {
+			setSaving(false);
+			setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+		});
 	};
 
 	useInput((input, key) => {
-		if (editing || !thread || !draft) return;
+		if (editing || saving || !thread || !draft) return;
 		setMessage('');
 		const name = FIELDS[field]!;
 		if (key.escape) return onClose('Cancelled');
@@ -160,7 +187,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 				))}
 			</Box>
 			<Box flexGrow={1} />
-			<Text color={message.startsWith('✗') ? 'red' : 'green'}>{editing ? '… editing plan' : message}</Text>
+			<Text color={message.startsWith('✗') ? 'red' : 'green'}>{editing ? '… editing plan' : saving ? '… saving' : message}</Text>
 			<Text dimColor>↑/↓ or tab field  ←/→ or space change  space on plan opens $EDITOR  ⏎ save  esc cancel</Text>
 		</Box>
 	);
