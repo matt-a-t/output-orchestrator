@@ -47,7 +47,7 @@ claude drafts, whose subject you edit on the board (esc cancels, leaving the cha
 drafted body is kept as is). Confirmations (quit, archive, approve, resuming a busy thread) all
 take `y`; any other key cancels.
 
-To work beside claude, `s` opens a shell and `v` a diff on the right of the thread's claude
+To work beside claude, `s` opens a shell and `M-d` (alt-d) a diff on the right of the thread's claude
 window (starting claude if it isn't running) and jumps there. The diff is the step's, or the
 thread's when the step has none; `r` refreshes it as claude makes changes, and `q` closes it.
 Approving still happens from `d`. Pressing the other key swaps what's on the right, and either

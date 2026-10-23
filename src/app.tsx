@@ -84,7 +84,7 @@ const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 const DOUBLE_CLICK_MS = 400;
 
 const HELP =
-	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  s/v claude + shell/diff  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
+	'h/l j/k move  H/L column  F done  J/K reorder  t local  n new  e edit  ⏎ open  d/D step/thread diff (a in a step diff approves)  s/M-d claude + shell/diff  c comment  o open changes  b open PR  i import thread  C colour  p filter  esc clear filter  P projects  x archive  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -765,6 +765,7 @@ export function App() {
 				);
 			}, 'checking for uncommitted changes');
 		}
+		if (key.meta && (input === 'd' || input === 'D')) return openBeside(selected, 'diff');
 		if (input === 'd' || input === 'D') {
 			const kind = input === 'd' ? 'step' : 'thread';
 			return inWorktree(selected, async cwd => {
@@ -774,7 +775,6 @@ export function App() {
 			});
 		}
 		if (input === 's') return openBeside(selected, 'shell');
-		if (input === 'v') return openBeside(selected, 'diff');
 		if (input === 'c') {
 			return inWorktree(selected, async cwd => {
 				const window = threadWindowName(selected.id);
