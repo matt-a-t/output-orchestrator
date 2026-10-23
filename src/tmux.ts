@@ -12,6 +12,17 @@ export function insideTmux(): boolean {
 	return Boolean(process.env.TMUX);
 }
 
+/** Popups (display-popup) arrived in tmux 3.2. */
+export const MIN_TMUX = [3, 2] as const;
+
+/** Whether `tmux -V` output is new enough; builds it can't read (e.g. `tmux master`) get the benefit of the doubt. */
+export function tmuxVersionOk(versionOutput: string): boolean {
+	const match = versionOutput.match(/(\d+)\.(\d+)/);
+	if (!match) return true;
+	const [major, minor] = [Number(match[1]), Number(match[2])];
+	return major > MIN_TMUX[0] || (major === MIN_TMUX[0] && minor >= MIN_TMUX[1]);
+}
+
 export function threadWindowName(threadId: string): string {
 	return `oo-${threadId}`;
 }

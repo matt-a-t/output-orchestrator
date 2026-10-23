@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { basename, resolve } from 'node:path';
+import { execa } from 'execa';
 import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
@@ -13,8 +14,10 @@ import {
 	bindBoardKeys,
 	enableTmuxMouse,
 	insideTmux,
+	MIN_TMUX,
 	renameCurrentWindow,
 	selectExistingBoard,
+	tmuxVersionOk,
 } from './tmux.js';
 
 const USAGE = `usage:
@@ -55,6 +58,47 @@ function projectCommand(args: string[]): number {
 	return 1;
 }
 
+/** The output of `<cmd> <versionFlag>`, or null if it isn't installed. */
+async function version(cmd: string, versionFlag = '--version'): Promise<string | null> {
+	const result = await execa(cmd, [versionFlag], { reject: false });
+	return (result as { code?: string }).code === 'ENOENT' ? null : result.stdout;
+}
+
+const REQUIRED = [
+	['git', 'https://git-scm.com/downloads'],
+	['claude', 'https://docs.anthropic.com/en/docs/claude-code'],
+] as const;
+const OPTIONAL = [
+	['gh', 'moving a thread to PR', 'https://cli.github.com'],
+	['delta', 'reviewing diffs (d, D, v)', 'https://github.com/dandavison/delta'],
+	['vim', 'commenting on diffs (o, c)', 'https://www.vim.org'],
+] as const;
+
+/**
+ * Check the tools oo shells out to before starting the board: false (having said why) if a required
+ * one is missing. `warn` also mentions missing optional ones, which only some actions need.
+ */
+async function checkTools(warn: boolean): Promise<boolean> {
+	const minTmux = MIN_TMUX.join('.');
+	const [tmux, required, optional] = await Promise.all([
+		version('tmux', '-V'),
+		Promise.all(REQUIRED.map(([cmd]) => version(cmd))),
+		warn ? Promise.all(OPTIONAL.map(([cmd]) => version(cmd))) : [],
+	]);
+	const problems: string[] = [];
+	if (tmux === null) problems.push(`tmux ${minTmux}+ is not installed: https://github.com/tmux/tmux/wiki/Installing`);
+	else if (!tmuxVersionOk(tmux)) problems.push(`${tmux} is too old, oo needs ${minTmux} or later for popups`);
+	REQUIRED.forEach(([cmd, url], i) => {
+		if (required[i] === null) problems.push(`${cmd} is not installed: ${url}`);
+	});
+	optional.forEach((found, i) => {
+		const [cmd, forWhat, url] = OPTIONAL[i]!;
+		if (found === null) console.warn(`oo: ${cmd} is not installed, which ${forWhat} needs: ${url}`);
+	});
+	for (const problem of problems) console.error(`oo: ${problem}`);
+	return problems.length === 0;
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 if (cmd === 'project') {
 	process.exit(projectCommand(args));
@@ -64,6 +108,8 @@ if (cmd === 'project') {
 	console.error(USAGE);
 	process.exit(1);
 } else {
+	// Outside tmux warnings stay readable in your shell; inside, they'd only be pushed up by the board.
+	if (!(await checkTools(!insideTmux()))) process.exit(1);
 	if (!insideTmux()) {
 		// Re-run this same script (dist or tsx) as the board inside tmux.
 		process.exit(await attachBoard([process.execPath, ...process.execArgv, process.argv[1]!]));
