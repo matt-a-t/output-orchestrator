@@ -30,6 +30,7 @@
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "build": "tsc && chmod +x dist/cli.js",
+    "clean-build": "rm -rf dist && npm run build",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/*.test.ts",
     "prepublishOnly": "rm -rf dist && npm run build"
