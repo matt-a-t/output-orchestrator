@@ -29,9 +29,13 @@ const ProjectSchema = z.object({
 	abbrev: z.string().default(''),
 	path: z.string(),
 	color: z.enum(COLORS),
+	// What w / W paste into a woken claude; empty means DEFAULT_WAKE_PROMPT.
+	wakePrompt: z.string().default(''),
 	hooks: z.partialRecord(z.enum(HOOK_EVENTS), z.string()).default({}),
 });
 export type Project = z.infer<typeof ProjectSchema>;
+
+export const DEFAULT_WAKE_PROMPT = 'You were interrupted (your session was closed). Pick up where you left off and keep going.';
 
 const ThreadSchema = z.preprocess(
 	// Local used to be a column, "uitest", between Polish and PR.

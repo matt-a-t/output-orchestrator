@@ -34,6 +34,9 @@ For that the board turns on tmux's `mouse` option for its session, so in claude 
 dragging selects into tmux's buffer; hold Shift while dragging for your terminal's own selection. `n` / `e` open `$EDITOR` (default vim)
 in a tmux popup; Enter opens or jumps to the thread's `claude` window, resuming
 the thread where it left off if its window was closed (e.g. after a restart).
+If its window was closed while claude was still working, `w` resumes it in the background and
+tells it to keep going, without you leaving the board. `W` does the same for every thread like that,
+after asking first. The project's wake prompt (`P`) changes what it's told.
 
 Leaving Planned (or opening a thread) gives it its own git worktree and branch
 (`oo/<id>-<title>`), under `~/.local/share/output-orchestrator/worktrees/`; claude runs
@@ -93,7 +96,7 @@ warns first; `y` resumes anyway.
 
 Card badges (with a legend at the bottom of the board): ⚙ working, ⏸ needs you
 (permission prompt), ✓ stopped, ○ window open with no activity yet, ↻ no window but
-resumable, ± uncommitted changes waiting to be reviewed and approved. Each card shows the
+resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and approved. Each card shows the
 thread number and project abbreviation (or name, if it has none), with the title beneath. `e` opens a thread's own screen: its title, project,
 colour and diff base are edited in place, its plan in `$EDITOR`, and the rest of what the board
 knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that already has
