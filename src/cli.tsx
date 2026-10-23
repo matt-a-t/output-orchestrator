@@ -6,15 +6,19 @@ import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
 import { THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
+import { diffPaneCommand } from './review.js';
 import { writeClaudeSettings, writeOoSkill } from './status.js';
+import { threadDir } from './threads.js';
 import {
 	BOARD_WINDOW,
 	attachBoard,
 	bindBoardKeys,
 	enableTmuxMouse,
 	insideTmux,
+	openSplit,
 	renameCurrentWindow,
 	selectExistingBoard,
+	threadWindowName,
 } from './tmux.js';
 
 const USAGE = `usage:
@@ -55,11 +59,27 @@ function projectCommand(args: string[]): number {
 	return 1;
 }
 
+/** `oo split <shell|diff> <id>`, for M-s / M-d in a thread's window: what `s` / `v` do on the board. */
+async function splitCommand([role, id]: string[]): Promise<number> {
+	const state = loadState();
+	const thread = state.threads.find(t => t.id === id);
+	const cwd = thread && threadDir(state, thread);
+	if ((role !== 'shell' && role !== 'diff') || !thread || !cwd) {
+		console.error(thread ? `#${id} has no worktree` : `usage: oo split <shell|diff> <id>`);
+		return 1;
+	}
+	const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
+	await openSplit(threadWindowName(id), cwd, role, command, { OO_THREAD_ID: id });
+	return 0;
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 if (cmd === 'project') {
 	process.exit(projectCommand(args));
 } else if (cmd === 'thread') {
 	process.exit(await threadCommand(args));
+} else if (cmd === 'split') {
+	process.exit(await splitCommand(args));
 } else if (cmd) {
 	console.error(USAGE);
 	process.exit(1);
@@ -70,7 +90,8 @@ if (cmd === 'project') {
 	}
 	if (await selectExistingBoard()) process.exit(0);
 	await renameCurrentWindow(BOARD_WINDOW);
-	await bindBoardKeys();
+	// This same script (dist or tsx), so the keys don't depend on oo being on tmux's PATH.
+	await bindBoardKeys([process.execPath, ...process.execArgv, process.argv[1]!, 'split'].map(arg => JSON.stringify(arg)).join(' '));
 	await enableTmuxMouse();
 	writeClaudeSettings();
 	writeOoSkill();

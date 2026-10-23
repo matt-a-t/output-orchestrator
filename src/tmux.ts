@@ -109,17 +109,34 @@ export async function pasteInto(name: string, text: string): Promise<void> {
 	await execa('tmux', ['send-keys', '-t', `:${name}`, 'Enter']);
 }
 
-const IN_THREAD_WINDOW = '#{m:oo-*,#{window_name}}';
+// Thread windows only, not the board or a project's hook window.
+const IN_THREAD_WINDOW = '#{m/r:^oo-[0-9]+$,#{window_name}}';
+
+/** Select the next (or, with -1, previous) thread window after the current one, wrapping around. */
+function cycleThreads(step: 1 | -1): string[] {
+	// run-shell expands formats, so ## leaves one for list-windows; no single quotes, as if-shell wraps this in them.
+	const awk = `{i[NR]=\\$1} END{for(n=1;n<=NR;n++) if(i[n]==cur) break; print i[(n-1+${step}+NR)%NR+1]}`;
+	const windows = 'tmux list-windows -F "##{window_index} ##{window_name}" | grep -E " oo-[0-9]+\\$"';
+	return ['run-shell', `w=$(${windows} | awk -v cur=#{window_index} "${awk}"); [ -n "$w" ] && tmux select-window -t ":$w"`];
+}
 
 /**
  * Bind `prefix b`, `prefix C-b` (for when ctrl is still held), `M-b` and `M-q` (no prefix) to
- * jump back to the board, and `M-h` / `M-l` to move between claude and the pane beside it, unless
- * the user has bound them to something themselves.
+ * jump back to the board, and in thread windows: `M-h` / `M-l` to move between claude and the pane
+ * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` / `M-d` to open a shell / diff
+ * beside claude (via `split`, the command prefix that runs `oo split`), `M-u` to scroll up (copy
+ * mode) and `M-z` to zoom the pane. Not `M-v` (claude's image paste) or `M-[` (the start of
+ * arrow keys' escape codes). Keys the user has bound to something themselves are left alone.
  */
-export async function bindBoardKeys(): Promise<void> {
+export async function bindBoardKeys(split: string): Promise<void> {
 	const back = ['select-window', '-t', BOARD_WINDOW];
 	// Only in thread windows; everywhere else the key still reaches the program (e.g. readline's M-b back-a-word).
-	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, command.join(' '), `send-keys ${key}`];
+	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, tmuxCommand(command), `send-keys ${key}`];
+	const beside = (role: string) => [
+		'run-shell',
+		'-b',
+		`out=$(${split} ${role} #{s/^oo-//:window_name} 2>&1) || tmux display-message "$out"`,
+	];
 	const bindings: [table: string, key: string, command: string[]][] = [
 		['prefix', 'b', back],
 		['prefix', 'C-b', back],
@@ -127,14 +144,25 @@ export async function bindBoardKeys(): Promise<void> {
 		['root', 'M-q', inThreads('M-q', back)],
 		['root', 'M-h', inThreads('M-h', ['select-pane', '-L'])],
 		['root', 'M-l', inThreads('M-l', ['select-pane', '-R'])],
+		['root', 'M-j', inThreads('M-j', cycleThreads(1))],
+		['root', 'M-k', inThreads('M-k', cycleThreads(-1))],
+		['root', 'M-s', inThreads('M-s', beside('shell'))],
+		['root', 'M-d', inThreads('M-d', beside('diff'))],
+		['root', 'M-u', inThreads('M-u', ['copy-mode', '-u'])],
+		['root', 'M-z', inThreads('M-z', ['resize-pane', '-Z'])],
 	];
 	for (const [table, key, command] of bindings) {
 		const existing = await execa('tmux', ['list-keys', '-T', table, key], { reject: false });
 		// C-b is send-prefix out of the box, which is worth giving up for this.
-		const ours = existing.stdout.includes(BOARD_WINDOW) || existing.stdout.includes('oo-*') || existing.stdout.includes('send-prefix');
+		const ours = existing.stdout.includes(BOARD_WINDOW) || existing.stdout.includes('oo-') || existing.stdout.includes('send-prefix');
 		const taken = existing.exitCode === 0 && !ours;
 		if (!taken) await execa('tmux', ['bind-key', '-T', table, key, ...command]);
 	}
+}
+
+/** One tmux command as a string, quoting arguments that need it (for if-shell). */
+function tmuxCommand(command: string[]): string {
+	return command.map(arg => (/^[\w./:#{}-]+$/.test(arg) ? arg : shellQuote(arg))).join(' ');
 }
 
 /** Pass clicks through to the board (and claude); only for this session, so other sessions keep their own setting. */
