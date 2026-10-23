@@ -64,13 +64,16 @@ Thread numbers (`#12`) only mean something on this machine's board, so they stay
 branches and PRs are named after the thread's ticket instead (see [Tickets](#tickets)).
 
 Enter opens or jumps to the thread's `claude` window. If the window was closed (e.g. after a
-restart), Enter resumes the thread where it left off. `e` opens a thread's own screen. Its title,
+restart), Enter resumes the thread where it left off. If the window was closed while claude was
+still working, `w` resumes it in the background and tells it to keep going without you leaving
+the board, and `W` does the same for every thread like that, after asking first. The project's
+wake prompt (`P`) changes what it's told. `e` opens a thread's own screen. Its title,
 ticket, project, colour and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
 the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
 already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
-activity yet, ↻ no window but resumable, ± uncommitted changes waiting to be reviewed and
+activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
 approved. Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath (after its ticket key, if it has one).
 
@@ -102,11 +105,12 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
 ### Reviewing and approving
 
 - `d` shows the diff since the last commit (the current **step**), and `D` the whole thread
-  against the branch it came from. Both go through `delta` in `less`, where `n` / `N` jump between
-  files and hunks.
+  against the branch it came from. Both go through `delta` in `less`, under a `git diff --stat` of
+  the changed files and how much each changed, and `n` / `N` jump between files and hunks.
 - In a step diff, `a` approves the step (after a y/n confirm). Approving commits everything with
   a message claude drafts, and you edit its subject on the board (esc cancels, leaving the changes
-  staged; the drafted body is kept as is).
+  staged; the drafted body is kept as is). If the thread's claude has stopped (✓), it's then told
+  the step was committed and to move on to the next checkpoint.
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels).
@@ -120,19 +124,23 @@ Confirmations (quit, archive, approve, resuming a busy thread) all take `y`. Any
 claude if it isn't running) and jumps there. The diff is the step's, or the thread's when the
 step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
 closes it. `a` commits everything uncommitted, like approving from `d`: claude drafts the message
-and it opens in `$EDITOR` (an empty subject cancels, leaving the changes staged). Pressing the
+and it opens in `$EDITOR` (an empty subject cancels, leaving the changes staged), and a stopped
+claude is told to move on. Pressing the
 other key swaps what's on the right, and either key jumps back to it later. From inside a
 thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
 scroll and go back to the board (see [KEYS.md](KEYS.md)).
 
 ### Local: trying a thread in your usual setup
 
-`t` puts a thread in Local, a box beside the columns, so you can try it out in your usual dev
+`t` puts a thread in Local, so you can try it out in your usual dev
 setup. Its branch is checked out in the project's own checkout (which must have no uncommitted
 changes to tracked files), its worktree is removed, and its claude moves there too. Only one
-thread per project fits. The thread keeps its column, which is shown on its card, but it can't
-move between columns until `t` brings it back. Bringing it back needs the checkout clean, puts
+thread per project fits. The thread stays where it is in its column, its card outlined in yellow,
+but it can't move between columns until `t` brings it back. Bringing it back needs the checkout clean, puts
 the checkout back on the default branch, and gives the thread its worktree again.
+
+`oo thread local [id] [in|out]` does the same from the shell, and a thread's claude offers it when you want
+to try its change. If the thread's claude is working, the move waits until its turn ends.
 
 ### Project hooks
 

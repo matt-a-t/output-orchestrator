@@ -4,15 +4,16 @@ import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
 import { editText, loop } from './input.js';
-import { COLORS, HOOK_EVENTS, HOOK_LABELS, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
+import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
+const FIELDS = ['name', 'abbrev', 'color', 'path', 'wakePrompt', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
 type Field = (typeof FIELDS)[number];
 const FIELD_LABELS: Record<Field, string> = {
 	name: 'name',
 	abbrev: 'abbrev',
 	color: 'colour',
 	path: 'path',
+	wakePrompt: 'wake prompt',
 	tracker: 'tickets',
 	jiraSite: 'jira site',
 	jiraProject: 'jira project',
@@ -24,6 +25,7 @@ const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, track
 const isChoice = (field: Field): field is Choice => field in CHOICES;
 // Shown at the bottom while the field is selected.
 const FIELD_HINTS: Partial<Record<Field, string>> = {
+	wakePrompt: 'pasted into claude by w / W on the board; empty uses the default  ',
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
 	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
@@ -65,6 +67,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			...form.project,
 			name: form.project.name.trim(),
 			abbrev: form.project.abbrev.trim(),
+			wakePrompt: form.project.wakePrompt.trim(),
 			path: expandPath(form.project.path.trim()),
 			jiraSite: form.project.jiraSite.trim().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
 			jiraProject: form.project.jiraProject.trim().toUpperCase(),
@@ -123,7 +126,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0 });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0 });
 		}
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0 });
@@ -178,6 +181,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 									<Text>
 										{fieldValue(form.project, field)}
 										{active ? <Text inverse> </Text> : null}
+										{field === 'wakePrompt' && !form.project.wakePrompt ? <Text dimColor>{DEFAULT_WAKE_PROMPT}</Text> : null}
 									</Text>
 								)}
 							</Text>

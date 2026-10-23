@@ -32,6 +32,8 @@ const ProjectSchema = z.object({
 	abbrev: z.string().default(''),
 	path: z.string(),
 	color: z.enum(COLORS),
+	// What w / W paste into a woken claude; empty means DEFAULT_WAKE_PROMPT.
+	wakePrompt: z.string().default(''),
 	hooks: z.partialRecord(z.enum(HOOK_EVENTS), z.string()).default({}),
 	// Where the project's tickets live (see tickets.ts); jira needs the site and the key prefix.
 	tracker: z.enum(TRACKERS).default('none'),
@@ -39,6 +41,8 @@ const ProjectSchema = z.object({
 	jiraProject: z.string().default(''),
 });
 export type Project = z.infer<typeof ProjectSchema>;
+
+export const DEFAULT_WAKE_PROMPT = 'You were interrupted (your session was closed). Pick up where you left off and keep going.';
 
 /** A thread's checkpoints: each is worked on (active), handed over (review), then approved and committed (done). */
 export const TODO_STATUSES = ['pending', 'active', 'review', 'done'] as const;

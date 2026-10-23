@@ -51,8 +51,8 @@ description: Read and change the output-orchestrator (oo) board of threads with 
 # The oo board
 
 The user tracks work as threads on a kanban board (Planned → Active → Polish → PR → Done).
-A thread can also be put in Local, beside the board, which checks its branch out in the project's own checkout
-(one per project) for trying it out; claude then works there until it comes back to its worktree.
+A thread can also be put in Local (it stays in its column, outlined in yellow), which checks its branch out in the project's own checkout
+(one per project) so the user can try it in their own dev setup; claude then works there until it comes back to its worktree.
 Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
 claude, and \`oo thread show\` describes your thread, including its plan.
 
@@ -71,7 +71,7 @@ ${THREAD_USAGE}
 - **Work through the thread's checkpoints.** Once the plan is approved, save its checkpoints with
   \`oo thread todo set --file - <<'EOF'\`, one per line: each a step the user can review and commit on its own.
   Mark one \`active\` as you start it and \`review\` when it's ready, then stop for the user to review it;
-  approving the step on the board commits it and marks it \`done\`. The list stays on the thread across claude
+  approving the step on the board commits it, marks it \`done\` and tells you to move on. The list stays on the thread across claude
   runs and shows on its card, so keep it current.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
@@ -82,7 +82,12 @@ ${THREAD_USAGE}
 - **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is
   in flight, so you don't duplicate it.
 - **Move threads only when the user asks.** Never move your own thread to done or archived: that removes
-  its worktree and closes this claude. Moves into or out of Local, and to PR, happen on the board.
+  its worktree and closes this claude. Moving to PR happens on the board.
+- **Offer Local when the user wants to try the change.** If they want to test or try it themselves, offer to
+  put the thread in Local and run \`oo thread local in\` once they agree; \`oo thread local out\` brings it back.
+  Commit or approve the changes first, because the worktree has to be clean. This claude is closed and resumed
+  in the project's checkout (or back in its worktree) once the turn ends, so finish what you're saying first.
+  Never move a thread into or out of Local without asking.
 `;
 
 /** Install the skill that tells claude about \`oo thread\` (see threadCommand.ts). */
@@ -102,8 +107,8 @@ export type HookEvent = {
 	ts: string;
 };
 
-/** working ⚙, waiting ⏸ (needs you), stopped ✓, idle (window open, nothing yet), ended. */
-export type Status = 'working' | 'waiting' | 'stopped' | 'idle' | 'ended';
+/** working ⚙, waiting ⏸ (needs you), stopped ✓, idle (window open, nothing yet), ended, or interrupted (ended mid-work). */
+export type Status = 'working' | 'waiting' | 'stopped' | 'idle' | 'ended' | 'interrupted';
 
 export function nextStatus(current: Status | undefined, e: HookEvent): Status | undefined {
 	switch (e.event) {
@@ -118,7 +123,8 @@ export function nextStatus(current: Status | undefined, e: HookEvent): Status | 
 		case 'Stop':
 			return 'stopped';
 		case 'SessionEnd':
-			return 'ended';
+			// Closed while it was still going, e.g. its window was killed: w wakes it.
+			return current === 'working' ? 'interrupted' : 'ended';
 		default:
 			return current;
 	}
@@ -140,7 +146,16 @@ export function fromThreadDir(e: HookEvent, dir: string | undefined): boolean {
 
 /** Incrementally reads hook events appended to the events file. */
 export class EventReader extends JsonlReader<HookEvent> {
-	constructor() {
-		super(EVENTS_FILE, e => typeof e.thread === 'string' && typeof e.event === 'string');
+	constructor(file = EVENTS_FILE) {
+		super(file, e => typeof e.thread === 'string' && typeof e.event === 'string');
 	}
+}
+
+/** The thread's status from all its events so far, as the board works it out, for commands run outside it. */
+export function threadStatus(thread: string, dir: string | undefined, file = EVENTS_FILE): Status | undefined {
+	let status: Status | undefined;
+	for (const e of new EventReader(file).read()) {
+		if (e.thread === thread && fromThreadDir(e, dir)) status = nextStatus(status, e) ?? status;
+	}
+	return status;
 }

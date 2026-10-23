@@ -5,13 +5,13 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
-import { approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
+import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { editCommit } from './editor.js';
 import { commit, stageAll } from './git.js';
 import { diffPaneCommand, draftCommit } from './review.js';
-import { OO_COMMAND, writeClaudeSettings, writeOoSkill } from './status.js';
-import { threadDir } from './threads.js';
+import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
+import { approvedTodo, threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
 	BOARD_WINDOW,
@@ -22,10 +22,12 @@ import {
 	labelWindow,
 	MIN_TMUX,
 	openSplit,
+	pasteInto,
 	renameCurrentWindow,
 	selectExistingBoard,
 	threadWindowName,
 	tmuxVersionOk,
+	windowNames,
 } from './tmux.js';
 
 const USAGE = `usage:
@@ -40,7 +42,17 @@ function projectCommand(args: string[]): number {
 	const [sub, ...rest] = args;
 	if (sub === 'add' && rest[0]) {
 		const path = resolve(rest[0]);
-		const project = { name: rest[1] ?? basename(path), abbrev: '', path, color: COLORS[state.projects.length % COLORS.length]!, hooks: {}, tracker: 'none' as const, jiraSite: '', jiraProject: '' };
+		const project = {
+			name: rest[1] ?? basename(path),
+			abbrev: '',
+			path,
+			color: COLORS[state.projects.length % COLORS.length]!,
+			wakePrompt: '',
+			hooks: {},
+			tracker: 'none' as const,
+			jiraSite: '',
+			jiraProject: '',
+		};
 		const problem = projectProblem(state, project);
 		if (problem) {
 			console.error(problem);
@@ -123,7 +135,8 @@ async function splitCommand([role, id]: string[]): Promise<number> {
 
 /**
  * `oo commit <id>`, for `a` in the diff beside claude: stage everything, have claude draft the
- * message, edit it in $EDITOR and commit, as approving a step on the board does.
+ * message, edit it in $EDITOR and commit, as approving a step on the board does (telling a stopped
+ * claude to move on included).
  */
 async function commitCommand([id]: string[]): Promise<number> {
 	const state = loadState();
@@ -137,6 +150,8 @@ async function commitCommand([id]: string[]): Promise<number> {
 		console.log('Nothing to commit');
 		return 0;
 	}
+	const window = threadWindowName(id);
+	const waiting = threadStatus(id, cwd) === 'stopped' && (await windowNames()).includes(window);
 	const message = await editCommit((await draftCommit(cwd, thread)) ?? '', thread.branch ?? cwd);
 	if (!message) {
 		console.log('Commit cancelled (changes left staged)');
@@ -144,8 +159,14 @@ async function commitCommand([id]: string[]): Promise<number> {
 	}
 	await commit(cwd, message);
 	console.log(`Committed on ${thread.branch ?? cwd}: ${message.split('\n')[0]}`);
+	const item = approvedTodo(thread.todos ?? []);
 	const ticked = await approveTodo(thread.id);
 	if (ticked) console.log(ticked);
+	if (waiting && (await windowNames()).includes(window)) {
+		const todos = loadState().threads.find(t => t.id === id)?.todos ?? [];
+		await pasteInto(window, approvedPrompt(todos, item, message.split('\n')[0]!));
+		console.log('Told claude to move on');
+	}
 	return 0;
 }
 

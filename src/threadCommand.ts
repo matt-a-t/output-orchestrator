@@ -13,8 +13,10 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread show [id] [--json]
   oo thread move [id] <column>
                               columns: ${[...COLUMNS, 'archived'].join(', ')}
-                              Moving to pr, and into or out of Local, is done on the board;
-                              a thread in Local can't move until it's back.
+                              Moving to pr is done on the board; a thread in Local can't move until it's back.
+  oo thread local [id] [in|out]
+                              put the thread in Local, checking its branch out in the project's own checkout,
+                              or bring it back (no direction: toggle, like t on the board). Needs the board running.
   oo thread plan [id] --plan-file <path>|-
                               replace the thread's plan
   oo thread todo [id] set --file <path>|-
@@ -196,6 +198,18 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		console.log(response.message);
 		return 0;
 	}
+	if (sub === 'local') {
+		const { positional } = parseArgs(rest, [], []);
+		if (positional.length > 2) throw new UsageError('oo thread local [id] [in|out]');
+		const last = positional.at(-1);
+		const direction = last === 'in' || last === 'out' ? last : undefined;
+		const ids = direction ? positional.slice(0, -1) : positional;
+		if (ids.length > 1) throw new UsageError(`Unknown direction "${last}"; in or out`);
+		const thread = resolveThreadId(state, ids[0], ctx.env, ctx.cwd);
+		// It checks out, closes and resumes claude and runs hooks, which only the board can do.
+		if (!boardRunning(ctx.dir)) return fail('Moving into or out of Local needs the board running');
+		return report(await sendRequest({ op: 'local', thread, local: direction ? direction === 'in' : 'toggle' }, { dir: ctx.dir }));
+	}
 	if (sub === 'plan') {
 		const { positional, flag } = parseArgs(rest, ['plan-file'], []);
 		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
@@ -286,6 +300,22 @@ export function todoBriefing(todos: Todo[]): string | undefined {
 	return `This thread's checkpoints (${todoProgress(todos)} done):\n${list}\nOnes in review are waiting for the user to approve them on the board; otherwise carry on from the first one that isn't done. Keep their status current with \`oo thread todo <n> <status>\`.`;
 }
 
+/**
+ * What a stopped claude is told once its step is approved and committed: which checkpoint that was
+ * (`ticked`, -1 for none) and what to do next. `todos` are the checkpoints after ticking it off.
+ */
+export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: string): string {
+	const done = ticked === -1 ? 'The user approved your changes and committed them' : `The user approved and committed your step "${todos[ticked]!.subject}"`;
+	const next = todos.findIndex(t => t.status !== 'done');
+	const then =
+		next !== -1
+			? `Move on to the next checkpoint: ${next + 1}. ${todos[next]!.subject}. Mark it active with \`oo thread todo ${next + 1} active\`.`
+			: todos.length
+				? "All checkpoints are done; carry on with what's left (e.g. the PR)."
+				: 'Move on to the next step.';
+	return `${done} (commit: ${commitSubject}). ${then}`;
+}
+
 /** After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint, as approving it on the board does. */
 export async function approveTodo(thread: string, ctx: Context = defaultContext()): Promise<string | undefined> {
 	const todos = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread)?.todos ?? [];
@@ -295,16 +325,24 @@ export async function approveTodo(thread: string, ctx: Context = defaultContext(
 	return response.ok ? `✓ ${todos[item]!.subject}` : `✗ ${response.message}`;
 }
 
-/** Claude hook for SessionStart (see sessionHook.ts): the thread's checkpoints, for claude; undefined if it has none to do. */
+/** What a thread's claude is told as it starts in Local, which the move into it restarts claude for. Imported threads don't move. */
+function localBriefing(state: State, t: Thread): string | undefined {
+	if (!t.local || t.cwd) return;
+	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or t on the board) brings it back to its worktree.`;
+}
+
+/** Claude hook for SessionStart (see sessionHook.ts): whether it's in Local and the thread's checkpoints, for claude; undefined if there's neither. */
 export function sessionStarted(input: any, ctx: Context): string | undefined {
 	const state = loadState(join(ctx.dir, 'state.json'));
-	let thread: string;
+	let id: string;
 	try {
-		thread = resolveThreadId(state, undefined, ctx.env, typeof input?.cwd === 'string' ? input.cwd : ctx.cwd);
+		id = resolveThreadId(state, undefined, ctx.env, typeof input?.cwd === 'string' ? input.cwd : ctx.cwd);
 	} catch {
 		return;
 	}
-	return todoBriefing(state.threads.find(t => t.id === thread)?.todos ?? []);
+	const thread = state.threads.find(t => t.id === id)!;
+	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? [])].filter(Boolean);
+	return parts.length ? parts.join('\n') : undefined;
 }
 
 function fail(message: string): number {
