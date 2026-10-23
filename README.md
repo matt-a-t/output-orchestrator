@@ -102,11 +102,11 @@ scroll and go back to the board (see [KEYS.md](KEYS.md)).
 
 ### Local: trying a thread in your usual setup
 
-`t` puts a thread in Local, a box beside the columns, so you can try it out in your usual dev
+`t` puts a thread in Local, so you can try it out in your usual dev
 setup. Its branch is checked out in the project's own checkout (which must have no uncommitted
 changes to tracked files), its worktree is removed, and its claude moves there too. Only one
-thread per project fits. The thread keeps its column, which is shown on its card, but it can't
-move between columns until `t` brings it back. Bringing it back needs the checkout clean, puts
+thread per project fits. The thread stays where it is in its column, its card outlined in yellow,
+but it can't move between columns until `t` brings it back. Bringing it back needs the checkout clean, puts
 the checkout back on the default branch, and gives the thread its worktree again.
 
 ### Project hooks
