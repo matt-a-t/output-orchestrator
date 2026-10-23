@@ -1028,14 +1028,28 @@ export function App() {
 	/** The highlighted thread's progress through claude's task list, with the current step in view. */
 	const todoList = (todos: Todo[]) => {
 		const { start, end } = todoWindow(todos, MAX_TODO_LINES);
-		const more = (n: number, arrow: string) => (n > 0 ? <Text dimColor>  {arrow} {n} more</Text> : null);
+		// Step numbers are right-aligned so the subjects line up past step 9.
+		const width = String(todos.length).length;
+		const indent = ' '.repeat(width + 4);
+		const more = (n: number, arrow: string) =>
+			n > 0 ? (
+				<Text dimColor>
+					{indent}
+					{arrow} {n} more
+				</Text>
+			) : null;
 		return (
 			<Box flexDirection="column">
-				<Text dimColor>todo {todoProgress(todos)}</Text>
+				<Text>
+					<Text bold>todo</Text> {todoProgress(todos)}
+				</Text>
 				{more(start, '↑')}
 				{todos.slice(start, end).map((todo, i) => (
 					<Text key={start + i} wrap="truncate">
 						{'  '}
+						<Text color={TODO_COLORS[todo.status]} dimColor={todo.status === 'done'}>
+							{String(start + i + 1).padStart(width)}.
+						</Text>{' '}
 						<Text color={TODO_COLORS[todo.status]}>{TODO_MARKS[todo.status]}</Text>{' '}
 						<Text bold={todo.status === 'active' || todo.status === 'review'} dimColor={todo.status === 'done'}>
 							{todo.subject}
