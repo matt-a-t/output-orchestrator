@@ -153,7 +153,7 @@ function formatComments(comments: Comment[]): string {
  * Have claude draft a commit message for the staged changes, in the style of the branch's recent
  * commits. Returns undefined if claude fails or says nothing.
  */
-export async function draftCommit(cwd: string, thread: Thread): Promise<string | undefined> {
+export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSignal): Promise<string | undefined> {
 	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
 	const log = await git(['log', '-5', '--format=%B---']).catch(() => '');
 	const stat = await git(['diff', '--cached', '--stat']);
@@ -176,5 +176,5 @@ export async function draftCommit(cwd: string, thread: Thread): Promise<string |
 		'Diff:',
 		diff,
 	].join('\n');
-	return (await askClaude(cwd, prompt)) || undefined;
+	return (await askClaude(cwd, prompt, signal)) || undefined;
 }
