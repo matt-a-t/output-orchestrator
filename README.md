@@ -184,6 +184,13 @@ from the thread's commits and diff (with the ticket added, see [Tickets](#ticket
 cancels). `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
 Windows' default browser). The board checks open PRs every minute and moves merged ones to Done.
 
+`u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
+branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread with a
+PR is then force-pushed (`--force-with-lease`), which clears a "conflicts with base" badge once
+GitHub catches up. If the rebase conflicts, it's left partway and the thread's claude (resumed in
+the background if it's closed) is told which files to resolve, to finish the rebase and, with a
+PR, to push. `u` says no while claude is working or waiting on a question.
+
 Moving a thread to Done or archiving it (`x`) removes the worktree and closes its claude window.
 The branch stays. Done keeps a worktree that has uncommitted changes, and archiving refuses
 until they're committed or discarded. `F` moves a thread straight to Done from any column after
@@ -204,7 +211,7 @@ A project doesn't have to be a git repo: `oo project add ~ home` or `oo project 
 gives you somewhere to start threads that work on your machine or your claude settings. A path
 that isn't a repo gets **worktrees** turned off (also in the projects screen, `P`), and then
 every thread runs in the project directory itself, several at once. There's no branch, so
-diffs, comments, approve, Local and PR are off for them; `F` moves one to Done when you're
+diffs, comments, approve, `u`, Local and PR are off for them; `F` moves one to Done when you're
 finished.
 
 ### From the command line
