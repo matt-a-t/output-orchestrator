@@ -16,7 +16,7 @@ const APPROVE_STATUS = 65;
 const PANE_KEYS = '#command\na quit A\nr quit R\nt quit T\n';
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// What delta's --navigate labels files and hunks with. It takes the whole line so less highlights all of it.
+// What delta's --navigate labels files and hunks with.
 const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 
 /**
@@ -84,6 +84,7 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
  * diff through delta. The stat stays out of delta so it isn't restyled; n/N skip it.
  */
 function statThenDiff(git: string): string {
+	// Header styles come from the user's [delta] git config (the README has a recommended one).
 	return `{ ${git} --stat="$(tput cols)" --compact-summary --color=always; echo; ${git} | delta --paging=never --navigate; }`;
 }
 
@@ -94,13 +95,12 @@ function gitCommand(args: string[]): string {
 /** less over delta's output, with n/N jumping between files and hunks. */
 function lessCommand(keys?: string): string {
 	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
-	// Headers are highlighted black on yellow (-DSkY), and -j4 lands a jump on the 4th row so the
-	// end of the hunk before shows above it.
+	// Matches aren't highlighted (-G) so delta's header styles show through, and -j4 lands a jump on
+	// the 4th row so the end of the hunk before shows above it.
 	const less = [
 		'less',
 		'-R',
-		'--use-color',
-		'-DSkY',
+		'-G',
 		'-j4',
 		`--pattern=${NAVIGATE_PATTERN}`,
 		'+g',
