@@ -40,7 +40,9 @@ import {
 	archiveProblem,
 	doneProblem,
 	createWorktree as worktreeFor,
+	moveProblem,
 	moveWarning,
+	noRepo,
 	setColumn as moveTo,
 	syncWorktree as syncWorktreeFor,
 	approvedTodo,
@@ -282,7 +284,7 @@ export function App() {
 			checking = true;
 			try {
 				const dirty = new Set<string>();
-				const threads = stateRef.current.threads.filter(t => t.column !== 'archived');
+				const threads = stateRef.current.threads.filter(t => t.column !== 'archived' && !noRepo(stateRef.current, t));
 				await Promise.all(
 					threads.map(async t => {
 						const dir = threadDir(stateRef.current, t);
@@ -326,6 +328,8 @@ export function App() {
 		const col = COLUMNS.indexOf(column);
 		// Its branch is checked out in the project's checkout, not its worktree, until it comes back.
 		if (thread.local) return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
+		const problem = moveProblem(state, thread, column);
+		if (problem) return setMessage(problem);
 		// Its claude is in plan mode just while it's Planned (see launchClaude), so an open one restarts on the way in or out.
 		const restart = (thread.column === 'planned') !== (column === 'planned') && liveWindows.has(threadWindowName(thread.id));
 		if (restart && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
@@ -434,6 +438,8 @@ export function App() {
 			const other = stateRef.current.threads.find(t => t.local && t.project === thread.project);
 			if (other) return `${thread.project} already has #${other.id} ${other.title} in Local`;
 			if (thread.column === 'done') return `#${thread.id} is done — move it back to Polish first`;
+			const reason = noRepo(stateRef.current, thread);
+			if (reason) return `${reason} — there's no checkout to bring it into`;
 		}
 		// Imported threads already run in their own directory, with no branch to move.
 		if (thread.cwd) return;
@@ -622,9 +628,11 @@ export function App() {
 		return () => clearInterval(timer);
 	}, []);
 
-	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one. */
-	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>) =>
+	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one; `git` if fn needs the thread's branch. */
+	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>, { git = false } = {}) =>
 		run(async () => {
+			const reason = git && noRepo(stateRef.current, thread);
+			if (reason) return setMessage(`⚠ ${reason} — there are no changes to diff or review`);
 			const dir = threadDir(stateRef.current, thread);
 			if (dir) return await fn(dir);
 			if (thread.local) return setMessage(`✗ Unknown project "${thread.project}"`);
@@ -852,7 +860,7 @@ export function App() {
 			}
 			const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
 			await openSplit(window, cwd, role, command, { OO_THREAD_ID: thread.id });
-		});
+		}, { git: role === 'diff' });
 
 	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
 	const startImport = () => {
@@ -1005,7 +1013,7 @@ export function App() {
 				const result = await showDiff(cwd, kind, selected);
 				if (result === 'empty') setMessage(`No ${kind} changes`);
 				if (result === 'approved') await approveStep(cwd, selected);
-			});
+			}, { git: true });
 		}
 		if (input === 's') return openBeside(selected, 'shell');
 		if (input === 'c') {
@@ -1019,7 +1027,7 @@ export function App() {
 				if (!(await windowNames()).includes(window)) return setMessage(`✗ #${selected.id}'s claude window closed; comments not sent`);
 				await pasteInto(window, feedback);
 				setMessage(`Sent comments to #${selected.id}`);
-			});
+			}, { git: true });
 		}
 		if (input === 'b') {
 			const { pr } = selected;
@@ -1032,7 +1040,7 @@ export function App() {
 		if (input === 'o') {
 			return inWorktree(selected, async cwd => {
 				if (!(await openChanges(cwd, selected))) setMessage('No changes');
-			});
+			}, { git: true });
 		}
 	});
 

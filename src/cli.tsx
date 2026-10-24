@@ -11,7 +11,7 @@ import { editCommit } from './editor.js';
 import { commit, stageAll } from './git.js';
 import { diffPaneCommand, draftCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
-import { approvedTodo, threadDir } from './threads.js';
+import { approvedTodo, noRepo, threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
 	BOARD_WINDOW,
@@ -129,6 +129,11 @@ async function splitCommand([role, id]: string[]): Promise<number> {
 		console.error(thread ? `#${id} has no worktree` : `usage: oo split <shell|diff> <id>`);
 		return 1;
 	}
+	const reason = role === 'diff' && noRepo(state, thread);
+	if (reason) {
+		console.error(`${reason} — there are no changes to diff`);
+		return 1;
+	}
 	const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
 	await openSplit(threadWindowName(id), cwd, role, command, { OO_THREAD_ID: id });
 	return 0;
@@ -145,6 +150,11 @@ async function commitCommand([id]: string[]): Promise<number> {
 	const cwd = thread && threadDir(state, thread);
 	if (!thread || !cwd) {
 		console.error(thread ? `#${id} has no worktree` : 'usage: oo commit <id>');
+		return 1;
+	}
+	const reason = noRepo(state, thread);
+	if (reason) {
+		console.error(`${reason} — there's no branch to commit to`);
 		return 1;
 	}
 	if (!(await stageAll(cwd))) {

@@ -57,7 +57,10 @@ export function addThread(
 	fields: Pick<Thread, 'project' | 'title'> & Partial<Omit<Thread, 'id' | 'column'>>,
 ): { state: State; thread: Thread } {
 	const now = new Date().toISOString();
-	const thread: Thread = { plan: '', createdAt: now, updatedAt: now, ...fields, id: newThreadId(state), column: 'planned' };
+	// Without worktrees, the thread runs in the project directory, like an imported one.
+	const project = state.projects.find(p => p.name === fields.project);
+	const cwd = project && !project.worktrees ? project.path : undefined;
+	const thread: Thread = { plan: '', createdAt: now, updatedAt: now, cwd, ...fields, id: newThreadId(state), column: 'planned' };
 	return { state: { ...state, threads: [...state.threads, thread] }, thread };
 }
 
@@ -73,6 +76,8 @@ export function setColumn(state: State, id: string, column: Column, patch: Parti
 /** A heads-up about moving the thread to `column` that doesn't stop the move. */
 export function moveWarning(state: State, thread: Thread, column: Column): string | undefined {
 	if (column !== 'active') return;
+	// Threads sharing the project directory is the point of one without worktrees.
+	if (state.projects.find(p => p.name === thread.project)?.worktrees === false) return;
 	const other = state.threads.find(t => t.column === 'active' && t.project === thread.project && t.id !== thread.id);
 	if (other) return `⚠ ${thread.project} already has an active thread: #${other.id} ${other.title}`;
 }
@@ -125,6 +130,20 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 	return { message: `Removed #${thread.id}'s worktree (kept branch ${thread.branch})` };
 }
 
+/**
+ * Why git actions (diffs, commits, PR, Local) are off for the thread, if they are: its project has
+ * no worktrees, so it has no branch of its own. Callers add what that rules out.
+ */
+export function noRepo(state: State, thread: Thread): string | undefined {
+	if (state.projects.find(p => p.name === thread.project)?.worktrees === false) return `#${thread.id} is in ${thread.project}, which has worktrees off`;
+}
+
+/** Why the thread can't move to `column` at all, if it can't: one without worktrees has no PR to open. */
+export function moveProblem(state: State, thread: Thread, column: Column): string | undefined {
+	const reason = column === 'pr' && noRepo(state, thread);
+	if (reason) return `⚠ ${reason} — there's no PR to open, so move it to Done instead`;
+}
+
 /** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
 export function boardOnlyMove(thread: Thread, column: Column): string | undefined {
 	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or t on the board)`;
@@ -170,6 +189,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	}
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem =
+		moveProblem(state, thread, request.column) ??
 		boardOnlyMove(thread, request.column) ??
 		(request.column === 'archived' ? await archiveProblem(thread) : undefined) ??
 		(request.column === 'done' ? await doneProblem(project, thread) : undefined);

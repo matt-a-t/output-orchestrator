@@ -189,8 +189,10 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.length < 1 || positional.length > 2) throw new UsageError('oo thread move [id] <column>');
 		const column = parseColumn(positional.at(-1)!);
 		const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
-		// That removes the directory and closes the thread's claude, which is likely the one asking.
-		if ((column === 'done' || column === 'archived') && threadAt(state, ctx.cwd)?.id === thread) {
+		// That removes the worktree and closes the thread's claude, which is likely the one asking. A thread
+		// with its own directory (imported, or in a project without worktrees) keeps both.
+		const ownDir = state.threads.find(t => t.id === thread)?.cwd;
+		if ((column === 'done' || column === 'archived') && !ownDir && threadAt(state, ctx.cwd)?.id === thread) {
 			return fail(`Moving #${thread} to ${COLUMN_LABELS[column]} from its own directory would close its claude — do it from the board`);
 		}
 		const response = await change({ op: 'move', thread, column }, ctx);
