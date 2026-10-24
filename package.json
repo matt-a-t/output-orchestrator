@@ -1,20 +1,47 @@
 {
   "name": "output-orchestrator",
   "version": "0.1.0",
-  "description": "Kanban TUI for orchestrating Claude Code sessions in tmux",
+  "description": "Kanban TUI for orchestrating Claude Code threads in tmux",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tmux",
+    "kanban",
+    "tui",
+    "git-worktree"
+  ],
+  "homepage": "https://github.com/matt-a-t/output-orchestrator#readme",
+  "bugs": {
+    "url": "https://github.com/matt-a-t/output-orchestrator/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matt-a-t/output-orchestrator.git"
+  },
+  "license": "MIT",
+  "author": "Matt Armstrong",
   "type": "module",
   "bin": {
     "oo": "dist/cli.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "build": "tsc && chmod +x dist/cli.js",
+    "clean-build": "rm -rf dist && npm run build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "prepublishOnly": "rm -rf dist && npm run build"
   },
   "engines": {
     "node": ">=22"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "dependencies": {
     "execa": "^10.2.0",
     "ink": "^8.0.0",

@@ -13,6 +13,17 @@ export function insideTmux(): boolean {
 	return Boolean(process.env.TMUX);
 }
 
+/** Popups (display-popup) arrived in tmux 3.2. */
+export const MIN_TMUX = [3, 2] as const;
+
+/** Whether `tmux -V` output is new enough; builds it can't read (e.g. `tmux master`) get the benefit of the doubt. */
+export function tmuxVersionOk(versionOutput: string): boolean {
+	const match = versionOutput.match(/(\d+)\.(\d+)/);
+	if (!match) return true;
+	const [major, minor] = [Number(match[1]), Number(match[2])];
+	return major > MIN_TMUX[0] || (major === MIN_TMUX[0] && minor >= MIN_TMUX[1]);
+}
+
 export function threadWindowName(threadId: string): string {
 	return `oo-${threadId}`;
 }
@@ -80,11 +91,7 @@ export async function openWindow(
  * if it's showing something else), then jump to it. `role` tags the pane so it's found again.
  */
 export async function openSplit(window: string, cwd: string, role: string, command: string[], env: Record<string, string> = {}): Promise<void> {
-	const { stdout } = await execa('tmux', ['list-panes', '-t', `:${window}`, '-F', '#{pane_id}\t#{@oo-split}']);
-	const split = stdout
-		.split('\n')
-		.map(line => line.split('\t'))
-		.find(([, r]) => r);
+	const split = (await panes(window)).find(([, r]) => r);
 	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 	let pane = split?.[0];
 	if (!pane) {
@@ -128,14 +135,24 @@ export async function selectExistingBoard(): Promise<boolean> {
 	return other;
 }
 
-/** Type `text` into a window as a bracketed paste, then press Enter to submit it. */
+/** A window's panes, as [pane ID, the role openSplit tagged it with (empty for claude's)]. */
+async function panes(window: string): Promise<string[][]> {
+	const { stdout } = await execa('tmux', ['list-panes', '-t', `:${window}`, '-F', '#{pane_id}\t#{@oo-split}']);
+	return stdout.split('\n').map(line => line.split('\t'));
+}
+
+/**
+ * Type `text` into a thread window's claude as a bracketed paste, then press Enter to submit it.
+ * Aimed at claude's pane, not the window's active one, which may be the split beside it.
+ */
 export async function pasteInto(name: string, text: string): Promise<void> {
+	const pane = (await panes(name)).find(([, role]) => !role)?.[0] ?? `:${name}`;
 	const buffer = `oo-${randomUUID()}`;
 	await execa('tmux', ['load-buffer', '-b', buffer, '-'], { input: text });
-	await execa('tmux', ['paste-buffer', '-p', '-d', '-b', buffer, '-t', `:${name}`]);
+	await execa('tmux', ['paste-buffer', '-p', '-d', '-b', buffer, '-t', pane]);
 	// An Enter arriving with the paste can be swallowed by it rather than submitting.
 	await setTimeout(200);
-	await execa('tmux', ['send-keys', '-t', `:${name}`, 'Enter']);
+	await execa('tmux', ['send-keys', '-t', pane, 'Enter']);
 }
 
 // Thread windows only, not the board or a project's hook window.

@@ -16,8 +16,8 @@ const APPROVE_STATUS = 65;
 const PANE_KEYS = '#command\na quit A\nr quit R\nt quit T\n';
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// What delta's --navigate labels files and hunks with.
-const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:)';
+// What delta's --navigate labels files and hunks with. It takes the whole line so less highlights all of it.
+const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 
 /**
  * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
@@ -30,7 +30,7 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 	const approvable = kind === 'step';
 	const label = kind === 'step' ? 'step diff' : `thread diff vs ${args.at(-1)}`;
 	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}q close `;
-	const command = `${gitCommand(args)} | delta --paging=never --navigate | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : undefined)}`;
+	const command = `${statThenDiff(gitCommand(args))} | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : undefined)}`;
 	for (;;) {
 		if ((await popup(command, { cwd, title })) !== APPROVE_STATUS) return 'closed';
 		// Anything but y goes back to the diff.
@@ -48,10 +48,10 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
 	const whole = ['diff', ...(await diffRevs(cwd, 'thread', thread))];
 	const keys = lesskey('pane', PANE_KEYS);
 	const keysHint = (other: string) => `t ${other}  a commit  r refresh  q close`;
-	// less starts at the first file, so the label goes in its (short, the s) prompt; these characters are special there.
+	// The label goes in less's (short, the s) prompt so it stays in view; these characters are special there.
 	const prompt = (label: string, other: string) => `--prompt=s${`${label} — n/N hunk  ${keysHint(other)}`.replace(/[?:.%\\]/g, '\\$&')}`;
 	const show = (fn: string, label: string, other: string) =>
-		`${fn} | delta --paging=never --navigate | ${lessCommand(keys)} ${shellQuote(prompt(label, other))}`;
+		`${statThenDiff(fn)} | ${lessCommand(keys)} ${shellQuote(prompt(label, other))}`;
 	const ooCommit = [...OO_COMMAND, 'commit', thread.id].map(shellQuote).join(' ');
 	const script = [
 		`step() { ${gitCommand(step)} "$@"; }`,
@@ -79,13 +79,33 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
 	return ['bash', '-c', script];
 }
 
+/**
+ * The diff's stat (each changed file and how much it changed, sized to the terminal), then the
+ * diff through delta. The stat stays out of delta so it isn't restyled; n/N skip it.
+ */
+function statThenDiff(git: string): string {
+	return `{ ${git} --stat="$(tput cols)" --compact-summary --color=always; echo; ${git} | delta --paging=never --navigate; }`;
+}
+
 function gitCommand(args: string[]): string {
 	return `git ${args.map(shellQuote).join(' ')}`;
 }
 
 /** less over delta's output, with n/N jumping between files and hunks. */
 function lessCommand(keys?: string): string {
-	const less = ['less', '-R', `--pattern=${NAVIGATE_PATTERN}`, ...(keys ? [`--lesskey-src=${keys}`] : [])];
+	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
+	// Headers are highlighted black on yellow (-DSkY), and -j4 lands a jump on the 4th row so the
+	// end of the hunk before shows above it.
+	const less = [
+		'less',
+		'-R',
+		'--use-color',
+		'-DSkY',
+		'-j4',
+		`--pattern=${NAVIGATE_PATTERN}`,
+		'+g',
+		...(keys ? [`--lesskey-src=${keys}`] : []),
+	];
 	return less.map(shellQuote).join(' ');
 }
 

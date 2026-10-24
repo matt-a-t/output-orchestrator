@@ -6,13 +6,18 @@ import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from '
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { JsonlReader } from './jsonl.js';
-import { DATA_DIR, type Column } from './state.js';
+import { DATA_DIR, type Column, type Thread, type TodoStatus } from './state.js';
 
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
-	| { id: string; op: 'add'; project: string; title: string; plan: string }
+	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: Thread['ticket'] }
 	| { id: string; op: 'move'; thread: string; column: Column }
-	| { id: string; op: 'plan'; thread: string; plan: string };
+	// Only the board can do this one (it checks out, moves claude and runs hooks); 'toggle' is what t does.
+	| { id: string; op: 'local'; thread: string; local: boolean | 'toggle' }
+	| { id: string; op: 'plan'; thread: string; plan: string }
+	| { id: string; op: 'todos'; thread: string; subjects: string[] }
+	// `item` counts from 1, as `oo thread show` lists them.
+	| { id: string; op: 'todo'; thread: string; item: number; status: TodoStatus };
 export type Response = { id: string; ok: boolean; message: string; thread?: string };
 
 export const requestsFile = (dir = DATA_DIR) => join(dir, 'requests.jsonl');
@@ -52,7 +57,7 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'plan'].includes(r.op);
+const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'plan', 'todos', 'todo'].includes(r.op);
 const isResponse = (r: any) => typeof r.id === 'string' && typeof r.ok === 'boolean';
 
 /** The board's side: new requests since the last read. */

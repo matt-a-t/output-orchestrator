@@ -19,9 +19,17 @@ const ColumnSchema = z.enum([...COLUMNS, 'archived']);
 export type Column = z.infer<typeof ColumnSchema>;
 
 /** Shell commands a project runs when things happen on the board (see hooks.ts). */
-export const HOOK_EVENTS = ['enterLocal', 'leaveLocal'] as const;
+export const HOOK_EVENTS = ['enterLocal', 'leaveLocal', 'enterPolish', 'leavePolish'] as const;
 export type ProjectHook = (typeof HOOK_EVENTS)[number];
-export const HOOK_LABELS: Record<ProjectHook, string> = { enterLocal: 'enter local', leaveLocal: 'leave local' };
+export const HOOK_LABELS: Record<ProjectHook, string> = {
+	enterLocal: 'enter local',
+	leaveLocal: 'leave local',
+	enterPolish: 'enter polish',
+	leavePolish: 'leave polish',
+};
+
+export const TRACKERS = ['none', 'github', 'jira'] as const;
+export type Tracker = (typeof TRACKERS)[number];
 
 const ProjectSchema = z.object({
 	name: z.string(),
@@ -29,9 +37,24 @@ const ProjectSchema = z.object({
 	abbrev: z.string().default(''),
 	path: z.string(),
 	color: z.enum(COLORS),
+	// What w / W paste into a woken claude; empty means DEFAULT_WAKE_PROMPT.
+	wakePrompt: z.string().default(''),
 	hooks: z.partialRecord(z.enum(HOOK_EVENTS), z.string()).default({}),
+	// Where the project's tickets live (see tickets.ts); jira needs the site and the key prefix.
+	tracker: z.enum(TRACKERS).default('none'),
+	jiraSite: z.string().default(''),
+	jiraProject: z.string().default(''),
 });
 export type Project = z.infer<typeof ProjectSchema>;
+
+export const DEFAULT_WAKE_PROMPT = 'You were interrupted (your session was closed). Pick up where you left off and keep going.';
+
+/** A thread's checkpoints: each is worked on (active), handed over (review), then approved and committed (done). */
+export const TODO_STATUSES = ['pending', 'active', 'review', 'done'] as const;
+export type TodoStatus = (typeof TODO_STATUSES)[number];
+const TodoSchema = z.object({ subject: z.string(), status: z.enum(TODO_STATUSES) });
+export type Todo = z.infer<typeof TodoSchema>;
+export const TODO_MARKS: Record<TodoStatus, string> = { pending: '○', active: '▸', review: '●', done: '✓' };
 
 const ThreadSchema = z.preprocess(
 	// Local used to be a column, "uitest", between Polish and PR.
@@ -57,8 +80,12 @@ const ThreadSchema = z.preprocess(
 		base: z.string().optional(),
 		// Where the worktree lives; recorded when the project is renamed (see worktreePath).
 		worktree: z.string().optional(),
+		// The Jira ticket (AV-123) or GitHub issue (#45) the thread works on; names the branch and PR.
+		ticket: z.object({ key: z.string(), url: z.string() }).optional(),
 		// Opened on moving to PR; polled so the thread moves to Done once it's merged.
 		pr: z.object({ number: z.number(), url: z.string() }).optional(),
+		// Checkpoints to review and commit, kept across claude runs (see `oo thread todo`).
+		todos: z.array(TodoSchema).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),
@@ -100,6 +127,7 @@ export function projectProblem(state: State, project: Project, original?: string
 	if (!project.name) return 'Name is empty';
 	if (project.name !== original && state.projects.some(p => p.name === project.name)) return `Project "${project.name}" already exists`;
 	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
+	if (project.tracker === 'jira' && !project.jiraSite) return 'Jira tickets need a jira site';
 }
 
 export function newThreadId(state: State): string {

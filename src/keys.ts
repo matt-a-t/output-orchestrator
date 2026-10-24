@@ -10,6 +10,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['H/L', 'move the thread a column'],
 			['J/K', 'reorder within its column'],
 			['⏎', 'open (or resume) its claude'],
+			['w / W', 'wake it / every thread closed mid-work ("keep going")'],
 			['n', 'new thread'],
 			['e', 'edit the thread'],
 			['t', 'into / out of Local'],
@@ -18,7 +19,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['C', 'cycle its colour'],
 			['p / esc', 'filter by project / clear it'],
 			['i', 'import a thread started outside oo'],
-			['P', 'projects (and their hooks)'],
+			['P', 'projects (their hooks and wake prompt)'],
 			['?', 'these keys'],
 			['q', 'quit'],
 		],
@@ -36,7 +37,7 @@ export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'In a diff',
 		keys: [
-			['n/N', 'next / previous file or hunk'],
+			['n/N', 'next / previous file or hunk (the stat is on top)'],
 			['a', 'approve the step (d) / commit (beside claude)'],
 			['t', 'uncommitted / whole thread (beside claude)'],
 			['r', 'refresh (beside claude)'],
