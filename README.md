@@ -76,7 +76,7 @@ already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved. Each card shows the thread number and project abbreviation (or name, if it has none),
+approved, ✉ messages from other threads its claude hasn't heard yet. Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath (after its ticket key, if it has one).
 
 ### Tickets
@@ -241,12 +241,25 @@ every thread runs in the project directory itself, several at once. There's no b
 diffs, comments, approve, `u`, Local and PR are off for them; `F` moves one to Done when you're
 finished.
 
+### Messages between threads
+
+Threads whose work is related can pass each other context. A thread's claude runs
+`oo thread send <id> <message>` (or `--file -`) when its work changes something another thread
+relies on, such as an API, a shared file or a decision, and the message waits in that thread's inbox,
+shown as ✉ on its card. The board pastes it into the other claude once its turn ends (never while
+it's working or waiting on a question). If that claude is closed, it's told as it next starts, or straight
+away with `--wake`, which resumes it. Run outside a thread, `oo thread send` sends from you.
+`oo thread inbox [id]` lists what a thread has been sent.
+
+A starting claude is told which other threads are open in its project, and the `oo` skill tells it
+when a message is worth sending and to reply only when there's something to say.
+
 ### From the command line
 
-`oo thread add|list|show|move|local|pr|plan|todo` reads and changes the board from a shell, and from inside a
+`oo thread add|list|show|move|local|pr|plan|todo|send|inbox` reads and changes the board from a shell, and from inside a
 thread's claude, where the thread id defaults to that thread. Run `oo help` to see them all.
 claude learns these commands from an `oo` skill that the board installs (see below), so you can
-ask a thread's claude to file follow-up work as a new thread.
+ask a thread's claude to file follow-up work as a new thread, or to tell another thread about a change.
 
 ## Keys
 

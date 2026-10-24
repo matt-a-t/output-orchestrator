@@ -396,9 +396,18 @@ function localBriefing(state: State, t: Thread): string | undefined {
 	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or t on the board) brings it back to its worktree.`;
 }
 
+/** What a thread's claude is told as it starts about the project's other open threads, so it knows who it can tell about its work. */
+function relatedBriefing(state: State, t: Thread): string | undefined {
+	const open = state.threads.filter(o => o.id !== t.id && o.project === t.project && o.column !== 'done' && o.column !== 'archived');
+	if (!open.length) return;
+	const shown = open.slice(0, 8).map(o => `#${o.id} ${o.title} (${COLUMN_LABELS[o.column]})`);
+	const more = open.length > shown.length ? `, and ${open.length - shown.length} more (oo thread list)` : '';
+	return `Other open threads in ${t.project}: ${shown.join('; ')}${more}. If your work changes something one of them relies on, tell it with \`oo thread send <id> --file - <<'EOF'\`.`;
+}
+
 /**
- * Claude hook for SessionStart (see sessionHook.ts): whether it's in Local, the thread's checkpoints and
- * messages waiting for it, for claude; undefined if there's none of those. The messages count as delivered then.
+ * Claude hook for SessionStart (see sessionHook.ts): whether it's in Local, the thread's checkpoints, messages
+ * waiting for it and the project's other open threads, for claude; undefined if there's none of those. The messages count as delivered then.
  */
 export async function sessionStarted(input: any, ctx: Context): Promise<string | undefined> {
 	const state = loadState(join(ctx.dir, 'state.json'));
@@ -412,7 +421,7 @@ export async function sessionStarted(input: any, ctx: Context): Promise<string |
 	const messages = undelivered(thread.inbox);
 	// Briefly, since claude waits on this hook to start; a board busy with something slow applies it later.
 	if (messages.length) await change({ op: 'delivered', thread: id, count: messages.length }, { ...ctx, timeoutMs: 5_000 });
-	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? []), messages.length ? messagesPrompt(state, messages) : undefined].filter(Boolean);
+	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? []), messages.length ? messagesPrompt(state, messages) : undefined, relatedBriefing(state, thread)].filter(Boolean);
 	return parts.length ? parts.join('\n') : undefined;
 }
 
