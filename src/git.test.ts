@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { branchName, currentRef, renameBranch } from './git.js';
+import { branchName, currentRef, isDirty, rebaseInProgress, rebaseOnMain, renameBranch } from './git.js';
 import type { Thread } from './state.js';
 
 const thread = (t: Partial<Thread>): Thread => ({
@@ -62,4 +62,43 @@ test('keeps a branch that has been pushed or has a PR', async () => {
 	const result = await renameBranch(r, t);
 	assert.equal(result.branch, undefined);
 	assert.match(result.message!, /Kept #7's branch oo\/do-the-thing/);
+});
+
+/** A clone of a bare origin, on a branch that sets `f` to `branch`; origin's main has moved on from `file` to `upstream` since. */
+async function behindMain(file: string, branch: string, upstream: string): Promise<string> {
+	const dir = mkdtempSync(join(tmpdir(), 'oo-git-'));
+	const [origin, clone, other] = ['origin', 'clone', 'other'].map(name => join(dir, name)) as [string, string, string];
+	const commit = async (cwd: string, text: string, message: string) => {
+		writeFileSync(join(cwd, 'f'), text);
+		await execa('git', ['-C', cwd, 'add', 'f']);
+		await execa('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', message]);
+	};
+	await execa('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+	await execa('git', ['clone', '-q', origin, other]);
+	await commit(other, file, 'init');
+	await execa('git', ['-C', other, 'push', '-q', 'origin', 'HEAD:main']);
+	await execa('git', ['clone', '-q', origin, clone]);
+	// The rebase makes commits of its own.
+	await execa('git', ['-C', clone, 'config', 'user.name', 't']);
+	await execa('git', ['-C', clone, 'config', 'user.email', 't@t']);
+	await execa('git', ['-C', clone, 'checkout', '-qb', 'oo/x']);
+	await commit(clone, branch, 'branch');
+	await commit(other, upstream, 'upstream');
+	await execa('git', ['-C', other, 'push', '-q', 'origin', 'HEAD:main']);
+	return clone;
+}
+
+test('rebases on origin/main, keeping uncommitted changes', async () => {
+	const clone = await behindMain('a\n-\n-\nb\n', 'A\n-\n-\nb\n', 'a\n-\n-\nB\n');
+	writeFileSync(join(clone, 'new'), 'wip');
+	assert.deepEqual(await rebaseOnMain(clone, 'main'), { result: 'rebased' });
+	assert.equal(readFileSync(join(clone, 'f'), 'utf8'), 'A\n-\n-\nB\n');
+	assert.ok(await isDirty(clone));
+	assert.deepEqual(await rebaseOnMain(clone, 'main'), { result: 'up-to-date' });
+});
+
+test('leaves a conflicting rebase in progress and says which files', async () => {
+	const clone = await behindMain('a\n', 'mine\n', 'theirs\n');
+	assert.deepEqual(await rebaseOnMain(clone, 'main'), { result: 'conflicts', files: ['f'] });
+	assert.ok(await rebaseInProgress(clone));
 });

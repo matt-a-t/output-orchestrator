@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { addThread, approvedTodo, inDir, todoWindow } from './threads.js';
+import { addThread, approvedTodo, conflictPrompt, inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -324,4 +324,10 @@ test('a project inside a thread\'s directory is nearer than the thread', () => {
 	const s = addThread({ ...state, projects: [...state.projects, home] }, { project: 'home', title: 'x' }).state;
 	assert.equal(resolveProject(s, join(project, 'sub'), undefined), 'p');
 	assert.equal(resolveProject(s, dir, undefined), 'home');
+});
+
+test('the conflict prompt names the files, and says to push only with a PR', () => {
+	assert.match(conflictPrompt('main', ['a.ts', 'b.ts'], false), /origin\/main stopped on conflicts in: a\.ts, b\.ts\./);
+	assert.doesNotMatch(conflictPrompt('main', ['a.ts'], false), /push/);
+	assert.match(conflictPrompt('main', ['a.ts'], true), /git push --force-with-lease/);
 });

@@ -183,3 +183,36 @@ export async function stageAll(cwd: string): Promise<boolean> {
 export async function pushBranch(cwd: string, branch: string): Promise<void> {
 	await git(cwd, ['push', '-u', 'origin', branch]);
 }
+
+/** Force-push after a rebase, unless origin has commits we haven't seen. */
+export async function forcePushBranch(cwd: string, branch: string): Promise<void> {
+	await git(cwd, ['push', '--force-with-lease', '-u', 'origin', branch]);
+}
+
+/** Whether a rebase in `cwd` stopped partway, e.g. on conflicts. */
+export async function rebaseInProgress(cwd: string): Promise<boolean> {
+	for (const dir of ['rebase-merge', 'rebase-apply']) {
+		const { stdout } = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-path', dir]);
+		if (existsSync(stdout)) return true;
+	}
+	return false;
+}
+
+export type RebaseResult = { result: 'up-to-date' | 'rebased' } | { result: 'conflicts'; files: string[] };
+
+/**
+ * Fetch origin's `base` and rebase the checked-out branch onto it, keeping uncommitted changes
+ * (autostashed in the rebase's own state, not the stash list shared with other worktrees). On
+ * conflicts the rebase is left in progress for someone to finish.
+ */
+export async function rebaseOnMain(cwd: string, base: string): Promise<RebaseResult> {
+	await git(cwd, ['fetch', 'origin', base]);
+	const upstream = `origin/${base}`;
+	const behind = await execa('git', ['-C', cwd, 'merge-base', '--is-ancestor', upstream, 'HEAD'], { reject: false });
+	if (behind.exitCode === 0) return { result: 'up-to-date' };
+	const rebased = await execa('git', ['-C', cwd, 'rebase', '--autostash', upstream], { reject: false });
+	if (rebased.exitCode === 0) return { result: 'rebased' };
+	if (!(await rebaseInProgress(cwd))) throw new Error(rebased.stderr || rebased.stdout);
+	const { stdout } = await git(cwd, ['diff', '--name-only', '--diff-filter=U']);
+	return { result: 'conflicts', files: stdout.split('\n').filter(Boolean) };
+}

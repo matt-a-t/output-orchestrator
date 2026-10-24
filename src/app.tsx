@@ -5,7 +5,21 @@ import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMEle
 import { COMMIT_FORM, commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
 import { EDITOR, parsePr, prText } from './editor.js';
 import { runColumnHook, tryHook } from './hooks.js';
-import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
+import {
+	checkout,
+	currentRef,
+	defaultBranch,
+	forcePushBranch,
+	hasWorktree,
+	isDirty,
+	commit,
+	pushBranch,
+	rebaseInProgress,
+	rebaseOnMain,
+	removeWorktree,
+	stageAll,
+	worktreePath,
+} from './git.js';
 import { createPr, draftPr, findPr, mergeLabel, openPrInBrowser, prStatus, withTicket, type PrStatus } from './github.js';
 import { editText, loop } from './input.js';
 import { KEY_SECTIONS } from './keys.js';
@@ -39,6 +53,7 @@ import {
 	addThread,
 	applyRequest,
 	archiveProblem,
+	conflictPrompt,
 	doneProblem,
 	createWorktree as worktreeFor,
 	moveProblem,
@@ -630,15 +645,15 @@ export function App() {
 	}, []);
 
 	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one; `git` if fn needs the thread's branch. */
-	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>, { git = false } = {}) =>
+	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>, { git = false, label }: { git?: boolean; label?: string } = {}) =>
 		run(async () => {
 			const reason = git && noRepo(stateRef.current, thread);
-			if (reason) return setMessage(`⚠ ${reason} — there are no changes to diff or review`);
+			if (reason) return setMessage(`⚠ ${reason} — it has no branch of its own for git to work on`);
 			const dir = threadDir(stateRef.current, thread);
 			if (dir) return await fn(dir);
 			if (thread.local) return setMessage(`✗ Unknown project "${thread.project}"`);
 			setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
-		});
+		}, label);
 
 	const newThread = () => {
 		if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
@@ -822,8 +837,8 @@ export function App() {
 	const stalled = (thread: Thread) =>
 		!liveWindows.has(threadWindowName(thread.id)) && (statuses[thread.id] === 'interrupted' || statuses[thread.id] === 'working');
 
-	/** Resume the thread's claude in the background if it's closed, then tell it to keep going; returns whether it did. */
-	const wakeThread = async (thread: Thread): Promise<boolean> => {
+	/** Resume the thread's claude in the background if it's closed, then tell it `prompt` (keep going, by default); returns whether it did. */
+	const wakeThread = async (thread: Thread, prompt?: string): Promise<boolean> => {
 		const project = projectByName(thread.project);
 		if (!project) {
 			setMessage(`✗ Unknown project "${thread.project}"`);
@@ -847,10 +862,37 @@ export function App() {
 			// SessionStart comes a little before the prompt takes input.
 			await sleep(1000);
 		}
-		await pasteInto(window, project.wakePrompt || DEFAULT_WAKE_PROMPT);
+		await pasteInto(window, prompt ?? (project.wakePrompt || DEFAULT_WAKE_PROMPT));
 		setMessage(`Woke #${thread.id}`);
 		return true;
 	};
+
+	/**
+	 * Rebase the thread's branch on origin's default branch, keeping uncommitted changes, and push
+	 * it if it has a PR. Conflicts are left for the thread's claude to resolve (and push).
+	 */
+	const updateFromMain = (thread: Thread) =>
+		inWorktree(thread, async cwd => {
+			if (statuses[thread.id] === 'working' && !stalled(thread)) return setMessage(`⚠ claude is still working on #${thread.id}`);
+			// The conflict prompt would land as its answer.
+			if (statuses[thread.id] === 'waiting') return setMessage(`⚠ #${thread.id}'s claude is waiting on a question — answer it first`);
+			if (await rebaseInProgress(cwd)) return setMessage(`⚠ #${thread.id} is already partway through a rebase — finish or abort it first`);
+			const branch = thread.branch ?? (await currentRef(cwd));
+			if (/^[0-9a-f]{40}$/.test(branch)) return setMessage(`⚠ ${cwd} isn't on a branch`);
+			const base = (await defaultBranch(cwd)) ?? thread.base ?? 'main';
+			const rebased = await rebaseOnMain(cwd, base);
+			if (rebased.result === 'up-to-date') return setMessage(`#${thread.id} is already on origin/${base}`);
+			if (rebased.result === 'conflicts') {
+				const count = `${rebased.files.length} file${rebased.files.length === 1 ? '' : 's'}`;
+				if (!(await wakeThread(thread, conflictPrompt(base, rebased.files, !!thread.pr)))) return;
+				return setMessage(`⚠ Rebasing #${thread.id} on origin/${base} conflicts in ${count} — handed to claude`);
+			}
+			if (!thread.pr) return setMessage(`Rebased #${thread.id} on origin/${base}`);
+			await forcePushBranch(cwd, branch);
+			setMessage(`Rebased #${thread.id} on origin/${base} and pushed`);
+			// The push may have fixed the PR's conflicts, so don't wait for the next poll to show it.
+			void checkPr(thread);
+		}, { git: true, label: 'rebasing on main' });
 
 	/** Open claude with a shell or a live diff beside it, starting claude first if it isn't running. */
 	const openBeside = (thread: Thread, role: 'shell' | 'diff') =>
@@ -992,6 +1034,7 @@ export function App() {
 			if (statuses[selected.id] === 'working' && !stalled(selected)) return setMessage(`⚠ claude is still working on #${selected.id}`);
 			return run(async () => void (await wakeThread(selected)), `waking #${selected.id}`);
 		}
+		if (input === 'u') return updateFromMain(selected);
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
