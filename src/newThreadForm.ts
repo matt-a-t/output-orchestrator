@@ -1,6 +1,6 @@
 // The `n` form on the board: the new thread's project, ticket, title and the prompt its claude starts on.
 import type { Key } from 'ink';
-import { editText, loop } from './input.js';
+import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import type { Project } from './state.js';
 import { normalizeKey, type Ticket } from './tickets.js';
 
@@ -17,6 +17,8 @@ export type NewThreadForm = {
 	// Typed by hand, so picking a ticket no longer fills it in.
 	titleEdited: boolean;
 	prompt: string;
+	// The focused text field's (see fieldKey); the project is only ever changed with h/l.
+	edit: Edit;
 };
 
 /** What the form is submitted with: the ticket key normalized, and the recent ticket if one was picked. */
@@ -26,7 +28,7 @@ export type NewThreadSubmit = { project: string; ticketKey?: string; ticket?: Ti
 export type NewThreadContext = { projects: Project[]; tickets: Ticket[] };
 
 export function newThreadForm(project: string): NewThreadForm {
-	return { project, field: 'project', ticketKey: '', ticket: -1, title: '', titleEdited: false, prompt: '' };
+	return { project, field: 'project', ticketKey: '', ticket: -1, title: '', titleEdited: false, prompt: '', edit: null };
 }
 
 /** The form's fields for the project: no ticket without a tracker. */
@@ -41,29 +43,45 @@ export function newThreadKey(
 	key: Key,
 	{ projects, tickets }: NewThreadContext,
 ): NewThreadForm | { done: NewThreadSubmit | null } | { problem: string } {
-	if (key.escape) return { done: null };
+	if (form.field !== 'project') {
+		const next = fieldKey(fieldText(form, form.field), form.edit, input, key);
+		if (next) return { ...withText(form, form.field, next.value), edit: next.edit };
+	}
 	const project = projects.find(p => p.name === form.project);
-	if (key.return) return submit(form, project, tickets);
+	if (isBack(input, key, form.edit)) return { done: null };
+	if (isSubmit(input, key, form.edit)) return submit(form, project, tickets);
 	const fields = newThreadFields(project);
-	const step = key.upArrow || (key.tab && key.shift) ? -1 : key.downArrow || key.tab ? 1 : 0;
-	if (step) return { ...form, field: fields[loop(fields.indexOf(form.field), step, fields.length)]! };
-	const turn = key.leftArrow ? -1 : key.rightArrow ? 1 : 0;
+	const index = fields.indexOf(form.field);
+	if (key.return) {
+		const { field, edit } = nextField(index, fields.length, i => (fields[i] === 'project' ? undefined : fieldText(form, fields[i]!).length));
+		return { ...form, field: fields[field]!, edit };
+	}
+	const moved = { ...form, edit: null };
+	const step = fieldStep(input, key);
+	if (step) return { ...moved, field: fields[loop(index, step, fields.length)]! };
+	const turn = choiceStep(input, key);
+	if (!turn) return moved;
 	if (form.field === 'project') {
-		if (!turn || projects.length === 0) return form;
+		if (projects.length === 0) return moved;
 		const next = projects[loop(projects.findIndex(p => p.name === form.project), turn, projects.length)]!;
 		// Another project's tickets aren't this one's.
-		return { ...form, project: next.name, ...pickTicket(form, -1, tickets) };
+		return { ...moved, project: next.name, ...pickTicket(form, -1, tickets) };
 	}
-	if (form.field === 'ticket') {
-		// "None" then each recent ticket.
-		if (turn) return { ...form, ...pickTicket(form, loop(form.ticket + 1, turn, tickets.length + 1) - 1, tickets) };
-		const ticketKey = editText(form.ticketKey, input, key);
-		return ticketKey === undefined ? form : { ...form, ticketKey, ticket: -1 };
-	}
-	const value = editText(form[form.field], input, key);
-	if (value === undefined) return form;
+	// "None" then each recent ticket.
+	if (form.field === 'ticket') return { ...moved, ...pickTicket(form, loop(form.ticket + 1, turn, tickets.length + 1) - 1, tickets) };
+	return moved;
+}
+
+type TextField = Exclude<NewThreadField, 'project'>;
+
+const fieldText = (form: NewThreadForm, field: TextField) => (field === 'ticket' ? form.ticketKey : form[field]);
+
+/** Set a text field; only a change counts as typing it (forgetting the picked ticket, or no longer titling after it). */
+function withText(form: NewThreadForm, field: TextField, value: string): NewThreadForm {
+	if (value === fieldText(form, field)) return form;
+	if (field === 'ticket') return { ...form, ticketKey: value, ticket: -1 };
 	// Cleared, it goes back to following the ticket.
-	return form.field === 'title' ? { ...form, title: value, titleEdited: value !== '' } : { ...form, prompt: value };
+	return field === 'title' ? { ...form, title: value, titleEdited: value !== '' } : { ...form, prompt: value };
 }
 
 /** Pick recent ticket `index` (-1 for none), titling the thread after it unless the title was typed. */

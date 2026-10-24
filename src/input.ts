@@ -19,12 +19,6 @@ export function editAt(value: string, cursor: number, input: string, key: Key): 
 	if (input && !key.ctrl && !key.meta && !key.tab && !key.return && !key.escape) return { value: before + input + after, cursor: cursor + input.length };
 }
 
-/** Apply a keypress to a text field typed into at its end; undefined if the key isn't for the field. */
-export function editText(value: string, input: string, key: Key): string | undefined {
-	if (key.leftArrow || key.rightArrow || (key.ctrl && (input === 'a' || input === 'e'))) return;
-	return editAt(value, value.length, input, key)?.value;
-}
-
 /**
  * A form's focused text field: being edited with the cursor at a position, after the first `d` of
  * `dd`, or not being edited (keys move around the form rather than typing).
