@@ -1,373 +1,72 @@
-import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
-import { COMMIT_FORM, type CommitForm } from './commitForm.js';
-import { EDITOR, parsePr, prText } from './editor.js';
-import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
-import {
-	carryChanges,
-	checkout,
-	currentRef,
-	defaultBranch,
-	forcePushBranch,
-	hasWorktree,
-	isDirty,
-	commit,
-	pullBranch,
-	pushBranch,
-	rebaseInProgress,
-	rebaseOnMain,
-	removeWorktree,
-	restoreChanges,
-	stageAll,
-	worktreePath,
-} from './git.js';
-import { createPr, draftPr, findPr, mergeLabel, mergePr, openPrInBrowser, prStatus, reviewRequests, submitReview, withTicket, type PrStatus, type ReviewRequest } from './github.js';
-import { editText, loop } from './input.js';
-import { KEY_SECTIONS } from './keys.js';
-import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadForm, type NewThreadSubmit } from './newThreadForm.js';
+import { useRef, useState } from 'react';
+import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
+import type { PrStatus } from './github.js';
+import { loop } from './input.js';
 import { ProjectsView } from './projects.js';
-import { RequestReader, requestsFile, respond, type Request, type Response } from './requests.js';
-import { diffPaneCommand, openChanges, reviewDiff, showDiff, showPr, writeCommit } from './review.js';
 import { ThreadView } from './thread.js';
-import { approvedPrompt } from './threadCommand.js';
-import {
-	COLORS,
-	COLUMN_LABELS,
-	COLUMNS,
-	DEFAULT_WAKE_PROMPT,
-	STATE_FILE,
-	TODO_MARKS,
-	loadState,
-	saveState,
-	type Column,
-	type Project,
-	type ProjectHook,
-	type State,
-	type Thread,
-	type Todo,
-	type TodoStatus,
-} from './state.js';
-import { fetchTicket, recentTickets, ticketUrl, type Ticket } from './tickets.js';
-import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
-import { mouse, type MouseEvent } from './mouse.js';
-import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from './status.js';
-import {
-	addThread,
-	applyRequest,
-	archiveProblem,
-	conflictPrompt,
-	doneProblem,
-	createWorktree as worktreeFor,
-	moveProblem,
-	moveWarning,
-	noRepo,
-	setColumn as moveTo,
-	syncWorktree as syncWorktreeFor,
-	approvedTodo,
-	setTodoStatus,
-	threadDir,
-	todoProgress,
-	todosDone,
-	todoWindow,
-	type Store,
-	type WorktreeChange,
-} from './threads.js';
-import { CLOSED, killWindow, openSplit, openWindow, pasteInto, progressPopup, threadWindowLabel, threadWindowName, windowNames, type ProgressPopup } from './tmux.js';
-
-type PermissionMode = 'plan' | 'auto';
-type Outcome = { ok: boolean; message: string };
-type LocalMoves = {
-	enterLocal: (thread: Thread) => Promise<Outcome>;
-	leaveLocal: (thread: Thread) => Promise<Outcome>;
-	localProblem: (thread: Thread, entering: boolean) => Promise<string | undefined>;
-};
-/** How opening a PR says how it's going and gets its title and description (null: cancelled). */
-type PrSteps = {
-	status: (text: string) => void;
-	describe: (cwd: string, thread: Thread, base: string) => Promise<{ title: string; body: string } | null>;
-	close: () => Promise<void>;
-};
-
-const BADGES: Partial<Record<Status, [string, string]>> = {
-	working: ['⚙', 'yellow'],
-	waiting: ['⏸', 'red'],
-	stopped: ['✓', 'green'],
-};
-
-/** Claude session ID to resume the thread with, if its transcript still exists. */
-function resumeId(thread: Thread): string | undefined {
-	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
-}
-
-const LEGEND: [string, string | undefined, string][] = [
-	['⚙', 'yellow', 'working'],
-	['⏸', 'red', 'needs you'],
-	['✓', 'green', 'stopped'],
-	['○', 'gray', 'open, no activity yet'],
-	['↻', 'gray', 'closed, resumable'],
-	['↻', 'red', 'closed mid-work, w wakes it'],
-	['±', 'magenta', 'changes to review'],
-	['⚡', 'red', 'PR has conflicts'],
-];
-
-/** Picking the project to import from (`i` with no filter). */
-type Prompt = { step: 'project'; index: number };
-const NEW_THREAD_LABEL_WIDTH = Math.max(...Object.values(NEW_THREAD_LABELS).map(l => l.length)) + 2;
-
-// The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
-const LIST_TOP = 3;
-
-/** A PR asking you for a review, and the project it's in. */
-type Review = ReviewRequest & { project: Project };
-
-const REVIEW_DONE: Record<string, string> = { approve: 'Approved', 'request-changes': 'Requested changes on', comment: 'Commented on' };
-const CARD_HEIGHT = 2;
-const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
-// A thread in Local stays in its column, its card outlined in yellow, which takes a line above and below.
-const LOCAL_BORDER_LINES = 2;
-const cardLines = (t: Thread) => cardHeight(t.column) + (t.local ? LOCAL_BORDER_LINES : 0);
-const DOUBLE_CLICK_MS = 400;
-// The highlighted thread's todos shown below the board; the rest are summed up as "N more".
-const MAX_TODO_LINES = 5;
-const TODO_COLORS: Record<TodoStatus, string> = { pending: 'gray', active: 'yellow', review: 'magenta', done: 'green' };
-
-const HELP = 'h/l j/k move  ⏎ open  n new  d diff  s/M-d shell/diff beside claude  q quit';
+import type { Board } from './board/board.js';
+import { runBinding } from './board/bindings.js';
+import { Columns, newColumnsLayout } from './board/columns.js';
+import { Footer } from './board/footer.js';
+import { ImportList, ImportProject } from './board/importPicker.js';
+import { KeysView } from './board/keysView.js';
+import { usePendingLocal } from './board/local.js';
+import { NewThread, useRecentTickets } from './board/newThread.js';
+import { fetchReviews, ReviewList, type Review } from './board/reviewList.js';
+import { checkPr } from './board/pr.js';
+import { useRequests } from './board/requests.js';
+import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
+import { COLORS, COLUMNS, type Column, type Project, type Thread } from './state.js';
+import { listOutsideThreads, type OutsideThread } from './transcripts.js';
+import { setColumn as moveTo } from './threads.js';
 
 export function App() {
 	const { exit } = useApp();
 	const { columns: width, rows: height } = useWindowSize();
-	const [state, setState] = useState<State>(loadState);
-	// For callbacks that outlive a render (the PR poll).
-	const stateRef = useRef(state);
-	stateRef.current = state;
+	const { state, setState, stateRef } = useStateFile();
 	const [cursor, setCursor] = useState({ col: 0, row: 0 });
 	const [filter, setFilter] = useState<string | null>(null);
+	const filterRef = useRef(filter);
+	filterRef.current = filter;
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
-	const [prompt, setPrompt] = useState<Prompt | null>(null);
-	// The new-thread form (n), over the bottom of the board.
-	const [form, setForm] = useState<NewThreadForm | null>(null);
-	// The form's recent tickets, for the project they're from; a string is why they couldn't be listed.
-	const [recent, setRecent] = useState<{ project: string; tickets: Ticket[] | string | null } | null>(null);
+	// Asking which project to import from (i with no filter), over the bottom of the board.
+	const [choosingImport, setChoosingImport] = useState(false);
+	// The new-thread form (n), over the bottom of the board, opened on this project.
+	const [newThreadIn, setNewThreadIn] = useState<Project | null>(null);
+	const recent = useRecentTickets();
 	const [showProjects, setShowProjects] = useState(false);
 	const [showKeys, setShowKeys] = useState(false);
 	// The thread form (e), replacing the board while it's open.
 	const [editing, setEditing] = useState<string | null>(null);
-	const lastWritten = useRef<string | null>(null);
-	const [statuses, setStatuses] = useState<Record<string, Status>>({});
-	const statusesRef = useRef(statuses);
-	statusesRef.current = statuses;
-	// The latest render's Local moves, for the request poll, whose effect only sees the first render's.
-	const localMoves = useRef<LocalMoves>(null!);
-	const openPrRef = useRef<(thread: Thread, steps: PrSteps) => Promise<Outcome>>(null!);
-	// `oo thread local` moves waiting for the thread's claude to finish its turn: thread id → entering.
+	const { statuses, statusesRef, sessionStarts } = useStatuses(stateRef, setState);
+	const { liveWindowsRef, refreshWindows } = useLiveWindows();
+	const unreviewed = useUnreviewed(stateRef);
+	useRestoreCarried(stateRef);
 	const pendingLocal = useRef(new Map<string, boolean>());
-	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
-	const sessionStarts = useRef(new Map<string, number>());
-	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
-	// Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved.
-	const [unreviewed, setUnreviewed] = useState<Set<string>>(new Set());
 	// The merge status of open PRs, from the PR poll; not saved, since the poll refills it on startup.
 	const [merge, setMerge] = useState<Record<string, PrStatus>>({});
 	// The import list (i), replacing the columns while it's open.
-	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[]; row: number } | null>(null);
+	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[] } | null>(null);
 	// The review requests list (R), replacing the columns while it's open.
-	const [reviews, setReviews] = useState<{ requests: Review[]; row: number } | null>(null);
+	const [reviews, setReviews] = useState<Review[] | null>(null);
+	// The columns' measured height and scroll positions, kept while another screen covers them.
+	const columnsLayout = useRef(newColumnsLayout());
 	// An action waiting on y (any other key cancels); its question is shown as the message.
 	const [confirm, setConfirm] = useState<(() => void) | null>(null);
 	const ask = (question: string, action: () => void) => {
 		setConfirm(() => action);
 		setMessage(`${question} y to confirm`);
 	};
-	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
-	const boardRef = useRef<DOMElement>(null);
-	const [boardHeight, setBoardHeight] = useState(0);
-	const scrollOffsets = useRef<Partial<Record<Column, number>>>({});
-
-	const refreshWindows = () =>
-		windowNames()
-			.then(names => setLiveWindows(new Set(names)))
-			.catch(() => {});
-
-	useEffect(() => {
-		lastWritten.current = saveState(state);
-	}, [state]);
-
-	// Pick up external changes, e.g. `oo project add` from another shell.
-	useEffect(() => {
-		watchFile(STATE_FILE, { interval: 1000 }, () => {
-			try {
-				if (readFileSync(STATE_FILE, 'utf8') !== lastWritten.current) setState(loadState());
-			} catch {}
-		});
-		return () => unwatchFile(STATE_FILE);
-	}, []);
-
-	// Undo the commit carrying a thread's uncommitted changes, if a move into or out of Local died before it could.
-	useEffect(() => {
-		const { threads, projects } = stateRef.current;
-		const dirs = new Set([...threads.filter(t => !t.cwd).map(t => threadDir(stateRef.current, t)), ...projects.map(p => p.path)]);
-		for (const dir of dirs) if (dir) void restoreChanges(dir).catch(() => {});
-	}, []);
-
-	// Fold hook events (see status.ts) into per-thread status and the latest claude session ID.
-	useEffect(() => {
-		const reader = new EventReader();
-		const poll = () => {
-			const dirs = new Map(stateRef.current.threads.map(t => [t.id, threadDir(stateRef.current, t)]));
-			const events = reader.read().filter(e => fromThreadDir(e, dirs.get(e.thread)));
-			if (events.length === 0) return;
-			setStatuses(prev => {
-				const next = { ...prev };
-				for (const e of events) {
-					const status = nextStatus(next[e.thread], e);
-					if (status) next[e.thread] = status;
-				}
-				return next;
-			});
-			const started = new Map<string, { sessionId: string; transcriptPath?: string }>();
-			for (const e of events) {
-				if (e.event === 'SessionStart') sessionStarts.current.set(e.thread, (sessionStarts.current.get(e.thread) ?? 0) + 1);
-				if (e.event === 'SessionStart' && e.session) {
-					started.set(e.thread, { sessionId: e.session, transcriptPath: e.transcript });
-				}
-			}
-			if (started.size === 0) return;
-			setState(s => {
-				const changed = s.threads.some(t => {
-					const latest = started.get(t.id);
-					return latest && (latest.sessionId !== t.sessionId || latest.transcriptPath !== t.transcriptPath);
-				});
-				if (!changed) return s;
-				return { ...s, threads: s.threads.map(t => ({ ...t, ...started.get(t.id) })) };
-			});
-		};
-		poll();
-		watchFile(EVENTS_FILE, { interval: 500 }, poll);
-		return () => unwatchFile(EVENTS_FILE, poll);
-	}, []);
-
-	// Apply `oo thread …` requests (see requests.ts), one at a time.
-	useEffect(() => {
-		const reader = new RequestReader();
-		const store: Store = {
-			get: () => stateRef.current,
-			// The ref is updated now rather than on the next render, so a request queued right behind sees this one.
-			update: fn => {
-				stateRef.current = fn(stateRef.current);
-				setState(fn);
-			},
-		};
-		// Like t, except that it waits for the thread's claude instead of refusing: it's often the one asking.
-		const localRequest = async ({ id, thread: threadId, local }: Extract<Request, { op: 'local' }>): Promise<Response> => {
-			const thread = stateRef.current.threads.find(t => t.id === threadId);
-			if (!thread) return { id, ok: false, message: `No thread #${threadId}` };
-			const answer = (outcome: Outcome): Response => ({ id, ...outcome, thread: thread.id });
-			const entering = local === 'toggle' ? !thread.local : local;
-			if (entering === !!thread.local) return answer({ ok: true, message: `#${thread.id} is already ${entering ? 'in' : 'out of'} Local` });
-			const moves = localMoves.current;
-			const problem = await moves.localProblem(thread, entering);
-			if (problem) return answer({ ok: false, message: problem });
-			if (!thread.cwd && statusesRef.current[thread.id] === 'working') {
-				pendingLocal.current.set(thread.id, entering);
-				const where = entering ? 'goes into Local' : 'comes out of Local, back to its worktree,';
-				return answer({ ok: true, message: `#${thread.id} ${where} when its claude's turn ends` });
-			}
-			setBusy(entering ? 'checking out for Local' : 'leaving Local');
-			try {
-				return answer(await (entering ? moves.enterLocal : moves.leaveLocal)(thread));
-			} finally {
-				setBusy(null);
-			}
-		};
-		// Like moving to PR on the board, except the description is given (or claude's draft, unedited) and there's no popup.
-		const prRequest = async ({ id, thread: threadId, title, body }: Extract<Request, { op: 'pr' }>): Promise<Response> => {
-			const state = stateRef.current;
-			const thread = state.threads.find(t => t.id === threadId);
-			if (!thread) return { id, ok: false, message: `No thread #${threadId}` };
-			const answer = (outcome: Outcome): Response => ({ id, ...outcome, thread: thread.id });
-			const problem = moveProblem(state, thread, 'pr');
-			if (problem) return answer({ ok: false, message: problem });
-			try {
-				return answer(
-					await openPrRef.current(thread, {
-						status: text => setBusy(text),
-						describe: async (cwd, thread, base) => {
-							const draft =
-								body !== undefined
-									? { title: title ?? thread.title, body }
-									: await draftPr(cwd, thread, base).then(written => written && { ...written, ...(title !== undefined && { title }) });
-							return withTicket(draft ?? { title: title ?? thread.title, body: thread.plan }, thread.ticket);
-						},
-						close: async () => {},
-					}),
-				);
-			} finally {
-				setBusy(null);
-			}
-		};
-		let queue = Promise.resolve();
-		const poll = () => {
-			for (const request of reader.read()) {
-				queue = queue.then(async () => {
-					const handled = request.op === 'local' ? localRequest(request) : request.op === 'pr' ? prRequest(request) : applyRequest(store, request);
-					const response = await handled.catch(err => ({
-						id: request.id,
-						ok: false,
-						message: err instanceof Error ? err.message : String(err),
-					}));
-					respond(response);
-					setMessage(`${response.ok ? '' : '✗ '}oo thread: ${response.message.replaceAll('\n', ' · ')}`);
-					await refreshWindows();
-				});
-			}
-		};
-		poll();
-		watchFile(requestsFile(), { interval: 500 }, poll);
-		return () => unwatchFile(requestsFile(), poll);
-	}, []);
-
-	// Badges only mean something while the thread's window is open.
-	useEffect(() => {
-		refreshWindows();
-		const timer = setInterval(refreshWindows, 2000);
-		return () => clearInterval(timer);
-	}, []);
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 
-	useEffect(() => {
-		let checking = false;
-		const check = async () => {
-			if (checking) return;
-			checking = true;
-			try {
-				const dirty = new Set<string>();
-				const threads = stateRef.current.threads.filter(t => t.column !== 'archived' && !noRepo(stateRef.current, t));
-				await Promise.all(
-					threads.map(async t => {
-						const dir = threadDir(stateRef.current, t);
-						if (dir && (await isDirty(dir).catch(() => false))) dirty.add(t.id);
-					}),
-				);
-				setUnreviewed(prev => (prev.size === dirty.size && [...dirty].every(id => prev.has(id)) ? prev : dirty));
-			} finally {
-				checking = false;
-			}
-		};
-		check();
-		const timer = setInterval(check, 3000);
-		return () => clearInterval(timer);
-	}, []);
 	const visible = (t: Thread, f = filter) => t.column !== 'archived' && (!f || t.project === f);
 	const columnThreads = (column: Column, f = filter) => state.threads.filter(t => t.column === column && visible(t, f));
 
 	const colThreads = columnThreads(COLUMNS[cursor.col]!);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
 	const selected: Thread | undefined = colThreads[row];
-	const selectedMerge = selected && merge[selected.id] && mergeLabel(merge[selected.id]!);
 
 	const updateThread = (id: string, patch: Partial<Thread>) =>
 		setState(s => ({
@@ -377,42 +76,6 @@ export function App() {
 
 	/** Move the thread to the bottom of the column. */
 	const setColumn = (id: string, column: Column, patch: Partial<Thread> = {}) => setState(s => moveTo(s, id, column, patch));
-
-	const moveColumn = (thread: Thread, delta: number) => {
-		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
-		if (col < 0 || col >= COLUMNS.length) return;
-		moveThread(thread, COLUMNS[col]!);
-	};
-
-	const moveThread = (thread: Thread, column: (typeof COLUMNS)[number]) => {
-		if (thread.column === column) return;
-		const col = COLUMNS.indexOf(column);
-		// Its branch is checked out in the project's checkout, not its worktree, until it comes back. Opening its PR works from there.
-		if (thread.local && column !== 'pr') return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
-		const problem = moveProblem(state, thread, column);
-		if (problem) return setMessage(problem);
-		// Its claude is in plan mode just while it's Planned (see launchClaude), so an open one restarts on the way in or out.
-		const restart = (thread.column === 'planned') !== (column === 'planned') && liveWindows.has(threadWindowName(thread.id));
-		if (restart && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
-		const warning = moveWarning(state, thread, column);
-		if (warning) setMessage(warning);
-		// Done closes its claude window.
-		if (column === 'done' && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
-		if (column === 'pr') return void run(() => openPrFromBoard(thread), 'opening PR');
-		const move = async () => {
-			setColumn(thread.id, column);
-			setCursor({ col, row: columnThreads(column).length });
-			await syncWorktree({ ...thread, column }, thread.column);
-			if (restart) await restartClaude({ ...thread, column }, column === 'planned' ? 'plan' : 'auto');
-		};
-		const project = projectByName(thread.project);
-		if (column !== 'done' || !thread.pr || !project) return void run(move, 'updating worktree');
-		run(async () => {
-			const problem = await doneProblem(project, thread);
-			if (problem) return setMessage(problem);
-			await move();
-		}, 'checking PR');
-	};
 
 	const reorder = (thread: Thread, delta: number) => {
 		const neighbour = colThreads[row + delta];
@@ -438,659 +101,67 @@ export function App() {
 		}
 	};
 
-	const applyChange = (thread: Thread, { patch, message }: WorktreeChange) => {
-		if (patch) updateThread(thread.id, patch);
-		if (message) setMessage(message);
-	};
-
-	/** Create the thread's worktree if it's missing; returns its path. */
-	const createWorktree = async (project: Project, thread: Thread): Promise<string> => {
-		const change = await worktreeFor(project, thread);
-		applyChange(thread, change);
-		return change.path;
-	};
-
-	/** Keep the worktree in step with the column (see threads.ts), then run the project's hook for leaving `from`, if any. */
-	const syncWorktree = async (thread: Thread, from?: Column) => {
-		const project = projectByName(thread.project);
-		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		const change = await syncWorktreeFor(project, thread);
-		const ran = from && (await runColumnHook(project, from, { ...thread, ...change.patch }));
-		applyChange(thread, { ...change, message: [change.message, ran].filter(Boolean).join('; ') || undefined });
-		await refreshWindows();
-	};
-
-	/** Close the thread's claude window, if it's open; returns whether it was. */
-	const closeClaude = async (thread: Thread): Promise<boolean> => {
-		const open = (await windowNames()).includes(threadWindowName(thread.id));
-		await killWindow(threadWindowName(thread.id));
-		await refreshWindows();
-		return open;
-	};
-
-	/** Close the thread's claude and resume it in the background in `mode`. */
-	const restartClaude = async (thread: Thread, mode: PermissionMode) => {
-		const cwd = threadDir(stateRef.current, thread);
-		if (!cwd || !(await closeClaude(thread))) return;
-		await launchClaude(thread, cwd, { background: true, mode });
-		setMessage(`Restarted claude for #${thread.id} in ${mode} mode`);
-	};
-
-	/** Copy the thread's transcript to where `claude --resume` looks from `cwd`. */
-	const moveTranscript = (thread: Thread, cwd: string): Pick<Thread, 'transcriptPath'> => {
-		const transcriptPath = thread.transcriptPath && copyTranscript(thread.transcriptPath, cwd);
-		return transcriptPath ? { transcriptPath } : {};
-	};
-
-	/** Run the project's hook; returns `done` with how it went. A hook that can't start doesn't undo the move. */
-	const hook = async (project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string): Promise<string> => {
-		const ran = await tryHook(project, event, thread, cwd);
-		return ran ? `${done}; ${ran}` : done;
-	};
-
-	/**
-	 * Why the thread can't go into (`entering`) or come out of Local now, if it can't; shared by t and
-	 * `oo thread local`. Claude still working is checked separately, since the command waits for it instead.
-	 */
-	const localProblem = async (thread: Thread, entering: boolean): Promise<string | undefined> => {
-		const project = projectByName(thread.project);
-		if (!project) return `Unknown project "${thread.project}"`;
-		if (entering) {
-			const other = stateRef.current.threads.find(t => t.local && t.project === thread.project);
-			if (other) return `${thread.project} already has #${other.id} ${other.title} in Local`;
-			if (thread.column === 'done') return `#${thread.id} is done — move it back to Polish first`;
-			const reason = noRepo(stateRef.current, thread);
-			if (reason) return `${reason} — there's no checkout to bring it into`;
-		}
-		// Imported threads already run in their own directory, with no branch to move.
-		if (thread.cwd) return;
-		if (entering) {
-			if (!thread.branch) return `#${thread.id} has no branch yet — open it first`;
-			// The thread's own uncommitted changes come along (see enterLocal), but the checkout's tracked ones are yours.
-			// Untracked files there get in the way only if the branch has them too, which checkout catches.
-			if (await isDirty(project.path, { untracked: false })) return `${project.path} has uncommitted changes — commit or stash them first`;
-		}
-	};
-
-	/**
-	 * Check the thread's branch out in the project's own checkout, so changes show up in the local
-	 * dev environment, and move claude there with it, then run the project's enter local hook.
-	 * The worktree is removed meanwhile. Only one thread per project fits.
-	 */
-	const enterLocal = async (thread: Thread): Promise<Outcome> => {
-		const problem = await localProblem(thread, true);
-		if (problem) return { ok: false, message: problem };
-		const project = projectByName(thread.project)!;
-		if (thread.cwd) {
-			updateThread(thread.id, { local: true });
-			return { ok: true, message: await hook(project, 'enterLocal', thread, thread.cwd, `#${thread.id} is in Local`) };
-		}
-		if (statuses[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
-		const wasOpen = await closeClaude(thread);
-		// Uncommitted changes ride along on a temporary commit on the branch, undone once it's checked out here.
-		let carried = false;
-		if (hasWorktree(thread)) {
-			await restoreChanges(worktreePath(thread));
-			carried = await carryChanges(worktreePath(thread));
-			await removeWorktree(project.path, thread);
-		}
-		try {
-			await checkout(project.path, thread.branch!);
-		} catch (err) {
-			// Put the thread back in its worktree as it was, e.g. when an untracked file here clashes with the branch.
-			await restoreChanges(await createWorktree(project, thread));
-			if (wasOpen) await launchClaude(thread, worktreePath(thread), { background: true });
-			throw err;
-		}
-		await restoreChanges(project.path);
-		const moved: Thread = { ...thread, local: true, ...moveTranscript(thread, project.path) };
-		updateThread(thread.id, moved);
-		if (wasOpen) await launchClaude(moved, project.path, { background: true });
-		const done = `${project.name} checkout is on ${thread.branch}${carried ? ' with its uncommitted changes' : ''}; claude works there until it leaves Local`;
-		return { ok: true, message: await hook(project, 'enterLocal', moved, project.path, done) };
-	};
-
-	/**
-	 * Put the project's checkout back on the default branch and move the thread back into its
-	 * worktree, then run the project's leave local hook.
-	 */
-	const leaveLocal = async (thread: Thread): Promise<Outcome> => {
-		const problem = await localProblem(thread, false);
-		if (problem) return { ok: false, message: problem };
-		const project = projectByName(thread.project)!;
-		if (thread.cwd) {
-			updateThread(thread.id, { local: undefined });
-			return { ok: true, message: await hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is out of Local`) };
-		}
-		if (statuses[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
-		const main = (await defaultBranch(project.path)) ?? 'main';
-		const wasOpen = await closeClaude(thread);
-		// Including untracked files: anything new there is the thread's work.
-		await restoreChanges(project.path);
-		const carried = await carryChanges(project.path);
-		await checkout(project.path, main);
-		const back: Thread = { ...thread, local: undefined };
-		const cwd = await createWorktree(project, back);
-		await restoreChanges(cwd);
-		Object.assign(back, moveTranscript(thread, cwd));
-		updateThread(thread.id, back);
-		if (wasOpen) await launchClaude(back, cwd, { background: true });
-		const done = `${project.name} checkout is back on ${main}; #${thread.id} is back in its worktree${carried ? ' with its uncommitted changes' : ''}`;
-		return { ok: true, message: await hook(project, 'leaveLocal', back, project.path, done) };
-	};
-
-	/**
-	 * Take a thread whose PR merged out of Local on its way to Done: put the project's checkout back
-	 * on the default branch with the merge pulled in, then run the project's leave local hook. Unlike
-	 * leaveLocal there's no worktree to bring back, and Done closes its claude anyway.
-	 */
-	const leaveLocalForDone = async (thread: Thread): Promise<string> => {
-		const project = projectByName(thread.project)!;
-		const back: Thread = { ...thread, local: undefined };
-		if (thread.cwd) {
-			updateThread(thread.id, { local: undefined });
-			return hook(project, 'leaveLocal', back, project.path, `#${thread.id} is out of Local`);
-		}
-		const main = (await defaultBranch(project.path)) ?? 'main';
-		await closeClaude(thread);
-		await checkout(project.path, main);
-		// The checkout is back on main either way; it's just not up to date.
-		const pulled = await pullBranch(project.path, main).then(
-			() => 'pulled',
-			(err: unknown) => `couldn't pull origin/${main}: ${err instanceof Error ? err.message : String(err)}`,
-		);
-		updateThread(thread.id, { local: undefined });
-		return hook(project, 'leaveLocal', back, project.path, `${project.name} checkout is back on ${main}, ${pulled}`);
-	};
-
-	/** Into or out of Local, saying how it went on the message line. */
-	const moveLocal = (thread: Thread, entering: boolean) =>
-		run(async () => {
-			const { ok, message } = await (entering ? enterLocal : leaveLocal)(thread);
-			setMessage(ok ? message : `⚠ ${message}`);
-		}, entering ? 'checking out for Local' : 'leaving Local');
-	localMoves.current = { enterLocal, leaveLocal, localProblem };
-
-	// Moves asked for while the thread's claude was working run once its turn ends (a permission prompt is still mid-turn).
-	useEffect(() => {
-		for (const [id, entering] of pendingLocal.current) {
-			if (statuses[id] === 'working' || statuses[id] === 'waiting') continue;
-			pendingLocal.current.delete(id);
-			const thread = stateRef.current.threads.find(t => t.id === id);
-			if (thread && entering !== !!thread.local) void moveLocal(thread, entering);
-		}
-	}, [statuses]);
-
-	/**
-	 * Push the thread's branch and open its PR (unless it has one already), then move it to PR.
-	 * `steps` says how it's going and writes the title and description; null from `describe` is cancelled.
-	 */
-	const openPr = async (thread: Thread, steps: PrSteps): Promise<Outcome> => {
-		const project = projectByName(thread.project);
-		if (!project) return { ok: false, message: `Unknown project "${thread.project}"` };
-		if (thread.cwd) {
-			if (!existsSync(thread.cwd)) return { ok: false, message: `${thread.cwd} no longer exists` };
-			// An imported thread has no branch of its own until now: it's whatever its directory is on.
-			if (!thread.branch) {
-				const branch = await currentRef(thread.cwd);
-				const base = await defaultBranch(thread.cwd);
-				if (/^[0-9a-f]{40}$/.test(branch) || branch === base) {
-					return { ok: false, message: `${thread.cwd} is on ${branch} — switch #${thread.id}'s work onto a branch there first` };
-				}
-				thread = { ...thread, branch, base };
-			}
-		}
-		if (!thread.branch) return { ok: false, message: `#${thread.id} has no branch yet — open it first` };
-		// In Local its branch is checked out in the project's checkout, so the PR is opened from there. Otherwise
-		// this reopens the worktree if the thread is coming back from Done.
-		const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(project, thread));
-		if (await isDirty(cwd)) return { ok: false, message: `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first` };
-		const branch = thread.branch;
-		let existing: Thread['pr'];
-		let pr: Thread['pr'];
-		try {
-			steps.status('looking for a PR');
-			existing = pr = thread.pr ?? (await findPr(cwd, branch));
-			if (!pr) {
-				// The PR goes into the default branch (see createPr), so describe the changes against that.
-				const target = await defaultBranch(cwd);
-				const draft = await steps.describe(cwd, { ...thread, branch }, target ? `origin/${target}` : (thread.base ?? 'HEAD'));
-				if (!draft) return { ok: true, message: 'Cancelled' };
-				steps.status(`pushing ${branch}`);
-				await pushBranch(cwd, branch);
-				steps.status('opening PR');
-				pr = await createPr(cwd, thread, draft.title, draft.body);
-			} else {
-				steps.status(`pushing ${branch}`);
-				await pushBranch(cwd, branch);
-			}
-		} finally {
-			await steps.close();
-		}
-		const patch = { pr, branch, base: thread.base };
-		setColumn(thread.id, 'pr', patch);
-		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
-		const opened = `${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`;
-		const ran = await runColumnHook(project, thread.column, { ...thread, ...patch, column: 'pr' });
-		// A push may have fixed (or caused) conflicts, so don't wait for the next poll to show it.
-		void checkPr({ ...thread, ...patch, column: 'pr' });
-		return { ok: true, message: ran ? `${opened}; ${ran}` : opened };
-	};
-
-	/** The board's way: claude drafts the PR in a popup, then the user edits it there. */
-	const openPrFromBoard = async (thread: Thread) => {
-		// Open from here until the PR is, so the board isn't left looking usable while it waits.
-		let progress: ProgressPopup | undefined;
-		const popup = () => (progress ??= progressPopup(' pull request ', EDITOR));
-		const { ok, message } = await openPr(thread, {
-			status: text => popup().status(text),
-			describe: async (cwd, thread, base) => {
-				const written = await popup().cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal));
-				if (written === CLOSED) return null;
-				if (written && popup().accepted()) return withTicket(written, thread.ticket);
-				const edited = await popup().edit(
-					written
-						? prText(withTicket(written, thread.ticket), thread.branch!)
-						: prText(
-								withTicket({ title: thread.title, body: thread.plan }, thread.ticket),
-								thread.branch!,
-								"claude couldn't write the PR description; this is from the thread.",
-							),
-				);
-				return edited === CLOSED ? null : parsePr(edited);
+	const board: Board = {
+		store: {
+			get: () => stateRef.current,
+			update: fn => {
+				stateRef.current = fn(stateRef.current);
+				setState(fn);
 			},
-			close: async () => void (await progress?.close()),
-		});
-		setMessage(ok ? message : `⚠ ${message}`);
+		},
+		state: () => stateRef.current,
+		setState,
+		updateThread,
+		setColumn,
+		project: projectByName,
+		statuses: () => statusesRef.current,
+		liveWindows: () => liveWindowsRef.current,
+		sessionStarts,
+		refreshWindows,
+		setMerge,
+		pendingLocal: pendingLocal.current,
+		setMessage,
+		setBusy,
+		run,
+		ask,
+		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current)),
+		showAtEnd: column =>
+			setCursor({
+				col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]),
+				row: stateRef.current.threads.filter(t => t.column === column && visible(t, filterRef.current)).length,
+			}),
 	};
-	openPrRef.current = openPr;
-
-	/**
-	 * Show a PR in the viewer and do what was picked there: merge it (moving `thread`, if it's the
-	 * thread's, to Done) or submit a review. Returns whether anything was done.
-	 */
-	const viewPr = async (cwd: string, number: number, thread?: Thread): Promise<boolean> => {
-		const picked = await showPr(cwd, number);
-		if (picked === 'closed') return false;
-		if (picked.action === 'review') {
-			setBusy(`reviewing PR #${number}`);
-			await submitReview(cwd, number, picked.event, picked.body, picked.comments);
-			const lines = picked.comments.length;
-			setMessage(`${REVIEW_DONE[picked.event]} PR #${number}${lines ? ` with ${lines} line comment${lines === 1 ? '' : 's'}` : ''}`);
-			return true;
-		}
-		setBusy(`merging PR #${number}`);
-		const method = await mergePr(cwd, number);
-		setMessage(`Merged PR #${number} (${method})`);
-		// Straight to Done rather than on the next poll.
-		if (thread) await checkPr(thread);
-		return true;
-	};
-
-	/**
-	 * The open PRs asking you for a review, across projects (those with a repo), most recently
-	 * updated first. Projects gh can't ask about are named in the message.
-	 */
-	const fetchReviews = async (): Promise<Review[]> => {
-		const projects = state.projects.filter(p => p.worktrees && existsSync(p.path));
-		const failed: string[] = [];
-		const found = await Promise.all(
-			projects.map(project =>
-				reviewRequests(project.path).then(
-					requests => requests.map(r => ({ ...r, project })),
-					() => (failed.push(project.name), []),
-				),
-			),
-		);
-		if (failed.length) setMessage(`⚠ gh couldn't list PRs in ${failed.join(', ')}`);
-		return found.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-	};
-
-	const openReviews = () =>
-		run(async () => {
-			const requests = await fetchReviews();
-			if (requests.length === 0) return setMessage(m => m || 'No PRs waiting for your review');
-			setReviews({ requests, row: 0 });
-		}, 'looking for review requests');
-
-	/** View a review request's PR, then refresh the list, since one you've reviewed drops off it. */
-	const viewReview = (review: Review) =>
-		run(async () => {
-			if (!(await viewPr(review.project.path, review.number))) return;
-			const requests = await fetchReviews();
-			setReviews(r => r && { requests, row: Math.min(r.row, Math.max(0, requests.length - 1)) });
-		}, `loading PR #${review.number}`);
-
-	/** Record the merge status of the thread's PR, or move the thread to Done (cleaning up its worktree) if it's merged. */
-	const checkPr = async (thread: Thread) => {
-		const project = projectByName(thread.project);
-		if (thread.column !== 'pr' || !thread.pr || !project) return;
-		// gh failing (offline, logged out) just means trying again next time.
-		const status = await prStatus(project.path, thread.pr).catch(() => undefined);
-		if (!status) return;
-		if (status.state !== 'MERGED') {
-			// While GitHub is still working out mergeability, keep what we knew so the card doesn't flicker.
-			if (status.mergeable !== 'UNKNOWN') setMerge(m => ({ ...m, [thread.id]: status }));
-			return;
-		}
-		let left: string | undefined;
-		if (thread.local) {
-			// Its branch is in the project's checkout, so that has to go back to main first; the next poll tries again.
-			// Leaving Local carries uncommitted changes back to the worktree, but Done has none, so they'd be left on main.
-			const problem =
-				(await localProblem(thread, false)) ??
-				(!thread.cwd && (await isDirty(project.path)) ? `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first` : undefined);
-			if (problem) return setMessage(`⚠ #${thread.id}'s PR #${thread.pr.number} merged, but it stays in PR until it can leave Local: ${problem}`);
-			if (statuses[thread.id] === 'working') return;
-			try {
-				left = await leaveLocalForDone(thread);
-			} catch (err) {
-				return setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
-			}
-		}
-		setMerge(({ [thread.id]: _, ...rest }) => rest);
-		setColumn(thread.id, 'done');
-		setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left].filter(Boolean).join('; '));
-		await syncWorktree({ ...thread, local: undefined, column: 'done' }).catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
-	};
-	const checkPrRef = useRef(checkPr);
-	checkPrRef.current = checkPr;
-
-	// Keep open PRs' merge status current, and move threads whose PR has merged to Done.
-	useEffect(() => {
-		let polling = false;
-		const poll = async () => {
-			if (polling) return;
-			polling = true;
-			try {
-				const threads = stateRef.current.threads;
-				// Threads that left PR (by hand, or closed) no longer have a status worth showing.
-				setMerge(m => Object.fromEntries(Object.entries(m).filter(([id]) => threads.some(t => t.id === id && t.column === 'pr' && t.pr))));
-				for (const thread of threads) await checkPrRef.current(thread);
-			} finally {
-				polling = false;
-			}
-		};
-		poll();
-		const timer = setInterval(poll, 60_000);
-		return () => clearInterval(timer);
-	}, []);
-
-	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one; `git` if fn needs the thread's branch. */
-	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>, { git = false, label }: { git?: boolean; label?: string } = {}) =>
-		run(async () => {
-			const reason = git && noRepo(stateRef.current, thread);
-			if (reason) return setMessage(`⚠ ${reason} — it has no branch of its own for git to work on`);
-			const dir = threadDir(stateRef.current, thread);
-			if (dir) return await fn(dir);
-			if (thread.local) return setMessage(`✗ Unknown project "${thread.project}"`);
-			setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
-		}, label);
+	useRequests(board);
+	usePendingLocal(board, statuses);
+	usePrPoll(stateRef, setMerge, thread => checkPr(board, thread));
 
 	/** Open the new-thread form on the filtered or highlighted project. */
 	const newThread = () => {
 		const project = projectByName(filter ?? selected?.project ?? '') ?? state.projects[0]!;
-		setForm(newThreadForm(project.name));
-		loadRecent(project);
+		setNewThreadIn(project);
+		recent.loadRecent(project);
 	};
-
-	/** List the project's recent tickets for the form, if it has a tracker. */
-	const loadRecent = (project: Project) => {
-		if (project.tracker === 'none') return setRecent(null);
-		if (recent?.project === project.name && Array.isArray(recent.tickets)) return;
-		setRecent({ project: project.name, tickets: null });
-		recentTickets(project).then(
-			tickets => setRecent(r => (r?.project === project.name ? { ...r, tickets } : r)),
-			(err: unknown) => setRecent(r => (r?.project === project.name ? { ...r, tickets: err instanceof Error ? err.message : String(err) } : r)),
-		);
-	};
-
-	const recentFor = (project: string) => (recent?.project === project && Array.isArray(recent.tickets) ? recent.tickets : []);
-
-	const formInput = (form: NewThreadForm, input: string, key: Key) => {
-		const next = newThreadKey(form, input, key, { projects: state.projects, tickets: recentFor(form.project) });
-		if ('problem' in next) return setMessage(`✗ ${next.problem}`);
-		if ('done' in next) {
-			setForm(null);
-			return next.done ? submitNewThread(next.done) : setMessage('Cancelled');
-		}
-		if (next.project !== form.project) loadRecent(projectByName(next.project)!);
-		setForm(next);
-	};
-
-	/**
-	 * Create the thread from the form, titled and planned from its ticket when it has one, then run the
-	 * project's new thread hook and start its claude in the background on the initial prompt, if there
-	 * is one. With a prompt, the worktree comes first so the hook runs in it.
-	 */
-	const submitNewThread = ({ project: name, ticketKey, ticket: known, title, prompt }: NewThreadSubmit) =>
-		run(async () => {
-			const project = projectByName(name)!;
-			const thread = await threadFromForm(project, title, ticketKey, known);
-			if (!thread) return;
-			const change = prompt && !thread.cwd ? await worktreeFor(project, thread) : undefined;
-			if (change?.patch) updateThread(thread.id, change.patch);
-			const created = { ...thread, ...change?.patch };
-			const ran = await runNewThreadHook(project, created, prompt);
-			if (prompt) await launchClaude(created, created.cwd ?? change!.path, { background: true, prompt });
-			const done = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`;
-			if (ran || prompt) setMessage([done, ran, prompt && 'started claude on your prompt'].filter(Boolean).join(' · '));
-		}, ticketKey ? `reading ${ticketKey}` : 'creating thread');
-
-	const threadFromForm = async (project: Project, title: string, ticketKey?: string, known?: Ticket): Promise<Thread | undefined> => {
-		if (!ticketKey) return createThread(project.name, title);
-		const ticket = await fetchTicket(project, ticketKey).catch((err: unknown) => {
-			setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
-			return known;
-		});
-		if (ticket) return createThread(project.name, title || ticket.summary, { ticket: { key: ticketKey, url: ticket.url }, plan: ticket.description });
-		// Without the ticket there's nothing to title the thread after.
-		if (!title) return void setMessage(`✗ Couldn't read ${ticketKey}, so it needs a title — press n to try again`);
-		const url = await ticketUrl(project, ticketKey).catch(() => '');
-		return createThread(project.name, title, { ticket: { key: ticketKey, url } });
-	};
-
-	const createThread = (project: string, title: string, fields: Partial<Pick<Thread, 'ticket' | 'plan'>> = {}) => {
-		const { thread } = addThread(stateRef.current, { project, title, ...fields });
-		setState(s => ({ ...s, threads: [...s.threads, thread] }));
-		setCursor({ col: 0, row: stateRef.current.threads.filter(t => t.column === 'planned' && (!filter || t.project === filter)).length });
-		setMessage(`Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}${thread.plan ? '' : ' — e to add a plan'}`);
-		return thread;
-	};
-
-	/**
-	 * Approve the step: stage everything in `cwd`, have claude draft the message, and commit it once
-	 * it's edited in the commit form. A claude stopped for the review is then told to move on (or stop,
-	 * after the last step), with any comments from the form.
-	 */
-	const approveStep = async (cwd: string, thread: Thread) => {
-		if (!(await stageAll(cwd))) return setMessage('Nothing to commit');
-		const window = threadWindowName(thread.id);
-		// Not one that's working or waiting on a question, where the paste would land as an answer.
-		const waiting = statusesRef.current[thread.id] === 'stopped' && (await windowNames()).includes(window);
-		let form: CommitForm | null;
-		const progress = progressPopup(' commit ', COMMIT_FORM);
-		try {
-			form = await writeCommit(progress, cwd, thread);
-			if (!form) return setMessage('⚠ Commit cancelled (changes left staged)');
-			progress.status('committing');
-			await commit(cwd, `${form.message}\n`);
-		} finally {
-			await progress.close();
-		}
-		// Approving the step is what ticks off the checkpoint claude handed over.
-		const todos = stateRef.current.threads.find(t => t.id === thread.id)?.todos ?? [];
-		const item = approvedTodo(todos);
-		const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
-		if (item !== -1) updateThread(thread.id, { todos: ticked });
-		const prompt = approvedPrompt(ticked, item, form.message, form.notes);
-		const told = !!prompt && waiting && (await windowNames()).includes(window);
-		if (told) await pasteInto(window, prompt);
-		const tellClaude = told ? ` · told claude${form.notes ? ' with comments' : ''}` : form.notes ? " · ⚠ comments not sent — claude wasn't waiting" : '';
-		setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${tellClaude}`);
-	};
-
-	const promptInput = (prompt: Prompt, input: string, key: Key) => {
-		if (key.escape) {
-			setPrompt(null);
-			return setMessage('Cancelled');
-		}
-		const count = state.projects.length;
-		if (input === 'j' || key.downArrow) return setPrompt({ ...prompt, index: (prompt.index + 1) % count });
-		if (input === 'k' || key.upArrow) return setPrompt({ ...prompt, index: (prompt.index + count - 1) % count });
-		if (key.return) {
-			setPrompt(null);
-			return openPicker(state.projects[prompt.index]!);
-		}
-	};
-
-	/**
-	 * Jump to the thread's claude window, starting claude in `cwd` (resuming the thread if it can) if needed.
-	 * `background` starts it without leaving the board; `resumeAnyway` skips the check for it being open elsewhere.
-	 * A thread in Planned is for planning only, so its claude starts in plan mode unless `mode` says otherwise.
-	 * `prompt` is sent as a new claude's first message.
-	 */
-	const launchClaude = async (
-		thread: Thread,
-		cwd: string,
-		{
-			background = false,
-			resumeAnyway = false,
-			mode = thread.column === 'planned' ? 'plan' : undefined,
-			prompt,
-		}: { background?: boolean; resumeAnyway?: boolean; mode?: PermissionMode; prompt?: string } = {},
-	) => {
-		// No branch yet means the worktree was just created, so there's nothing to resume in it.
-		const sessionId = thread.branch || thread.cwd ? resumeId(thread) : undefined;
-		const window = threadWindowName(thread.id);
-		// A thread the board hasn't heard from this run but that was written to just now is
-		// probably still open in another terminal; two claudes on one thread would clash.
-		if (
-			sessionId &&
-			!liveWindows.has(window) &&
-			statuses[thread.id] === undefined &&
-			recentlyActive(thread.transcriptPath!) &&
-			!resumeAnyway
-		) {
-			return ask(`⚠ #${thread.id} was active elsewhere in the last few minutes — close it there first, or resume anyway?`, () =>
-				run(() => launchClaude(thread, cwd, { background, mode, prompt, resumeAnyway: true })),
-			);
-		}
-		const command = [
-			'claude',
-			'--settings',
-			CLAUDE_SETTINGS_FILE,
-			...(sessionId ? ['--resume', sessionId] : []),
-			...(mode ? ['--permission-mode', mode] : []),
-			// After `--` so a prompt starting with `-` isn't taken for an option.
-			...(prompt ? ['--', prompt] : []),
-		];
-		const result = await openWindow(window, threadWindowLabel(thread), cwd, command, { OO_THREAD_ID: thread.id }, { background });
-		await refreshWindows();
-		if (result === 'selected') setMessage('');
-		else setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
-	};
-
-	const openThread = (thread: Thread) =>
-		run(async () => {
-			const project = projectByName(thread.project);
-			if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-			const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(project, thread));
-			await launchClaude(thread, cwd);
-		});
-
-	/**
-	 * Closed while claude was still working, e.g. its window was killed. Still working with no window
-	 * covers a claude killed too hard to report SessionEnd.
-	 */
-	const stalled = (thread: Thread) =>
-		!liveWindows.has(threadWindowName(thread.id)) && (statuses[thread.id] === 'interrupted' || statuses[thread.id] === 'working');
-
-	/** Resume the thread's claude in the background if it's closed, then tell it `prompt` (keep going, by default); returns whether it did. */
-	const wakeThread = async (thread: Thread, prompt?: string): Promise<boolean> => {
-		const project = projectByName(thread.project);
-		if (!project) {
-			setMessage(`✗ Unknown project "${thread.project}"`);
-			return false;
-		}
-		const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(project, thread));
-		const window = threadWindowName(thread.id);
-		if (!(await windowNames()).includes(window)) {
-			const starts = sessionStarts.current.get(thread.id) ?? 0;
-			await launchClaude(thread, cwd, { background: true });
-			// It may be waiting on "resume anyway?" instead.
-			if (!(await windowNames()).includes(window)) return false;
-			const deadline = Date.now() + 30_000;
-			while ((sessionStarts.current.get(thread.id) ?? 0) === starts) {
-				if (Date.now() > deadline) {
-					setMessage(`✗ #${thread.id}'s claude didn't start in time; not woken`);
-					return false;
-				}
-				await sleep(250);
-			}
-			// SessionStart comes a little before the prompt takes input.
-			await sleep(1000);
-		}
-		await pasteInto(window, prompt ?? (project.wakePrompt || DEFAULT_WAKE_PROMPT));
-		setMessage(`Woke #${thread.id}`);
-		return true;
-	};
-
-	/**
-	 * Rebase the thread's branch on origin's default branch, keeping uncommitted changes, and push
-	 * it if it has a PR. Conflicts are left for the thread's claude to resolve (and push).
-	 */
-	const updateFromMain = (thread: Thread) =>
-		inWorktree(thread, async cwd => {
-			if (statuses[thread.id] === 'working' && !stalled(thread)) return setMessage(`⚠ claude is still working on #${thread.id}`);
-			// The conflict prompt would land as its answer.
-			if (statuses[thread.id] === 'waiting') return setMessage(`⚠ #${thread.id}'s claude is waiting on a question — answer it first`);
-			if (await rebaseInProgress(cwd)) return setMessage(`⚠ #${thread.id} is already partway through a rebase — finish or abort it first`);
-			const branch = thread.branch ?? (await currentRef(cwd));
-			if (/^[0-9a-f]{40}$/.test(branch)) return setMessage(`⚠ ${cwd} isn't on a branch`);
-			const base = (await defaultBranch(cwd)) ?? thread.base ?? 'main';
-			const rebased = await rebaseOnMain(cwd, base);
-			if (rebased.result === 'up-to-date') return setMessage(`#${thread.id} is already on origin/${base}`);
-			if (rebased.result === 'conflicts') {
-				const count = `${rebased.files.length} file${rebased.files.length === 1 ? '' : 's'}`;
-				if (!(await wakeThread(thread, conflictPrompt(base, rebased.files, !!thread.pr)))) return;
-				return setMessage(`⚠ Rebasing #${thread.id} on origin/${base} conflicts in ${count} — handed to claude`);
-			}
-			if (!thread.pr) return setMessage(`Rebased #${thread.id} on origin/${base}`);
-			await forcePushBranch(cwd, branch);
-			setMessage(`Rebased #${thread.id} on origin/${base} and pushed`);
-			// The push may have fixed the PR's conflicts, so don't wait for the next poll to show it.
-			void checkPr(thread);
-		}, { git: true, label: 'rebasing on main' });
-
-	/** Open claude with a shell or a live diff beside it, starting claude first if it isn't running. */
-	const openBeside = (thread: Thread, role: 'shell' | 'diff') =>
-		inWorktree(thread, async cwd => {
-			const window = threadWindowName(thread.id);
-			if (!(await windowNames()).includes(window)) {
-				await launchClaude(thread, cwd, { background: true });
-				// It may be waiting on "resume anyway?" instead.
-				if (!(await windowNames()).includes(window)) return;
-			}
-			const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
-			await openSplit(window, cwd, role, command, { OO_THREAD_ID: thread.id });
-		}, { git: role === 'diff' });
 
 	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
 	const startImport = () => {
 		const filtered = filter ? projectByName(filter) : state.projects.length === 1 ? state.projects[0] : undefined;
 		if (filtered) return openPicker(filtered);
-		setPrompt({ step: 'project', index: 0 });
+		setChoosingImport(true);
 	};
 
 	const openPicker = (project: Project) =>
 		run(async () => {
 			const threads = await listOutsideThreads(project.path);
 			if (threads.length === 0) return setMessage(`No claude threads to import in ${project.path}`);
-			setPicker({ project: project.name, threads, row: 0 });
+			setPicker({ project: project.name, threads });
 		}, 'looking for threads');
 
-	const linkedThread = (outside: OutsideThread) => state.threads.find(t => t.sessionId === outside.id);
+	const openReviews = () =>
+		run(async () => {
+			const requests = await fetchReviews(board);
+			if (requests.length === 0) return setMessage(m => m || 'No PRs waiting for your review');
+			setReviews(requests);
+		}, 'looking for review requests');
 
 	/** Where the thread is shown with `f` as the filter: its column, and its row there. */
 	const positionOf = (thread: Thread, f: string | null) => {
@@ -1107,32 +178,9 @@ export function App() {
 		return true;
 	};
 
-	const importThread = (project: string, outside: OutsideThread) => {
-		setPicker(null);
-		const linked = linkedThread(outside);
-		if (linked) {
-			if (!showThread(linked)) setMessage(`That thread is already imported as archived #${linked.id}`);
-			return;
-		}
-		const { thread } = addThread(state, {
-			title: outside.title,
-			plan: outside.title === outside.firstPrompt ? '' : outside.firstPrompt,
-			project,
-			sessionId: outside.id,
-			transcriptPath: outside.transcriptPath,
-			cwd: outside.cwd,
-		});
-		setState(s => ({ ...s, threads: [...s.threads, thread] }));
-		setCursor({ col: 0, row: columnThreads('planned').length });
-		setMessage(
-			recentlyActive(outside.transcriptPath)
-				? `⚠ Imported #${thread.id}, but it looks active elsewhere — close it there before ⏎`
-				: `Imported #${thread.id} — ⏎ resumes it`,
-		);
-	};
-
 	useInput((input, key) => {
-		if (busy || showProjects || editing) return;
+		// The form, the import and review lists and the import prompt take their own keys.
+		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews) return;
 		setMessage('');
 		if (showKeys) {
 			if (input === '?' || input === 'q' || key.escape) setShowKeys(false);
@@ -1141,33 +189,6 @@ export function App() {
 		if (confirm) {
 			setConfirm(null);
 			return input === 'y' ? confirm() : setMessage('Cancelled');
-		}
-		if (form) return formInput(form, input, key);
-		if (prompt) return promptInput(prompt, input, key);
-		if (picker) {
-			const count = picker.threads.length;
-			if (input === 'q' || input === 'i' || key.escape) return setPicker(null);
-			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: loop(picker.row, 1, count) });
-			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: loop(picker.row, -1, count) });
-			if (key.return) return importThread(picker.project, picker.threads[picker.row]!);
-			return;
-		}
-		if (reviews) {
-			const count = reviews.requests.length;
-			const review = reviews.requests[reviews.row];
-			if (input === 'q' || input === 'R' || key.escape) return setReviews(null);
-			if (input === 'j' || key.downArrow) return setReviews({ ...reviews, row: loop(reviews.row, 1, count) });
-			if (input === 'k' || key.upArrow) return setReviews({ ...reviews, row: loop(reviews.row, -1, count) });
-			if (input === 'r') {
-				return run(async () => {
-					const requests = await fetchReviews();
-					setReviews({ requests, row: Math.min(reviews.row, Math.max(0, requests.length - 1)) });
-				}, 'looking for review requests');
-			}
-			if (!review) return;
-			if (key.return || input === 'v') return viewReview(review);
-			if (input === 'b') return run(() => openPrInBrowser(review), 'opening PR in the browser');
-			return;
 		}
 		if (input === 'q') return ask('Quit?', exit);
 		if (key.escape && filter) {
@@ -1181,17 +202,6 @@ export function App() {
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
-		if (input === 'W') {
-			const woken = state.threads.filter(t => visible(t) && t.column !== 'done' && stalled(t));
-			if (woken.length === 0) return setMessage('No interrupted threads');
-			const ids = (threads: Thread[]) => threads.map(t => `#${t.id}`).join(', ');
-			return ask(`Wake ${ids(woken)}?`, async () => {
-				const failed: Thread[] = [];
-				// One at a time, as each waits for its claude to start.
-				for (const t of woken) await run(async () => void ((await wakeThread(t)) || failed.push(t)), `waking #${t.id}`);
-				if (woken.length > 1) setMessage(failed.length ? `⚠ Woke all but ${ids(failed)}` : `Woke ${ids(woken)}`);
-			});
-		}
 		if (input === 'P') return setShowProjects(true);
 		if (input === 'R') return openReviews();
 		if (input === '?') return setShowKeys(true);
@@ -1201,363 +211,16 @@ export function App() {
 			setFilter(names[(names.indexOf(filter) + 1) % names.length]!);
 			return setCursor({ col: cursor.col, row: 0 });
 		}
+		if (runBinding(board, input, key, selected)) return;
 		if (!selected) return;
-		if (input === 'H') return moveColumn(selected, -1);
-		if (input === 'L') return moveColumn(selected, 1);
-		if (input === 'F' && selected.column !== 'done') {
-			// Imported threads keep their directory and window.
-			const closes = selected.cwd ? '' : ' It closes its claude window and removes its worktree (branch kept).';
-			return ask(`Move #${selected.id} ${selected.title} to Done?${closes}`, () => moveThread(selected, 'done'));
-		}
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
-		if (input === 't') {
-			pendingLocal.current.delete(selected.id);
-			return moveLocal(selected, !selected.local);
-		}
 		if (input === 'e') return setEditing(selected.id);
-		if (key.return) return openThread(selected);
-		if (input === 'w') {
-			if (statuses[selected.id] === 'working' && !stalled(selected)) return setMessage(`⚠ claude is still working on #${selected.id}`);
-			return run(async () => void (await wakeThread(selected)), `waking #${selected.id}`);
-		}
-		if (input === 'u') return updateFromMain(selected);
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
 		}
-		if (input === 'x') {
-			return run(async () => {
-				const problem = await archiveProblem(selected);
-				if (problem) return setMessage(problem);
-				ask(`Archive #${selected.id}?`, () =>
-					run(async () => {
-						updateThread(selected.id, { column: 'archived' });
-						setMessage(`Archived #${selected.id}`);
-						await syncWorktree({ ...selected, column: 'archived' }, selected.column);
-					}, 'archiving'),
-				);
-			}, 'checking for uncommitted changes');
-		}
-		if (key.meta && (input === 'd' || input === 'D')) return openBeside(selected, 'diff');
-		if (input === 'd' || input === 'D') {
-			const kind = input === 'd' ? 'step' : 'thread';
-			return inWorktree(selected, async cwd => {
-				const result = await showDiff(cwd, kind, selected);
-				if (result === 'empty') setMessage(`No ${kind} changes`);
-				if (result === 'approved') await approveStep(cwd, selected);
-			}, { git: true });
-		}
-		if (input === 's') return openBeside(selected, 'shell');
-		if (input === 'c') {
-			return inWorktree(selected, async cwd => {
-				const window = threadWindowName(selected.id);
-				// Checked first so notes aren't written only to be thrown away.
-				if (!(await windowNames()).includes(window)) return setMessage(`#${selected.id} has no claude window — open it with ⏎ first`);
-				const feedback = await reviewDiff(cwd, selected);
-				if (feedback === null) return setMessage('No changes');
-				if (!feedback) return setMessage('No comments');
-				if (!(await windowNames()).includes(window)) return setMessage(`✗ #${selected.id}'s claude window closed; comments not sent`);
-				await pasteInto(window, feedback);
-				setMessage(`Sent comments to #${selected.id}`);
-			}, { git: true });
-		}
-		if (input === 'b') {
-			const { pr } = selected;
-			if (!pr) return setMessage(`#${selected.id} has no PR`);
-			return run(async () => {
-				await openPrInBrowser(pr);
-				setMessage(`Opened PR #${pr.number} in the browser`);
-			}, 'opening PR in the browser');
-		}
-		if (input === 'v') {
-			const { pr } = selected;
-			if (!pr) return setMessage(`#${selected.id} has no PR`);
-			return inWorktree(selected, async cwd => void (await viewPr(cwd, pr.number, selected)), { git: true, label: `loading PR #${pr.number}` });
-		}
-		if (input === 'o') {
-			return inWorktree(selected, async cwd => {
-				if (!(await openChanges(cwd, selected))) setMessage('No changes');
-			}, { git: true });
-		}
 	});
-
-	useEffect(() => {
-		if (!boardRef.current) return;
-		const measured = measureElement(boardRef.current).height;
-		if (measured !== boardHeight) setBoardHeight(measured);
-	});
-
-	/** The slice of a column's threads that fits, keeping the cursor in view; `top` is the lines its "more" line above takes. */
-	const visibleSlice = (column: Column, threads: Thread[], cursorRow: number | undefined) => {
-		const count = threads.length;
-		// Room for the borders of the cards in Local, whether or not they're scrolled into view.
-		const lines = boardHeight - (LIST_TOP - 1) - LOCAL_BORDER_LINES * threads.filter(t => t.local).length;
-		const rowLines = cardHeight(column);
-		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count, top: 0 };
-		// Room for the "more" lines above and below.
-		const fits = Math.max(1, Math.floor((lines - 2) / rowLines));
-		const last = count - fits;
-		let start = scrollOffsets.current[column] ?? (column === 'done' ? last : 0);
-		if (cursorRow !== undefined) start = Math.min(Math.max(start, cursorRow - fits + 1), cursorRow);
-		// Unless you're in it, Done shows the latest arrivals, which land at the bottom.
-		else if (column === 'done') start = last;
-		start = Math.min(Math.max(0, start), last);
-		scrollOffsets.current[column] = start;
-		return { start, end: start + fits, top: start > 0 ? 1 : 0 };
-	};
-	const columnSlice = (c: number) => visibleSlice(COLUMNS[c]!, columnThreads(COLUMNS[c]!), c === cursor.col ? row : undefined);
-
-	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
-
-	// The import list scrolls to keep the selected entry in view; it shows what fits in the space
-	// measured after each render, starting at entry `pickerTop`. The review list shares the measuring.
-	const pickerList = useRef<DOMElement>(null);
-	const [pickerLines, setPickerLines] = useState(0);
-	useEffect(() => {
-		if (!pickerList.current) return;
-		const lines = measureElement(pickerList.current).height;
-		if (lines !== pickerLines) setPickerLines(lines);
-	});
-	const pickerTop = useRef(0);
-	const entryHeight = (t: OutsideThread) => (t.title === t.firstPrompt ? 1 : 2);
-	const pickerShown: OutsideThread[] = [];
-	if (picker) {
-		const { threads, row: selectedRow } = picker;
-		const linesFrom = (from: number, to: number) => threads.slice(from, to + 1).reduce((n, t) => n + entryHeight(t), 0);
-		pickerTop.current = Math.min(pickerTop.current, selectedRow);
-		while (pickerTop.current < selectedRow && linesFrom(pickerTop.current, selectedRow) > pickerLines) pickerTop.current++;
-		let lines = 0;
-		for (const t of threads.slice(pickerTop.current)) {
-			lines += entryHeight(t);
-			if (lines > pickerLines) break;
-			pickerShown.push(t);
-		}
-	} else pickerTop.current = 0;
-	// Review requests are a line each.
-	const reviewsTop = useRef(0);
-	if (reviews) {
-		reviewsTop.current = Math.min(reviewsTop.current, reviews.row);
-		reviewsTop.current = Math.max(reviewsTop.current, reviews.row - Math.max(1, pickerLines) + 1);
-	} else reviewsTop.current = 0;
-
-	const lastClick = useRef<{ target: string; at: number } | null>(null);
-	/** Whether this click is on the same thing as the last, soon enough to make a double-click. */
-	const isDoubleClick = (target: string) => {
-		const now = Date.now();
-		const double = lastClick.current?.target === target && now - lastClick.current.at < DOUBLE_CLICK_MS;
-		lastClick.current = double ? null : { target, at: now };
-		return double;
-	};
-
-	/** The import list's entry at screen row `y`; an entry is one line, or two when it shows its first prompt. */
-	const pickerRowAt = (y: number) => {
-		let top = LIST_TOP;
-		for (const [r, t] of pickerShown.entries()) {
-			top += entryHeight(t);
-			if (y < top) return pickerTop.current + r;
-		}
-	};
-
-	// The layout is a fixed grid, so a press's cell says what it's on. The wheel stops at the ends rather than looping.
-	const onMouse = ({ button, x, y }: MouseEvent) => {
-		if (busy || showProjects || showKeys || editing || form || prompt || confirm) return;
-		setMessage('');
-		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
-		if (picker) {
-			const last = picker.threads.length - 1;
-			if (wheel) return setPicker(p => p && { ...p, row: Math.max(0, Math.min(last, p.row + wheel)) });
-			const r = y >= LIST_TOP ? pickerRowAt(y) : undefined;
-			if (button !== 'left' || r === undefined) return;
-			setPicker(p => p && { ...p, row: r });
-			if (isDoubleClick(picker.threads[r]!.id)) importThread(picker.project, picker.threads[r]!);
-			return;
-		}
-		if (reviews) {
-			const last = reviews.requests.length - 1;
-			if (wheel) return setReviews(r => r && { ...r, row: Math.max(0, Math.min(last, r.row + wheel)) });
-			const r = reviewsTop.current + y - LIST_TOP;
-			if (button !== 'left' || y < LIST_TOP || r > last || r >= reviewsTop.current + pickerLines) return;
-			setReviews(rs => rs && { ...rs, row: r });
-			if (isDoubleClick(reviews.requests[r]!.url)) viewReview(reviews.requests[r]!);
-			return;
-		}
-		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
-		const col = Math.floor(x / colWidth);
-		if (button !== 'left' || y < 1 || col >= COLUMNS.length) return;
-		const slice = columnSlice(col);
-		let top = LIST_TOP + slice.top;
-		// The column's header, or its "more" line.
-		if (y < top) return setCursor({ col, row });
-		// Cards in Local are taller, so count down through the ones shown.
-		const threads = columnThreads(COLUMNS[col]!);
-		let r = slice.start;
-		for (; r < Math.min(slice.end, threads.length); r++) {
-			top += cardLines(threads[r]!);
-			if (y < top) break;
-		}
-		const thread = r < slice.end ? threads[r] : undefined;
-		if (!thread) return;
-		setCursor({ col, row: r });
-		if (isDoubleClick(thread.id)) openThread(thread);
-	};
-	const onMouseRef = useRef(onMouse);
-	onMouseRef.current = onMouse;
-	useEffect(() => {
-		const listener = (event: MouseEvent) => onMouseRef.current(event);
-		mouse.on('press', listener);
-		return () => void mouse.off('press', listener);
-	}, []);
-
-	/** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
-	const card = (t: Thread, isSelected: boolean) => {
-		const oneLine = cardHeight(t.column) === 1;
-		const color = t.color ?? projectByName(t.project)?.color;
-		const live = liveWindows.has(threadWindowName(t.id));
-		// Changes aren't ready to review until claude stops working on them.
-		const working = live && statuses[t.id] === 'working';
-		const [badge, badgeColor] = live
-			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
-			: resumeId(t)
-				? ['↻', stalled(t) ? 'red' : 'gray']
-				: [' ', undefined];
-		const title = (
-			<>
-				{t.ticket ? <Text color="blue">{t.ticket.key} </Text> : null}
-				{t.title}
-			</>
-		);
-		return (
-			<Box key={t.id} flexDirection="column" {...(t.local ? { borderStyle: 'round', borderColor: 'yellow' } : {})}>
-				<Text wrap="truncate" inverse={isSelected}>
-					<Text color={badgeColor}>{badge} </Text>
-					<Text bold>#{t.id} </Text>
-					<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
-					{unreviewed.has(t.id) && !working ? (
-						<Text color="magenta" bold>
-							{' '}±
-						</Text>
-					) : null}
-					{merge[t.id]?.mergeable === 'CONFLICTING' ? (
-						<Text color="red" bold>
-							{' '}⚡
-						</Text>
-					) : null}
-					{/* Every step approved: ready to move on to Polish and a PR. */}
-					{t.column === 'active' && todosDone(t.todos) ? (
-						<Text color="green" bold>
-							{' '}✓ polish
-						</Text>
-					) : null}
-					{/* Finished threads get one line each so more of them fit. */}
-					{oneLine ? ' ' : null}
-					{oneLine ? title : null}
-				</Text>
-				{oneLine ? null : (
-					<Text wrap="truncate" inverse={isSelected}>
-						{'  '}
-						{title}
-					</Text>
-				)}
-			</Box>
-		);
-	};
-
-	/** The `n` form: a field per line, with the recent tickets under the ticket field while it's active. */
-	const newThreadBox = (form: NewThreadForm) => {
-		const project = projectByName(form.project);
-		const tickets = recent?.project === form.project ? recent.tickets : null;
-		const cursor = <Text inverse> </Text>;
-		const value = (field: NewThreadField, active: boolean) => {
-			if (field === 'project') return <Text color={project?.color}>{active ? `‹ ${form.project} ›` : form.project}</Text>;
-			if (field === 'ticket') {
-				return (
-					<Text color="blue">
-						{form.ticketKey}
-						{active ? cursor : null}
-						{!form.ticketKey ? <Text dimColor>{active ? '  type a key or ←/→ for recent' : 'none'}</Text> : null}
-					</Text>
-				);
-			}
-			return (
-				<Text>
-					{form[field]}
-					{active ? cursor : null}
-					{field === 'prompt' && !form.prompt && !active ? <Text dimColor>none — claude isn't started</Text> : null}
-				</Text>
-			);
-		};
-		return (
-			<Box flexDirection="column" borderStyle="round" borderColor={project?.color} paddingX={1}>
-				<Text bold>New thread</Text>
-				{newThreadFields(project).map(field => {
-					const active = field === form.field;
-					return (
-						<Box key={field} flexDirection="column">
-							<Text wrap="wrap">
-								<Text dimColor={!active}>
-									{active ? '› ' : '  '}
-									{`${NEW_THREAD_LABELS[field]}:`.padEnd(NEW_THREAD_LABEL_WIDTH)}
-								</Text>
-								{value(field, active)}
-							</Text>
-							{field === 'ticket' && active ? (
-								<Box flexDirection="column" marginLeft={NEW_THREAD_LABEL_WIDTH + 2}>
-									{tickets === null ? <Text dimColor>loading recent tickets…</Text> : null}
-									{typeof tickets === 'string' ? <Text dimColor>{tickets}</Text> : null}
-									{Array.isArray(tickets) && tickets.length === 0 ? <Text dimColor>none open and assigned to you</Text> : null}
-									{Array.isArray(tickets)
-										? tickets.map((t, i) => (
-												<Text key={t.key} wrap="truncate" inverse={i === form.ticket}>
-													<Text color="blue">{t.key}</Text> {t.summary}
-												</Text>
-											))
-										: null}
-								</Box>
-							) : null}
-						</Box>
-					);
-				})}
-				<Text dimColor>tab or ↑/↓ field  ←/→ project / ticket  ⏎ create  esc cancel  ctrl-u clear  ctrl-w delete word</Text>
-			</Box>
-		);
-	};
-
-	/** The highlighted thread's progress through claude's task list, with the current step in view. */
-	const todoList = (todos: Todo[]) => {
-		const { start, end } = todoWindow(todos, MAX_TODO_LINES);
-		// Step numbers are right-aligned so the subjects line up past step 9.
-		const width = String(todos.length).length;
-		const indent = ' '.repeat(width + 4);
-		const more = (n: number, arrow: string) =>
-			n > 0 ? (
-				<Text dimColor>
-					{indent}
-					{arrow} {n} more
-				</Text>
-			) : null;
-		return (
-			<Box flexDirection="column">
-				<Text>
-					<Text bold>todo</Text> {todoProgress(todos)}
-				</Text>
-				{more(start, '↑')}
-				{todos.slice(start, end).map((todo, i) => (
-					<Text key={start + i} wrap="truncate">
-						{'  '}
-						<Text color={TODO_COLORS[todo.status]} dimColor={todo.status === 'done'}>
-							{String(start + i + 1).padStart(width)}.
-						</Text>{' '}
-						<Text color={TODO_COLORS[todo.status]}>{TODO_MARKS[todo.status]}</Text>{' '}
-						<Text bold={todo.status === 'active' || todo.status === 'review'} dimColor={todo.status === 'done'}>
-							{todo.subject}
-						</Text>
-					</Text>
-				))}
-				{more(todos.length - end, '↓')}
-			</Box>
-		);
-	};
 
 	return (
 		<Box flexDirection="column" height={height}>
@@ -1584,162 +247,41 @@ export function App() {
 			) : showKeys ? (
 				<KeysView />
 			) : reviews ? (
-				<Box flexGrow={1} overflow="hidden" flexDirection="column">
-					<Text bold>
-						PRs waiting for your review <Text dimColor>(j/k move  ⏎/v view  b browser  r refresh  esc/q/R close, or click, double-click, scroll)</Text>
-					</Text>
-					<Text dimColor>
-						{'─'.repeat(Math.max(0, width - 13))} {String(reviews.row + 1).padStart(4)} of {String(reviews.requests.length).padEnd(3)}
-					</Text>
-					<Box ref={pickerList} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
-						{reviews.requests.slice(reviewsTop.current, reviewsTop.current + Math.max(1, pickerLines)).map((r, i) => (
-							<Text key={r.url} wrap="truncate" inverse={reviewsTop.current + i === reviews.row}>
-								<Text dimColor>{timeAgo(new Date(r.updatedAt)).padEnd(9)}</Text>
-								<Text color={r.project.color}>{(r.project.abbrev || r.project.name).padEnd(6)} </Text>
-								<Text color="cyan">#{r.number} </Text>
-								{r.isDraft ? <Text dimColor>draft </Text> : null}
-								{r.title} <Text dimColor>— {r.author.login}</Text>
-							</Text>
-						))}
-					</Box>
-				</Box>
+				<ReviewList board={board} requests={reviews} active={!busy} onClose={() => setReviews(null)} />
 			) : picker ? (
-				<Box flexGrow={1} overflow="hidden" flexDirection="column">
-					<Text bold>
-						Import a {picker.project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
-					</Text>
-					<Text dimColor>
-						{'─'.repeat(Math.max(0, width - 13))} {String(picker.row + 1).padStart(4)} of {String(picker.threads.length).padEnd(3)}
-					</Text>
-					<Box ref={pickerList} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
-						{pickerShown.map((s, i) => {
-							const r = pickerTop.current + i;
-							const linked = linkedThread(s);
-							const active = recentlyActive(s.transcriptPath);
-							return (
-								<Box key={s.id} flexDirection="column" flexShrink={0}>
-									<Text wrap="truncate" inverse={r === picker.row}>
-										<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
-										{linked ? <Text color="cyan">#{linked.id} </Text> : null}
-										{active ? <Text color="yellow">● active </Text> : null}
-										{s.title}
-									</Text>
-									{s.title !== s.firstPrompt ? (
-										<Text wrap="truncate" dimColor>
-											{'         '}
-											{s.firstPrompt}
-										</Text>
-									) : null}
-								</Box>
-							);
-						})}
-					</Box>
-				</Box>
+				<ImportList
+					board={board}
+					project={picker.project}
+					threads={picker.threads}
+					active={!busy}
+					onClose={() => setPicker(null)}
+					onShow={showThread}
+				/>
 			) : (
-				<Box ref={boardRef} flexGrow={1} overflow="hidden">
-					{COLUMNS.map((column, c) => {
-						const threads = columnThreads(column);
-						const { start, end } = columnSlice(c);
-						return (
-							<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-								<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-									{COLUMN_LABELS[column]} ({threads.length})
-								</Text>
-								<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-								{start > 0 ? <Text dimColor>  ↑ {start} more</Text> : null}
-								{threads.slice(start, end).map((t, i) => card(t, c === cursor.col && start + i === row))}
-								{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
-							</Box>
-						);
-					})}
-				</Box>
+				<Columns
+					board={board}
+					columns={COLUMNS.map(column => columnThreads(column))}
+					cursor={{ col: cursor.col, row }}
+					setCursor={setCursor}
+					active={!busy && !newThreadIn && !choosingImport && !confirm}
+					unreviewed={unreviewed}
+					merge={merge}
+					layout={columnsLayout}
+				/>
 			)}
-			<Box marginTop={1} flexDirection="column" display={showProjects || showKeys || editing ? 'none' : 'flex'}>
-				{/* About the highlighted card, so not while the import or review list covers the board. */}
-				{selected?.plan && !picker && !reviews ? (
-					<Text dimColor wrap="truncate-end">
-						{selected.plan.split('\n').slice(0, 3).join(' · ')}
-					</Text>
-				) : null}
-				{selected?.todos?.length && !picker && !reviews ? todoList(selected.todos) : null}
-				{selected?.ticket?.url && !picker && !reviews ? (
-					<Text dimColor>
-						{selected.ticket.key} {selected.ticket.url}
-					</Text>
-				) : null}
-				{selected?.pr && !picker && !reviews ? (
-					<Text dimColor>
-						PR #{selected.pr.number} {selected.pr.url} (b opens it)
-						{selectedMerge ? <Text color={selectedMerge[1]}> — {selectedMerge[0]}</Text> : null}
-					</Text>
-				) : null}
-				{prompt ? (
-					<Box flexDirection="column">
-						<Text bold>Import — project? (j/k move, ⏎ choose, esc cancel)</Text>
-						{state.projects.map((p, i) => (
-							<Text key={p.name} inverse={i === prompt.index}>
-								{'  '}
-								<Text color={p.color}>{p.name}</Text>
-								<Text dimColor> {p.path}</Text>
-							</Text>
-						))}
-					</Box>
-				) : null}
-				{form ? newThreadBox(form) : null}
-				{busy ? (
-					<Text color="cyan">{busy}…</Text>
-				) : (
-					<Text color={message.startsWith('✗') ? 'red' : confirm || message.startsWith('⚠') ? 'yellow' : 'green'}>{message}</Text>
-				)}
-				<Text>
-					{LEGEND.map(([badge, color, label]) => (
-						<Text key={label}>
-							<Text color={color}>{badge}</Text>
-							<Text dimColor> {label}   </Text>
-						</Text>
-					))}
-				</Text>
-				{/* The way into every other key, kept in the corner so it's always in the same place. */}
-				<Box justifyContent="space-between" width={width}>
-					<Text dimColor wrap="truncate-end">
-						{HELP}
-					</Text>
-					<Box flexShrink={0} marginLeft={2}>
-						<Text dimColor>? all keys</Text>
-					</Box>
-				</Box>
-			</Box>
-		</Box>
-	);
-}
-
-/** The `?` screen: every key, a section per box, as many side by side as fit. */
-function KeysView() {
-	return (
-		<Box flexGrow={1} overflow="hidden" flexDirection="column">
-			<Text bold>
-				Keys <Text dimColor>(? / q / esc close · also in KEYS.md)</Text>
-			</Text>
-			<Box flexWrap="wrap">
-				{KEY_SECTIONS.map(section => {
-					const keyWidth = Math.max(...section.keys.map(([k]) => k.length)) + 2;
-					return (
-						<Box key={section.title} flexDirection="column" width={48} marginTop={1} marginRight={2}>
-							<Text bold color="cyan">
-								{section.title}
-							</Text>
-							{section.keys.map(([k, what]) => (
-								<Box key={k}>
-									<Box width={keyWidth} flexShrink={0}>
-										<Text>{k}</Text>
-									</Box>
-									<Text dimColor>{what}</Text>
-								</Box>
-							))}
-						</Box>
-					);
-				})}
-			</Box>
+			<Footer
+				// About the highlighted card, so not while the import or review list covers the board.
+				thread={picker || reviews ? undefined : selected}
+				merge={selected && merge[selected.id]}
+				busy={busy}
+				message={message}
+				confirming={!!confirm}
+				width={width}
+				hidden={showProjects || showKeys || !!editing}
+			>
+				{choosingImport ? <ImportProject board={board} active={!busy} onPick={openPicker} onClose={() => setChoosingImport(false)} /> : null}
+				{newThreadIn ? <NewThread board={board} project={newThreadIn} recent={recent} active={!busy} onClose={() => setNewThreadIn(null)} /> : null}
+			</Footer>
 		</Box>
 	);
 }
