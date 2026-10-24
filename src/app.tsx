@@ -6,6 +6,7 @@ import { COMMIT_FORM, commitFormText, parseCommitForm, type CommitForm } from '.
 import { EDITOR, parsePr, prText } from './editor.js';
 import { runColumnHook, tryHook } from './hooks.js';
 import {
+	carryChanges,
 	checkout,
 	currentRef,
 	defaultBranch,
@@ -17,6 +18,7 @@ import {
 	rebaseInProgress,
 	rebaseOnMain,
 	removeWorktree,
+	restoreChanges,
 	stageAll,
 	worktreePath,
 } from './git.js';
@@ -192,6 +194,13 @@ export function App() {
 			} catch {}
 		});
 		return () => unwatchFile(STATE_FILE);
+	}, []);
+
+	// Undo the commit carrying a thread's uncommitted changes, if a move into or out of Local died before it could.
+	useEffect(() => {
+		const { threads, projects } = stateRef.current;
+		const dirs = new Set([...threads.filter(t => !t.cwd).map(t => threadDir(stateRef.current, t)), ...projects.map(p => p.path)]);
+		for (const dir of dirs) if (dir) void restoreChanges(dir).catch(() => {});
 	}, []);
 
 	// Fold hook events (see status.ts) into per-thread status and the latest claude session ID.
@@ -461,14 +470,9 @@ export function App() {
 		if (thread.cwd) return;
 		if (entering) {
 			if (!thread.branch) return `#${thread.id} has no branch yet — open it first`;
-			if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
-				return `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`;
-			}
-			// Untracked files there are yours and get in the way only if the branch has them too, which checkout catches.
+			// The thread's own uncommitted changes come along (see enterLocal), but the checkout's tracked ones are yours.
+			// Untracked files there get in the way only if the branch has them too, which checkout catches.
 			if (await isDirty(project.path, { untracked: false })) return `${project.path} has uncommitted changes — commit or stash them first`;
-		} else if (await isDirty(project.path)) {
-			// Including untracked files: anything new there is the thread's work.
-			return `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`;
 		}
 	};
 
@@ -487,12 +491,26 @@ export function App() {
 		}
 		if (statuses[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
 		const wasOpen = await closeClaude(thread);
-		if (hasWorktree(thread)) await removeWorktree(project.path, thread);
-		await checkout(project.path, thread.branch!);
+		// Uncommitted changes ride along on a temporary commit on the branch, undone once it's checked out here.
+		let carried = false;
+		if (hasWorktree(thread)) {
+			await restoreChanges(worktreePath(thread));
+			carried = await carryChanges(worktreePath(thread));
+			await removeWorktree(project.path, thread);
+		}
+		try {
+			await checkout(project.path, thread.branch!);
+		} catch (err) {
+			// Put the thread back in its worktree as it was, e.g. when an untracked file here clashes with the branch.
+			await restoreChanges(await createWorktree(project, thread));
+			if (wasOpen) await launchClaude(thread, worktreePath(thread), { background: true });
+			throw err;
+		}
+		await restoreChanges(project.path);
 		const moved: Thread = { ...thread, local: true, ...moveTranscript(thread, project.path) };
 		updateThread(thread.id, moved);
 		if (wasOpen) await launchClaude(moved, project.path, { background: true });
-		const done = `${project.name} checkout is on ${thread.branch}; claude works there until it leaves Local`;
+		const done = `${project.name} checkout is on ${thread.branch}${carried ? ' with its uncommitted changes' : ''}; claude works there until it leaves Local`;
 		return { ok: true, message: await hook(project, 'enterLocal', moved, project.path, done) };
 	};
 
@@ -511,13 +529,17 @@ export function App() {
 		if (statuses[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
 		const main = (await defaultBranch(project.path)) ?? 'main';
 		const wasOpen = await closeClaude(thread);
+		// Including untracked files: anything new there is the thread's work.
+		await restoreChanges(project.path);
+		const carried = await carryChanges(project.path);
 		await checkout(project.path, main);
 		const back: Thread = { ...thread, local: undefined };
 		const cwd = await createWorktree(project, back);
+		await restoreChanges(cwd);
 		Object.assign(back, moveTranscript(thread, cwd));
 		updateThread(thread.id, back);
 		if (wasOpen) await launchClaude(back, cwd, { background: true });
-		const done = `${project.name} checkout is back on ${main}; #${thread.id} is back in its worktree`;
+		const done = `${project.name} checkout is back on ${main}; #${thread.id} is back in its worktree${carried ? ' with its uncommitted changes' : ''}`;
 		return { ok: true, message: await hook(project, 'leaveLocal', back, project.path, done) };
 	};
 
