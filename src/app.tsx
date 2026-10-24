@@ -2,7 +2,8 @@ import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
-import { commitText, EDITOR, parseCommit, parsePr, prText } from './editor.js';
+import { COMMIT_FORM, commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
+import { EDITOR, parsePr, prText } from './editor.js';
 import { runColumnHook, tryHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, mergeLabel, openPrInBrowser, prStatus, withTicket, type PrStatus } from './github.js';
@@ -679,25 +680,26 @@ export function App() {
 
 	/**
 	 * Approve the step: stage everything in `cwd`, have claude draft the message, and commit it once
-	 * it's edited. A claude stopped for the review is then told to move on.
+	 * it's edited in the commit form. A claude stopped for the review is then told to move on (or stop,
+	 * after the last step), with any comments from the form.
 	 */
 	const approveStep = async (cwd: string, thread: Thread) => {
 		if (!(await stageAll(cwd))) return setMessage('Nothing to commit');
 		const window = threadWindowName(thread.id);
 		// Not one that's working or waiting on a question, where the paste would land as an answer.
 		const waiting = statusesRef.current[thread.id] === 'stopped' && (await windowNames()).includes(window);
-		let message: string | null;
-		const progress = progressPopup(' commit ', EDITOR);
+		let form: CommitForm | null;
+		const progress = progressPopup(' commit ', COMMIT_FORM);
 		try {
 			const drafted = await progress.cancellable('claude is writing the commit message', signal => draftCommit(cwd, thread, signal));
 			const edited =
 				drafted === CLOSED
 					? CLOSED
-					: await progress.edit(drafted ? commitText(drafted) : commitText('', "claude couldn't write a commit message; write one."));
-			message = edited === CLOSED ? null : parseCommit(edited);
-			if (!message) return setMessage('⚠ Commit cancelled (changes left staged)');
+					: await progress.edit(drafted ? commitFormText(drafted) : commitFormText('', "claude couldn't write a commit message; write one."));
+			form = edited === CLOSED ? null : parseCommitForm(edited);
+			if (!form) return setMessage('⚠ Commit cancelled (changes left staged)');
 			progress.status('committing');
-			await commit(cwd, message);
+			await commit(cwd, `${form.message}\n`);
 		} finally {
 			await progress.close();
 		}
@@ -707,8 +709,9 @@ export function App() {
 		const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
 		if (item !== -1) updateThread(thread.id, { todos: ticked });
 		const told = waiting && (await windowNames()).includes(window);
-		if (told) await pasteInto(window, approvedPrompt(ticked, item, message.split('\n')[0]!));
-		setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${told ? ' · told claude' : ''}`);
+		if (told) await pasteInto(window, approvedPrompt(ticked, item, form.message, form.notes));
+		const tellClaude = told ? ` · told claude${form.notes ? ' with comments' : ''}` : form.notes ? " · ⚠ comments not sent — claude wasn't waiting" : '';
+		setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${tellClaude}`);
 	};
 
 	const promptInput = (prompt: Prompt, input: string, key: Key) => {

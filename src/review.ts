@@ -16,7 +16,7 @@ const APPROVE_STATUS = 65;
 const PANE_KEYS = '#command\na quit A\nr quit R\nt quit T\n';
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// What delta's --navigate labels files and hunks with. It takes the whole line so less highlights all of it.
+// What delta's --navigate labels files and hunks with.
 const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 
 /**
@@ -84,6 +84,7 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
  * diff through delta. The stat stays out of delta so it isn't restyled; n/N skip it.
  */
 function statThenDiff(git: string): string {
+	// Header styles come from the user's [delta] git config (the README has a recommended one).
 	return `{ ${git} --stat="$(tput cols)" --compact-summary --color=always; echo; ${git} | delta --paging=never --navigate; }`;
 }
 
@@ -94,13 +95,12 @@ function gitCommand(args: string[]): string {
 /** less over delta's output, with n/N jumping between files and hunks. */
 function lessCommand(keys?: string): string {
 	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
-	// Headers are highlighted black on yellow (-DSkY), and -j4 lands a jump on the 4th row so the
-	// end of the hunk before shows above it.
+	// Matches aren't highlighted (-G) so delta's header styles show through, and -j4 lands a jump on
+	// the 4th row so the end of the hunk before shows above it.
 	const less = [
 		'less',
 		'-R',
-		'--use-color',
-		'-DSkY',
+		'-G',
 		'-j4',
 		`--pattern=${NAVIGATE_PATTERN}`,
 		'+g',
@@ -227,24 +227,23 @@ function formatComments(comments: Comment[]): string {
 }
 
 /**
- * Have claude draft a commit message for the staged changes, in the style of the branch's recent
- * commits. Returns undefined if claude fails or says nothing.
+ * Have claude draft a one-line commit message for the staged changes, in the style of the branch's
+ * recent subjects. Returns undefined if claude fails or says nothing.
  */
 export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSignal): Promise<string | undefined> {
 	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
-	const log = await git(['log', '-5', '--format=%B---']).catch(() => '');
+	// Subjects only: full messages as examples make each draft longer than the last.
+	const log = await git(['log', '-5', '--format=%s']).catch(() => '');
 	const stat = await git(['diff', '--cached', '--stat']);
 	const diff = truncateDiff(await git(['diff', '--cached']));
 	const prompt = [
-		'Write a git commit message for the staged changes below.',
-		'Reply with only the message: a short imperative subject line, a blank line, then a body',
-		'saying what changed and why, unless the change is trivial. Match the style of the recent',
-		'commits. No preamble and no trailers.',
+		'Write a one-line git commit message for the staged changes below.',
+		'Reply with only the message: a short imperative subject under 60 characters, with no body,',
+		'no trailing period and no preamble. Match the style of the recent commits.',
 		'',
 		`Thread title: ${thread.title}`,
-		thread.plan ? `Thread plan:\n${thread.plan}` : '',
 		'',
-		'Recent commits (each ends with ---):',
+		'Recent commits:',
 		log,
 		'',
 		'Diff stat:',
@@ -253,5 +252,7 @@ export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSig
 		'Diff:',
 		diff,
 	].join('\n');
-	return (await askClaude(cwd, prompt, signal)) || undefined;
+	const reply = await askClaude(cwd, prompt, signal);
+	// In case it writes a body anyway.
+	return reply?.split('\n').find(l => l.trim())?.trim() || undefined;
 }

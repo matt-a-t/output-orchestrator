@@ -308,18 +308,18 @@ export function todoBriefing(todos: Todo[]): string | undefined {
 
 /**
  * What a stopped claude is told once its step is approved and committed: which checkpoint that was
- * (`ticked`, -1 for none) and what to do next. `todos` are the checkpoints after ticking it off.
+ * (`ticked`, -1 for none), the user's comments from the commit form and what to do next. `todos` are
+ * the checkpoints after ticking it off.
  */
-export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: string): string {
+export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: string, notes = ''): string {
 	const done = ticked === -1 ? 'The user approved your changes and committed them' : `The user approved and committed your step "${todos[ticked]!.subject}"`;
 	const next = todos.findIndex(t => t.status !== 'done');
 	const then =
 		next !== -1
 			? `Move on to the next checkpoint: ${next + 1}. ${todos[next]!.subject}. Mark it active with \`oo thread todo ${next + 1} active\`.`
-			: todos.length
-				? "All checkpoints are done; carry on with what's left (e.g. the PR)."
-				: 'Move on to the next step.';
-	return `${done} (commit: ${commitSubject}). ${then}`;
+			: "That was the last step, so don't start anything else: stop and wait for the user. Moving the thread to PR happens on the board.";
+	const comments = notes && `The user's comments, to handle before ${next === -1 ? 'you stop' : 'moving on'}: "${notes}".`;
+	return [`${done} (commit: ${commitSubject}).`, comments, then].filter(Boolean).join(' ');
 }
 
 /** After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint, as approving it on the board does. */
