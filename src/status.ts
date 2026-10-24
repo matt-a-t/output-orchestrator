@@ -82,7 +82,11 @@ ${THREAD_USAGE}
 - **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is
   in flight, so you don't duplicate it.
 - **Move threads only when the user asks.** Never move your own thread to done or archived: that removes
-  its worktree and closes this claude. Moving to PR happens on the board.
+  its worktree and closes this claude.
+- **Open the PR only when the user asks**, with \`oo thread pr\`: it pushes the branch, opens the PR and moves
+  the thread to PR, from Local too. Commit everything first. You know the change best, so write the description
+  yourself and pass it with \`--body-file - <<'EOF'\` (and \`--title\` if the thread's title won't do); leave both out
+  to have claude draft them from the diff. The ticket prefix and link are added for you, and no thread ids, as with commits.
 - **Offer Local when the user wants to try the change.** If they want to test or try it themselves, offer to
   put the thread in Local and run \`oo thread local in\` once they agree; \`oo thread local out\` brings it back.
   Uncommitted changes move with the thread, so there's no need to commit first. This claude is closed and resumed
