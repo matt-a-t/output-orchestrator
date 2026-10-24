@@ -11,7 +11,7 @@ import { editCommit } from './editor.js';
 import { commit, stageAll } from './git.js';
 import { diffPaneCommand, draftCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
-import { approvedTodo, threadDir } from './threads.js';
+import { approvedTodo, setTodoStatus, threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
 	BOARD_WINDOW,
@@ -163,7 +163,8 @@ async function commitCommand([id]: string[]): Promise<number> {
 	const ticked = await approveTodo(thread.id);
 	if (ticked) console.log(ticked);
 	if (waiting && (await windowNames()).includes(window)) {
-		const todos = loadState().threads.find(t => t.id === id)?.todos ?? [];
+		// Ticked here rather than reloaded: a running board may not have saved its tick yet.
+		const todos = item === -1 ? (thread.todos ?? []) : setTodoStatus(thread.todos ?? [], item, 'done');
 		await pasteInto(window, approvedPrompt(todos, item, message.split('\n')[0]!));
 		console.log('Told claude');
 	}
