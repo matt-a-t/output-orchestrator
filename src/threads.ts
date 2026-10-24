@@ -2,7 +2,7 @@
 import { relative, resolve, isAbsolute } from 'node:path';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
 import { prState } from './github.js';
-import { runColumnHook } from './hooks.js';
+import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
 import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
@@ -107,17 +107,19 @@ export async function doneProblem(project: Project, thread: Thread): Promise<str
 /** What to record on the thread after touching its worktree, and what to tell the user. */
 export type WorktreeChange = { patch?: Partial<Thread>; message?: string };
 
-/** Create the thread's worktree if it's missing. */
+/**
+ * Create the thread's worktree if it's missing, then run the project's worktree created hook in it:
+ * the first time, and again whenever it's made afresh (reopening a Done thread, leaving Local).
+ */
 export async function createWorktree(project: Project, thread: Thread): Promise<WorktreeChange & { path: string }> {
 	const path = worktreePath(thread);
+	if (hasWorktree(thread)) return { path };
 	const created = await ensureWorktree(project.path, thread);
-	if (!created) return { path };
-	return {
-		path,
-		// Until now it ran in the main checkout, so `claude --resume` wouldn't find them from here.
-		patch: { ...created, sessionId: undefined, transcriptPath: undefined },
-		message: `Created worktree for #${thread.id} on ${created.branch}`,
-	};
+	// Until now it ran in the main checkout, so `claude --resume` wouldn't find them from here.
+	const patch = created && { ...created, sessionId: undefined, transcriptPath: undefined };
+	const ran = await tryHook(project, 'worktreeCreated', { ...thread, ...patch }, path);
+	const message = [created && `Created worktree for #${thread.id} on ${created.branch}`, ran].filter(Boolean).join('; ');
+	return { path, patch, message: message || undefined };
 }
 
 /** Keep the worktree in step with the column: there from Active on, removed (branch kept) once Done/archived. */
@@ -163,10 +165,13 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const { id } = request;
 	const state = store.get();
 	if (request.op === 'add') {
-		if (!state.projects.some(p => p.name === request.project)) return { id, ok: false, message: `Unknown project "${request.project}"` };
+		const project = state.projects.find(p => p.name === request.project);
+		if (!project) return { id, ok: false, message: `Unknown project "${request.project}"` };
 		const { thread } = addThread(state, { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket });
 		store.update(s => ({ ...s, threads: [...s.threads, thread] }));
-		return { id, ok: true, message: `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`, thread: thread.id };
+		const ran = await runNewThreadHook(project, thread);
+		const created = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`;
+		return { id, ok: true, message: ran ? `${created}; ${ran}` : created, thread: thread.id };
 	}
 	const thread = state.threads.find(t => t.id === request.thread);
 	if (!thread) return { id, ok: false, message: `No thread #${request.thread}` };
