@@ -754,21 +754,32 @@ export function App() {
 		setForm(next);
 	};
 
-	/** Create the thread from the form, titled and planned from its ticket when it has one. */
-	const submitNewThread = ({ project: name, ticketKey, ticket: known, title }: NewThreadSubmit) =>
+	/**
+	 * Create the thread from the form, titled and planned from its ticket when it has one, and start
+	 * its claude in the background on the initial prompt, if there is one.
+	 */
+	const submitNewThread = ({ project: name, ticketKey, ticket: known, title, prompt }: NewThreadSubmit) =>
 		run(async () => {
 			const project = projectByName(name)!;
-			if (!ticketKey) return void createThread(name, title);
-			const ticket = await fetchTicket(project, ticketKey).catch((err: unknown) => {
-				setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
-				return known;
-			});
-			if (ticket) return void createThread(name, title || ticket.summary, { ticket: { key: ticketKey, url: ticket.url }, plan: ticket.description });
-			// Without the ticket there's nothing to title the thread after.
-			if (!title) return setMessage(`✗ Couldn't read ${ticketKey}, so it needs a title — press n to try again`);
-			const url = await ticketUrl(project, ticketKey).catch(() => '');
-			createThread(name, title, { ticket: { key: ticketKey, url } });
+			const thread = await threadFromForm(project, title, ticketKey, known);
+			if (!thread || !prompt) return;
+			const cwd = thread.cwd ?? (await createWorktree(project, thread));
+			await launchClaude(thread, cwd, { background: true, prompt });
+			setMessage(`Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''} · started claude on your prompt`);
 		}, ticketKey ? `reading ${ticketKey}` : 'creating thread');
+
+	const threadFromForm = async (project: Project, title: string, ticketKey?: string, known?: Ticket): Promise<Thread | undefined> => {
+		if (!ticketKey) return createThread(project.name, title);
+		const ticket = await fetchTicket(project, ticketKey).catch((err: unknown) => {
+			setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
+			return known;
+		});
+		if (ticket) return createThread(project.name, title || ticket.summary, { ticket: { key: ticketKey, url: ticket.url }, plan: ticket.description });
+		// Without the ticket there's nothing to title the thread after.
+		if (!title) return void setMessage(`✗ Couldn't read ${ticketKey}, so it needs a title — press n to try again`);
+		const url = await ticketUrl(project, ticketKey).catch(() => '');
+		return createThread(project.name, title, { ticket: { key: ticketKey, url } });
+	};
 
 	const createThread = (project: string, title: string, fields: Partial<Pick<Thread, 'ticket' | 'plan'>> = {}) => {
 		const { thread } = addThread(stateRef.current, { project, title, ...fields });
@@ -832,11 +843,17 @@ export function App() {
 	 * Jump to the thread's claude window, starting claude in `cwd` (resuming the thread if it can) if needed.
 	 * `background` starts it without leaving the board; `resumeAnyway` skips the check for it being open elsewhere.
 	 * A thread in Planned is for planning only, so its claude starts in plan mode unless `mode` says otherwise.
+	 * `prompt` is sent as a new claude's first message.
 	 */
 	const launchClaude = async (
 		thread: Thread,
 		cwd: string,
-		{ background = false, resumeAnyway = false, mode = thread.column === 'planned' ? 'plan' : undefined }: { background?: boolean; resumeAnyway?: boolean; mode?: PermissionMode } = {},
+		{
+			background = false,
+			resumeAnyway = false,
+			mode = thread.column === 'planned' ? 'plan' : undefined,
+			prompt,
+		}: { background?: boolean; resumeAnyway?: boolean; mode?: PermissionMode; prompt?: string } = {},
 	) => {
 		// No branch yet means the worktree was just created, so there's nothing to resume in it.
 		const sessionId = thread.branch || thread.cwd ? resumeId(thread) : undefined;
@@ -851,7 +868,7 @@ export function App() {
 			!resumeAnyway
 		) {
 			return ask(`⚠ #${thread.id} was active elsewhere in the last few minutes — close it there first, or resume anyway?`, () =>
-				run(() => launchClaude(thread, cwd, { background, mode, resumeAnyway: true })),
+				run(() => launchClaude(thread, cwd, { background, mode, prompt, resumeAnyway: true })),
 			);
 		}
 		const command = [
@@ -860,6 +877,8 @@ export function App() {
 			CLAUDE_SETTINGS_FILE,
 			...(sessionId ? ['--resume', sessionId] : []),
 			...(mode ? ['--permission-mode', mode] : []),
+			// After `--` so a prompt starting with `-` isn't taken for an option.
+			...(prompt ? ['--', prompt] : []),
 		];
 		const result = await openWindow(window, threadWindowLabel(thread), cwd, command, { OO_THREAD_ID: thread.id }, { background });
 		await refreshWindows();
