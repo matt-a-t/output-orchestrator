@@ -4,6 +4,9 @@ import type { Key } from 'ink';
 export function editText(value: string, input: string, key: Key): string | undefined {
 	// Terminals disagree on whether backspace arrives as backspace or delete.
 	if (key.backspace || key.delete) return value.slice(0, -1);
+	// As in a shell: ctrl-u clears the line and ctrl-w deletes back over the last word.
+	if (key.ctrl && input === 'u') return '';
+	if (key.ctrl && input === 'w') return value.replace(/\S*\s*$/, '');
 	if (input && !key.ctrl && !key.meta && !key.tab && !key.return && !key.escape) return value + input;
 }
 

@@ -7,6 +7,7 @@ import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
 import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
+import { commitFormCommand } from './commitForm.js';
 import { editCommit } from './editor.js';
 import { commit, stageAll } from './git.js';
 import { diffPaneCommand, draftCommit } from './review.js';
@@ -180,6 +181,8 @@ if (cmd === 'project') {
 	process.exit(await splitCommand(args));
 } else if (cmd === 'commit') {
 	process.exit(await commitCommand(args));
+} else if (cmd === 'commit-form') {
+	process.exit(await commitFormCommand(args));
 } else if (cmd) {
 	console.error(USAGE);
 	process.exit(1);
