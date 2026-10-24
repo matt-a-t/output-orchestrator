@@ -90,9 +90,37 @@ export async function createPr(cwd: string, thread: Thread, title: string, body:
 	return { number: Number(/\/pull\/(\d+)/.exec(url)?.[1]), url };
 }
 
+/**
+ * Whether the PR can merge: `mergeable` is UNKNOWN while GitHub is still working it out, and
+ * `mergeStateStatus` says what's in the way (DIRTY is conflicts, BEHIND, BLOCKED, UNSTABLE, CLEAN...).
+ */
+export type PrStatus = { state: PrState; mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'; mergeStateStatus: string };
+
+export async function prStatus(cwd: string, pr: Pr): Promise<PrStatus> {
+	const { stdout } = await execa('gh', ['pr', 'view', String(pr.number), '--json', 'state,mergeable,mergeStateStatus'], { cwd });
+	return JSON.parse(stdout) as PrStatus;
+}
+
 export async function prState(cwd: string, pr: Pr): Promise<PrState> {
-	const { stdout } = await execa('gh', ['pr', 'view', String(pr.number), '--json', 'state'], { cwd });
-	return (JSON.parse(stdout) as { state: PrState }).state;
+	return (await prStatus(cwd, pr)).state;
+}
+
+/** What's in the way of merging, in words (and a color), when it's worth saying. */
+export function mergeLabel(status: PrStatus): [string, string] | undefined {
+	if (status.mergeable === 'CONFLICTING') return ['conflicts with base', 'red'];
+	switch (status.mergeStateStatus) {
+		case 'DIRTY':
+			return ['conflicts with base', 'red'];
+		case 'BEHIND':
+			return ['behind base', 'yellow'];
+		case 'BLOCKED':
+			return ['blocked (reviews/checks)', 'yellow'];
+		case 'UNSTABLE':
+			return ['checks failing', 'yellow'];
+		case 'CLEAN':
+		case 'HAS_HOOKS':
+			return ['ready to merge', 'green'];
+	}
 }
 
 /**

@@ -5,7 +5,7 @@ import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMEle
 import { commitText, EDITOR, parseCommit, parsePr, prText } from './editor.js';
 import { runColumnHook, tryHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
-import { createPr, draftPr, findPr, openPrInBrowser, prState, withTicket } from './github.js';
+import { createPr, draftPr, findPr, mergeLabel, openPrInBrowser, prStatus, withTicket, type PrStatus } from './github.js';
 import { editText, loop } from './input.js';
 import { KEY_SECTIONS } from './keys.js';
 import { ProjectsView } from './projects.js';
@@ -80,6 +80,7 @@ const LEGEND: [string, string | undefined, string][] = [
 	['↻', 'gray', 'closed, resumable'],
 	['↻', 'red', 'closed mid-work, w wakes it'],
 	['±', 'magenta', 'changes to review'],
+	['⚡', 'red', 'PR has conflicts'],
 ];
 
 /**
@@ -141,6 +142,8 @@ export function App() {
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
 	// Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved.
 	const [unreviewed, setUnreviewed] = useState<Set<string>>(new Set());
+	// The merge status of open PRs, from the PR poll; not saved, since the poll refills it on startup.
+	const [merge, setMerge] = useState<Record<string, PrStatus>>({});
 	// The import list (i), replacing the columns while it's open.
 	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[]; row: number } | null>(null);
 	// An action waiting on y (any other key cancels); its question is shown as the message.
@@ -301,6 +304,7 @@ export function App() {
 	const colThreads = columnThreads(COLUMNS[cursor.col]!);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
 	const selected: Thread | undefined = colThreads[row];
+	const selectedMerge = selected && merge[selected.id] && mergeLabel(merge[selected.id]!);
 
 	const updateThread = (id: string, patch: Partial<Thread>) =>
 		setState(s => ({
@@ -574,26 +578,41 @@ export function App() {
 		const opened = `${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`;
 		const ran = await runColumnHook(project, thread.column, { ...thread, ...patch, column: 'pr' });
 		setMessage(ran ? `${opened}; ${ran}` : opened);
+		// A push may have fixed (or caused) conflicts, so don't wait for the next poll to show it.
+		void checkPr({ ...thread, ...patch, column: 'pr' });
 	};
 
-	// Move threads whose PR has merged to Done (which also cleans up the worktree).
+	/** Record the merge status of the thread's PR, or move the thread to Done (cleaning up its worktree) if it's merged. */
+	const checkPr = async (thread: Thread) => {
+		const project = projectByName(thread.project);
+		if (thread.column !== 'pr' || !thread.pr || !project) return;
+		// gh failing (offline, logged out) just means trying again next time.
+		const status = await prStatus(project.path, thread.pr).catch(() => undefined);
+		if (!status) return;
+		if (status.state !== 'MERGED') {
+			// While GitHub is still working out mergeability, keep what we knew so the card doesn't flicker.
+			if (status.mergeable !== 'UNKNOWN') setMerge(m => ({ ...m, [thread.id]: status }));
+			return;
+		}
+		setMerge(({ [thread.id]: _, ...rest }) => rest);
+		setColumn(thread.id, 'done');
+		setMessage(`#${thread.id}'s PR #${thread.pr.number} merged → Done`);
+		await syncWorktree({ ...thread, column: 'done' }).catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
+	};
+	const checkPrRef = useRef(checkPr);
+	checkPrRef.current = checkPr;
+
+	// Keep open PRs' merge status current, and move threads whose PR has merged to Done.
 	useEffect(() => {
 		let polling = false;
 		const poll = async () => {
 			if (polling) return;
 			polling = true;
 			try {
-				for (const thread of stateRef.current.threads) {
-					const project = projectByName(thread.project);
-					if (thread.column !== 'pr' || !thread.pr || !project) continue;
-					// gh failing (offline, logged out) just means trying again next time.
-					if ((await prState(project.path, thread.pr).catch(() => undefined)) !== 'MERGED') continue;
-					setColumn(thread.id, 'done');
-					setMessage(`#${thread.id}'s PR #${thread.pr.number} merged → Done`);
-					await syncWorktree({ ...thread, column: 'done' }).catch(err =>
-						setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`),
-					);
-				}
+				const threads = stateRef.current.threads;
+				// Threads that left PR (by hand, or closed) no longer have a status worth showing.
+				setMerge(m => Object.fromEntries(Object.entries(m).filter(([id]) => threads.some(t => t.id === id && t.column === 'pr' && t.pr))));
+				for (const thread of threads) await checkPrRef.current(thread);
 			} finally {
 				polling = false;
 			}
@@ -1158,6 +1177,11 @@ export function App() {
 							{' '}±
 						</Text>
 					) : null}
+					{merge[t.id]?.mergeable === 'CONFLICTING' ? (
+						<Text color="red" bold>
+							{' '}⚡
+						</Text>
+					) : null}
 					{/* Finished threads get one line each so more of them fit. */}
 					{oneLine ? ' ' : null}
 					{oneLine ? title : null}
@@ -1342,6 +1366,7 @@ export function App() {
 				{selected?.pr && !picker ? (
 					<Text dimColor>
 						PR #{selected.pr.number} {selected.pr.url} (b opens it)
+						{selectedMerge ? <Text color={selectedMerge[1]}> — {selectedMerge[0]}</Text> : null}
 					</Text>
 				) : null}
 				{prompt?.step === 'project' ? (
