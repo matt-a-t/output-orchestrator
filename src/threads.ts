@@ -2,7 +2,7 @@
 import { relative, resolve, isAbsolute } from 'node:path';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
 import { prState } from './github.js';
-import { runColumnHook } from './hooks.js';
+import { runColumnHook, runNewThreadHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
 import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
@@ -163,10 +163,13 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const { id } = request;
 	const state = store.get();
 	if (request.op === 'add') {
-		if (!state.projects.some(p => p.name === request.project)) return { id, ok: false, message: `Unknown project "${request.project}"` };
+		const project = state.projects.find(p => p.name === request.project);
+		if (!project) return { id, ok: false, message: `Unknown project "${request.project}"` };
 		const { thread } = addThread(state, { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket });
 		store.update(s => ({ ...s, threads: [...s.threads, thread] }));
-		return { id, ok: true, message: `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`, thread: thread.id };
+		const ran = await runNewThreadHook(project, thread);
+		const created = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`;
+		return { id, ok: true, message: ran ? `${created}; ${ran}` : created, thread: thread.id };
 	}
 	const thread = state.threads.find(t => t.id === request.thread);
 	if (!thread) return { id, ok: false, message: `No thread #${request.thread}` };

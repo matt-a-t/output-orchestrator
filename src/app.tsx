@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { COMMIT_FORM, commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
 import { EDITOR, parsePr, prText } from './editor.js';
-import { runColumnHook, tryHook } from './hooks.js';
+import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import {
 	carryChanges,
 	checkout,
@@ -755,17 +755,22 @@ export function App() {
 	};
 
 	/**
-	 * Create the thread from the form, titled and planned from its ticket when it has one, and start
-	 * its claude in the background on the initial prompt, if there is one.
+	 * Create the thread from the form, titled and planned from its ticket when it has one, then run the
+	 * project's new thread hook and start its claude in the background on the initial prompt, if there
+	 * is one. With a prompt, the worktree comes first so the hook runs in it.
 	 */
 	const submitNewThread = ({ project: name, ticketKey, ticket: known, title, prompt }: NewThreadSubmit) =>
 		run(async () => {
 			const project = projectByName(name)!;
 			const thread = await threadFromForm(project, title, ticketKey, known);
-			if (!thread || !prompt) return;
-			const cwd = thread.cwd ?? (await createWorktree(project, thread));
-			await launchClaude(thread, cwd, { background: true, prompt });
-			setMessage(`Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''} · started claude on your prompt`);
+			if (!thread) return;
+			const change = prompt && !thread.cwd ? await worktreeFor(project, thread) : undefined;
+			if (change?.patch) updateThread(thread.id, change.patch);
+			const created = { ...thread, ...change?.patch };
+			const ran = await runNewThreadHook(project, created, prompt);
+			if (prompt) await launchClaude(created, created.cwd ?? change!.path, { background: true, prompt });
+			const done = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`;
+			if (ran || prompt) setMessage([done, ran, prompt && 'started claude on your prompt'].filter(Boolean).join(' · '));
 		}, ticketKey ? `reading ${ticketKey}` : 'creating thread');
 
 	const threadFromForm = async (project: Project, title: string, ticketKey?: string, known?: Ticket): Promise<Thread | undefined> => {

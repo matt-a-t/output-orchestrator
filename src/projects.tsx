@@ -25,6 +25,14 @@ type Choice = 'color' | 'worktrees' | 'tracker';
 const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, worktrees: [true, false], tracker: TRACKERS };
 const choiceLabel = (value: Project[Choice]) => (value === true ? 'on' : value === false ? 'off' : value);
 const isChoice = (field: Field): field is Choice => field in CHOICES;
+// Where each hook runs, for its hint.
+const HOOK_WHERE: Record<ProjectHook, string> = {
+	newThread: "as a thread is added, in its worktree if it's been made yet (it has with an initial prompt), else the project checkout",
+	enterLocal: 'in the project checkout',
+	leaveLocal: 'in the project checkout',
+	enterPolish: "in the thread's worktree",
+	leavePolish: "in the thread's worktree",
+};
 // Shown at the bottom while the field is selected.
 const FIELD_HINTS: Partial<Record<Field, string>> = {
 	worktrees: 'off: threads run in the project directory itself, several at once, with no branch, diffs or PR; changing it affects new threads only  ',
@@ -32,7 +40,7 @@ const FIELD_HINTS: Partial<Record<Field, string>> = {
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
 	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
-	...Object.fromEntries(HOOK_EVENTS.map(e => [e, `shell command run in the ${e.endsWith('Polish') ? "thread's worktree" : 'project checkout'} (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  `])),
+	...Object.fromEntries(HOOK_EVENTS.map(e => [e, `shell command run ${HOOK_WHERE[e]} (OO_THREAD_ID, OO_THREAD_TITLE, OO_PROJECT, OO_BRANCH set${e === 'newThread' ? ', and OO_PROMPT' : ''})  `])),
 };
 const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
 
