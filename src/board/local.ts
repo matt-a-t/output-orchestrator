@@ -7,7 +7,8 @@ import type { Project, ProjectHook, Thread } from '../state.js';
 import type { Status } from '../status.js';
 import { noRepo } from '../threads.js';
 import { copyTranscript } from '../transcripts.js';
-import type { Board, Outcome } from './board.js';
+import type { Binding } from './bindings.js';
+import { onThread, type Board, type Outcome } from './board.js';
 import { closeClaude, launchClaude } from './claude.js';
 import { createWorktree } from './worktree.js';
 
@@ -162,3 +163,5 @@ export function usePendingLocal(board: Board, statuses: Record<string, Status>) 
 		}
 	}, [statuses]);
 }
+
+export const localKeys: Binding[] = [{ key: 't', run: onThread(toggleLocal) }];

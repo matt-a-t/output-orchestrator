@@ -34,6 +34,14 @@ export type Board = {
 	run: (fn: () => Promise<void>, label?: string) => Promise<void>;
 	/** An action waiting on y (any other key cancels); its question is shown as the message. */
 	ask: (question: string, action: () => void) => void;
+	/** The threads on the board, with the filter applied. */
+	shown: () => Thread[];
 	/** Put the cursor where a thread just added to the bottom of `column` lands. */
 	showAtEnd: (column: Column) => void;
 };
+
+/** For a key binding that acts on the highlighted thread, and does nothing when there isn't one. */
+export const onThread =
+	(run: (board: Board, thread: Thread) => unknown) =>
+	(board: Board, thread: Thread | undefined) =>
+		thread && run(board, thread);

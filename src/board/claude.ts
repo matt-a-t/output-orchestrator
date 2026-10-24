@@ -8,7 +8,8 @@ import { CLAUDE_SETTINGS_FILE } from '../status.js';
 import { threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
 import { recentlyActive } from '../transcripts.js';
-import type { Board } from './board.js';
+import type { Binding } from './bindings.js';
+import { onThread, type Board } from './board.js';
 import { createWorktree, inWorktree } from './worktree.js';
 
 export type PermissionMode = 'plan' | 'auto';
@@ -166,3 +167,12 @@ export const openBeside = (board: Board, thread: Thread, role: 'shell' | 'diff')
 		},
 		{ git: role === 'diff' },
 	);
+
+export const claudeKeys: Binding[] = [
+	{ key: '⏎', run: onThread(openThread) },
+	{ key: 'w', run: onThread(wake) },
+	{ key: 'W', run: board => wakeStalled(board, board.shown()) },
+	{ key: 's', run: onThread((board, thread) => openBeside(board, thread, 'shell')) },
+	{ key: 'd', meta: true, run: onThread((board, thread) => openBeside(board, thread, 'diff')) },
+	{ key: 'D', meta: true, run: onThread((board, thread) => openBeside(board, thread, 'diff')) },
+];

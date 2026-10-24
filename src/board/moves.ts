@@ -3,7 +3,8 @@
 import { COLUMNS, type Thread } from '../state.js';
 import { archiveProblem, doneProblem, moveProblem, moveWarning } from '../threads.js';
 import { threadWindowName } from '../tmux.js';
-import type { Board } from './board.js';
+import type { Binding } from './bindings.js';
+import { onThread, type Board } from './board.js';
 import { restartClaude } from './claude.js';
 import { openPrFromBoard } from './pr.js';
 import { syncWorktree } from './worktree.js';
@@ -66,3 +67,10 @@ export const archiveThread = (board: Board, thread: Thread) =>
 			}, 'archiving'),
 		);
 	}, 'checking for uncommitted changes');
+
+export const moveKeys: Binding[] = [
+	{ key: 'H', run: onThread((board, thread) => moveColumn(board, thread, -1)) },
+	{ key: 'L', run: onThread((board, thread) => moveColumn(board, thread, 1)) },
+	{ key: 'F', run: onThread(finishThread) },
+	{ key: 'x', run: onThread(archiveThread) },
+];

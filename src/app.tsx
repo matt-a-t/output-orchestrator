@@ -9,14 +9,13 @@ import { ProjectsView } from './projects.js';
 import { ThreadView } from './thread.js';
 import type { Board } from './board/board.js';
 import { Card, cardHeight, cardLines, LOCAL_BORDER_LINES } from './board/card.js';
-import { launchClaude, openBeside, openThread, resumeId, stalled, wake, wakeStalled } from './board/claude.js';
+import { runBinding } from './board/bindings.js';
+import { launchClaude, openThread, resumeId, stalled } from './board/claude.js';
 import { Footer } from './board/footer.js';
 import { KeysView } from './board/keysView.js';
-import { toggleLocal, usePendingLocal } from './board/local.js';
-import { archiveThread, finishThread, moveColumn } from './board/moves.js';
-import { browsePr, checkPr, viewPr, viewThreadPr } from './board/pr.js';
+import { usePendingLocal } from './board/local.js';
+import { checkPr, viewPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
-import { commentOnDiff, diffThread, listChanges, updateFromMain } from './board/review.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
 import { COLORS, COLUMN_LABELS, COLUMNS, type Column, type Project, type Thread } from './state.js';
 import { fetchTicket, recentTickets, ticketUrl, type Ticket } from './tickets.js';
@@ -142,6 +141,7 @@ export function App() {
 		setBusy,
 		run,
 		ask,
+		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current)),
 		showAtEnd: column =>
 			setCursor({
 				col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]),
@@ -375,7 +375,6 @@ export function App() {
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
-		if (input === 'W') return wakeStalled(board, state.threads.filter(t => visible(t)));
 		if (input === 'P') return setShowProjects(true);
 		if (input === 'R') return openReviews();
 		if (input === '?') return setShowKeys(true);
@@ -385,29 +384,15 @@ export function App() {
 			setFilter(names[(names.indexOf(filter) + 1) % names.length]!);
 			return setCursor({ col: cursor.col, row: 0 });
 		}
+		if (runBinding(board, input, key, selected)) return;
 		if (!selected) return;
-		if (input === 'H') return moveColumn(board, selected, -1);
-		if (input === 'L') return moveColumn(board, selected, 1);
-		if (input === 'F') return finishThread(board, selected);
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
-		if (input === 't') return toggleLocal(board, selected);
 		if (input === 'e') return setEditing(selected.id);
-		if (key.return) return openThread(board, selected);
-		if (input === 'w') return wake(board, selected);
-		if (input === 'u') return updateFromMain(board, selected);
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
 		}
-		if (input === 'x') return archiveThread(board, selected);
-		if (key.meta && (input === 'd' || input === 'D')) return openBeside(board, selected, 'diff');
-		if (input === 'd' || input === 'D') return diffThread(board, selected, input === 'd' ? 'step' : 'thread');
-		if (input === 's') return openBeside(board, selected, 'shell');
-		if (input === 'c') return commentOnDiff(board, selected);
-		if (input === 'b') return browsePr(board, selected);
-		if (input === 'v') return viewThreadPr(board, selected);
-		if (input === 'o') return listChanges(board, selected);
 	});
 
 	useEffect(() => {

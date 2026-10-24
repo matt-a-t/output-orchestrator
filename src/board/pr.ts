@@ -8,7 +8,8 @@ import { runColumnHook } from '../hooks.js';
 import { showPr } from '../review.js';
 import type { Thread } from '../state.js';
 import { CLOSED, progressPopup, type ProgressPopup } from '../tmux.js';
-import type { Board, Outcome } from './board.js';
+import type { Binding } from './bindings.js';
+import { onThread, type Board, type Outcome } from './board.js';
 import { leaveLocalForDone, localProblem } from './local.js';
 import { createWorktree, inWorktree, syncWorktree } from './worktree.js';
 
@@ -175,3 +176,8 @@ export function browsePr(board: Board, thread: Thread) {
 		board.setMessage(`Opened PR #${pr.number} in the browser`);
 	}, 'opening PR in the browser');
 }
+
+export const prKeys: Binding[] = [
+	{ key: 'b', run: onThread(browsePr) },
+	{ key: 'v', run: onThread(viewThreadPr) },
+];

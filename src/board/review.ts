@@ -7,7 +7,8 @@ import type { Thread } from '../state.js';
 import { approvedPrompt } from '../threadCommand.js';
 import { approvedTodo, conflictPrompt, setTodoStatus } from '../threads.js';
 import { pasteInto, progressPopup, threadWindowName, windowNames } from '../tmux.js';
-import type { Board } from './board.js';
+import type { Binding } from './bindings.js';
+import { onThread, type Board } from './board.js';
 import { stalled, wakeThread } from './claude.js';
 import { checkPr } from './pr.js';
 import { inWorktree } from './worktree.js';
@@ -119,3 +120,11 @@ export const updateFromMain = (board: Board, thread: Thread) =>
 		},
 		{ git: true, label: 'rebasing on main' },
 	);
+
+export const reviewKeys: Binding[] = [
+	{ key: 'd', run: onThread((board, thread) => diffThread(board, thread, 'step')) },
+	{ key: 'D', run: onThread((board, thread) => diffThread(board, thread, 'thread')) },
+	{ key: 'c', run: onThread(commentOnDiff) },
+	{ key: 'o', run: onThread(listChanges) },
+	{ key: 'u', run: onThread(updateFromMain) },
+];
