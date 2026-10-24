@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
 import { hasWorktree, renameBranch, worktreePath } from './git.js';
-import { editText } from './input.js';
+import { FieldText, EDITING_HELP, FIELD_HELP } from './fieldText.js';
+import { fieldKey, type Edit } from './input.js';
 import { COLORS, COLUMN_LABELS, LOCAL_LABEL, type State, type Thread } from './state.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
@@ -33,6 +34,8 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			: null,
 	);
 	const [field, setField] = useState(0);
+	// The focused text field is being edited (see fieldKey).
+	const [edit, setEdit] = useState<Edit>(null);
 	const [message, setMessage] = useState('');
 	// The plan's editor popup is open.
 	const [editing, setEditing] = useState(false);
@@ -76,10 +79,18 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		if (editing || saving || !thread || !draft) return;
 		setMessage('');
 		const name = FIELDS[field]!;
+		if (name === 'title' || name === 'ticket' || name === 'base') {
+			const next = fieldKey(draft[name], edit, input, key);
+			if (next) {
+				setEdit(next.edit);
+				return setDraft({ ...draft, [name]: next.value });
+			}
+		}
+		setEdit(null);
 		if (key.escape) return onClose('Cancelled');
 		if (key.return) return save(thread, draft);
-		if (key.upArrow || (key.tab && key.shift)) return setField((field + FIELDS.length - 1) % FIELDS.length);
-		if (key.downArrow || key.tab) return setField((field + 1) % FIELDS.length);
+		if (key.upArrow || (key.tab && key.shift) || input === 'k') return setField((field + FIELDS.length - 1) % FIELDS.length);
+		if (key.downArrow || key.tab || input === 'j') return setField((field + 1) % FIELDS.length);
 		if (name === 'project' || name === 'color') {
 			const delta = key.leftArrow ? -1 : key.rightArrow || input === ' ' ? 1 : 0;
 			if (!delta) return;
@@ -95,10 +106,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 				.then(plan => setDraft(d => d && { ...d, plan }))
 				.catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`))
 				.finally(() => setEditing(false));
-			return;
 		}
-		const value = editText(draft[name], input, key);
-		if (value !== undefined) setDraft({ ...draft, [name]: value });
 	});
 
 	if (!thread || !draft) {
@@ -120,12 +128,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			if (!draft.plan) return <Text dimColor>{active ? 'space to write one' : 'none'}</Text>;
 			return <Text dimColor={!active}>{active ? 'space to edit' : `${planLines.length} lines`}</Text>;
 		}
-		return (
-			<Text>
-				{draft[name]}
-				{active ? <Text inverse> </Text> : null}
-			</Text>
-		);
+		return <FieldText value={draft[name]} edit={active ? edit : null} />;
 	};
 
 	const worktree = thread.cwd ? undefined : `${worktreePath(thread)}${hasWorktree(thread) ? '' : ' (not created)'}`;
@@ -188,7 +191,11 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			</Box>
 			<Box flexGrow={1} />
 			<Text color={message.startsWith('✗') ? 'red' : 'green'}>{editing ? '… editing plan' : saving ? '… saving' : message}</Text>
-			<Text dimColor>↑/↓ or tab field  ←/→ or space change  space on plan opens $EDITOR  ⏎ save  esc cancel</Text>
+			<Text dimColor>
+				{typeof edit === 'number'
+					? EDITING_HELP
+					: `${FIELD_HELP}  j/k ↑/↓ or tab field  ←/→ or space change  space on plan opens $EDITOR  ⏎ save  esc cancel`}
+			</Text>
 		</Box>
 	);
 }
