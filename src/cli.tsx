@@ -10,6 +10,7 @@ import { mouseStdin, reportMouse } from './mouse.js';
 import { commitFormCommand } from './commitForm.js';
 import { editCommitForm } from './editor.js';
 import { commit, stageAll } from './git.js';
+import { deltaCommand, noStyling } from './delta.js';
 import { diffPaneCommand, draftCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
 import { approvedTodo, noRepo, setTodoStatus, threadDir } from './threads.js';
@@ -36,6 +37,7 @@ const USAGE = `usage:
   oo project add <path> [name]
   oo project list
   oo project rm <name>
+  oo delta                    set up delta's diff styling (shows what it adds first)
 ${THREAD_USAGE}`;
 
 function projectCommand(args: string[]): number {
@@ -117,6 +119,8 @@ async function checkTools(warn: boolean): Promise<boolean> {
 		const [cmd, forWhat, url] = OPTIONAL[i]!;
 		if (found === null) console.warn(`oo: ${cmd} is not installed, which ${forWhat} needs: ${url}`);
 	});
+	const deltaFound = optional[OPTIONAL.findIndex(([cmd]) => cmd === 'delta')];
+	if (deltaFound && (await noStyling())) console.warn('oo: delta has no header styles set, so files and hunks look alike: run oo delta');
 	for (const problem of problems) console.error(`oo: ${problem}`);
 	return problems.length === 0;
 }
@@ -193,6 +197,8 @@ if (cmd === 'project') {
 	process.exit(await threadCommand(args));
 } else if (cmd === 'split') {
 	process.exit(await splitCommand(args));
+} else if (cmd === 'delta') {
+	process.exit(await deltaCommand());
 } else if (cmd === 'commit') {
 	process.exit(await commitCommand(args));
 } else if (cmd === 'commit-form') {

@@ -8,20 +8,25 @@ import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { confirmPopup, popup, shellQuote } from './tmux.js';
 
-// less quits with the first character of the extra string as its status: 'A' is 65.
-const APPROVE_KEYS = '#command\na quit A\n';
+// less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
+// 83) sets up delta's styles (`oo delta`) and comes back to the diff.
+const DIFF_KEYS = '#command\nS quit S\n';
+const APPROVE_KEYS = `${DIFF_KEYS}a quit A\n`;
 const APPROVE_STATUS = 65;
+const DELTA_STATUS = 83;
 // The same trick gives the diff beside claude r to refresh it ('R' is 82), t to switch between the
 // step and thread diffs ('T' is 84) and a to commit.
-const PANE_KEYS = '#command\na quit A\nr quit R\nt quit T\n';
+const PANE_KEYS = `${APPROVE_KEYS}r quit R\nt quit T\n`;
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// What delta's --navigate labels files and hunks with.
+// `oo delta`, then a pause so its answer stays up until you're back in the diff.
+const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
+// What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
 const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 
 /**
  * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
- * can be approved from there with `a` (and a confirm). delta's paging would swallow less's exit
+ * can be approved from there with `a` (and a confirm), and `S` sets up delta's styles. delta's paging would swallow less's exit
  * status, so it's piped into less here instead.
  */
 export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Promise<'empty' | 'closed' | 'approved'> {
@@ -29,10 +34,16 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 	if (!args) return 'empty';
 	const approvable = kind === 'step';
 	const label = kind === 'step' ? 'step diff' : `thread diff vs ${args.at(-1)}`;
-	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}q close `;
-	const command = `${statThenDiff(gitCommand(args))} | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : undefined)}`;
+	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}S styling  q close `;
+	const command = `${statThenDiff(gitCommand(args))} | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : lesskey('diff', DIFF_KEYS))}`;
 	for (;;) {
-		if ((await popup(command, { cwd, title })) !== APPROVE_STATUS) return 'closed';
+		const status = await popup(command, { cwd, title });
+		if (status === DELTA_STATUS) {
+			// Back to the diff, restyled if you added them.
+			await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+			continue;
+		}
+		if (status !== APPROVE_STATUS) return 'closed';
 		// Anything but y goes back to the diff.
 		if (await confirmPopup(`Approve #${thread.id}'s step?`)) return 'approved';
 	}
@@ -47,7 +58,7 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
 	const step = ['diff', ...(await diffRevs(cwd, 'step', thread))];
 	const whole = ['diff', ...(await diffRevs(cwd, 'thread', thread))];
 	const keys = lesskey('pane', PANE_KEYS);
-	const keysHint = (other: string) => `t ${other}  a commit  r refresh  q close`;
+	const keysHint = (other: string) => `t ${other}  a commit  r refresh  S styling  q close`;
 	// The label goes in less's (short, the s) prompt so it stays in view; these characters are special there.
 	const prompt = (label: string, other: string) => `--prompt=s${`${label} — n/N hunk  ${keysHint(other)}`.replace(/[?:.%\\]/g, '\\$&')}`;
 	const show = (fn: string, label: string, other: string) =>
@@ -66,12 +77,13 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
 		'else',
 		`  clear; [ $mode = step ] && printf %s ${shellQuote(`No uncommitted changes — ${keysHint('whole thread')}`)} || printf %s ${shellQuote(`No changes in the thread — ${keysHint('uncommitted')}`)}`,
 		'  read -rsn1 key; clear',
-		`  case $key in t) status=${TOGGLE_STATUS};; a) status=${APPROVE_STATUS};; r) status=${REFRESH_STATUS};; *) status=0;; esac`,
+		`  case $key in t) status=${TOGGLE_STATUS};; a) status=${APPROVE_STATUS};; r) status=${REFRESH_STATUS};; S) status=${DELTA_STATUS};; *) status=0;; esac`,
 		'fi',
 		'case $status in',
 		`  ${TOGGLE_STATUS}) [ $mode = step ] && mode=thread || mode=step;;`,
 		`  ${APPROVE_STATUS}) clear; echo 'claude is writing the commit message…'; out=$(${ooCommit} 2>&1); clear; tmux display-message "$out";;`,
 		`  ${REFRESH_STATUS}) ;;`,
+		`  ${DELTA_STATUS}) clear; ${OO_DELTA}; clear;;`,
 		'  *) break;;',
 		'esac',
 		'done',
@@ -84,7 +96,7 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
  * diff through delta. The stat stays out of delta so it isn't restyled; n/N skip it.
  */
 function statThenDiff(git: string): string {
-	// Header styles come from the user's [delta] git config (the README has a recommended one).
+	// Header styles come from the user's [delta] git config (`oo delta` sets up the README's recommended one).
 	return `{ ${git} --stat="$(tput cols)" --compact-summary --color=always; echo; ${git} | delta --paging=never --navigate; }`;
 }
 
