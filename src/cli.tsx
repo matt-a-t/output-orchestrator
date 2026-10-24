@@ -184,10 +184,12 @@ async function commitCommand([id]: string[]): Promise<number> {
 	const item = approvedTodo(thread.todos ?? []);
 	const ticked = await approveTodo(thread.id);
 	if (ticked) console.log(ticked);
+	// Ticked here rather than reloaded: a running board may not have saved its tick yet.
+	const todos = item === -1 ? (thread.todos ?? []) : setTodoStatus(thread.todos ?? [], item, 'done');
+	const prompt = approvedPrompt(todos, item, form.message, form.notes);
+	if (!prompt) return 0;
 	if (waiting && (await windowNames()).includes(window)) {
-		// Ticked here rather than reloaded: a running board may not have saved its tick yet.
-		const todos = item === -1 ? (thread.todos ?? []) : setTodoStatus(thread.todos ?? [], item, 'done');
-		await pasteInto(window, approvedPrompt(todos, item, form.message, form.notes));
+		await pasteInto(window, prompt);
 		console.log(form.notes ? 'Told claude, with your comments' : 'Told claude');
 	} else if (form.notes) {
 		console.log(`Claude wasn't waiting, so your comments weren't sent: ${form.notes}`);

@@ -864,8 +864,9 @@ export function App() {
 		const item = approvedTodo(todos);
 		const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
 		if (item !== -1) updateThread(thread.id, { todos: ticked });
-		const told = waiting && (await windowNames()).includes(window);
-		if (told) await pasteInto(window, approvedPrompt(ticked, item, form.message, form.notes));
+		const prompt = approvedPrompt(ticked, item, form.message, form.notes);
+		const told = !!prompt && waiting && (await windowNames()).includes(window);
+		if (told) await pasteInto(window, prompt);
 		const tellClaude = told ? ` · told claude${form.notes ? ' with comments' : ''}` : form.notes ? " · ⚠ comments not sent — claude wasn't waiting" : '';
 		setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${tellClaude}`);
 	};
