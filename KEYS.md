@@ -12,7 +12,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `⏎` | open (or resume) its claude |
 | `w` / `W` | wake it / every thread closed mid-work ("keep going") |
 | `u` | rebase on origin/main (pushes a PR; conflicts go to claude) |
-| `n` | new thread |
+| `n` | new thread (the form below) |
 | `e` | edit the thread |
 | `t` | into / out of Local (`oo thread local` from the shell) |
 | `F` | straight to Done |
@@ -25,6 +25,16 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `q` | quit |
 
 The mouse works too: click a card to select it, double-click to open it, scroll to move.
+
+## New thread form
+
+| Key | |
+|---|---|
+| `tab` / `↑`/`↓` | next / previous field (`shift-tab` back too) |
+| `←`/`→` | on project: change it. On ticket: pick one of your recent tickets |
+| `⏎` | create the thread, and start its claude on the initial prompt if there is one |
+| `esc` | cancel |
+| `ctrl-u` / `ctrl-w` | clear the field / delete a word |
 
 ## Reviewing
 

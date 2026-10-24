@@ -39,8 +39,10 @@ oo project add ~/code/my-repo    # once per repo; the name defaults to the folde
 oo                               # open the board
 ```
 
-On the board, `n` starts a thread in Planned (you give it a project, a ticket if the project
-has a tracker, and a title, and `e` adds a plan if you want one), and Enter opens its claude. `Ctrl-b b` (or `Alt-b`) brings you back to the
+On the board, `n` opens the new thread form: a project, a ticket if the project has a tracker, a
+title and an initial prompt. The thread starts in Planned, and `e` adds a plan if you want one.
+With an initial prompt, its claude starts straight away in the background, in plan mode, on that
+prompt; without one, Enter opens its claude when you're ready. `Ctrl-b b` (or `Alt-b`) brings you back to the
 board. `?` on the board lists every key, and so does [KEYS.md](KEYS.md).
 
 `oo` starts (or reattaches to) a tmux session called `oo` with the board in it. If you run it
@@ -88,13 +90,10 @@ project's tickets come from with **tickets** in the projects screen (`P`):
   [API token](https://id.atlassian.com/manage-profile/security/api-tokens): export
   `JIRA_EMAIL` and `JIRA_API_TOKEN` in the shell you start `oo` from.
 
-`n` on such a project asks for the ticket first:
-
-```
-Attach key: AV-123     fetch the ticket; its summary is the title, its description the plan
-No key, use oo         no ticket: type a title as usual
-Recent tickets:        your five most recently updated open tickets, to pick from
-```
+The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`), or use
+←/→ to pick from your five most recently updated open tickets. The ticket's summary becomes
+the title unless you type your own, and its description becomes the plan. Leave it empty for no
+ticket.
 
 The ticket names the branch (`av-123-<title>` for Jira, `45-<title>` for issue #45; threads
 without one get `oo/<title>`) and the PR: its title starts with `AV-123: ` or `#45: `, and its
@@ -160,7 +159,14 @@ to try its change. If the thread's claude is working, the move waits until its t
 ### Project hooks
 
 Each project can set hooks in the projects screen (`P`). These are shell commands that run when
-something happens on the board. There are four:
+something happens on the board:
+
+- **New thread** runs as a thread is added, from the board's form or `oo thread add`. It runs in
+  the thread's worktree if it already has one (it does when the form has an initial prompt),
+  otherwise in the project's checkout. `OO_PROMPT` holds the initial prompt, empty if there's none.
+- **Worktree created** runs in a thread's worktree each time it's made: when the thread is first
+  opened or leaves Planned, and again after reopening a Done thread or leaving Local. For example,
+  `npm install` gets a fresh worktree ready.
 
 - **Enter local** and **leave local** run in the project's checkout once the branch is checked out
   or the checkout is back on main (for an imported thread, enter runs in the thread's own
@@ -171,11 +177,12 @@ something happens on the board. There are four:
   worktree, or the project's checkout if the move removed it (Done, archived). For example, `npm
   run lint -- --fix && npm test` as the enter polish hook tidies up and checks the thread's work.
 
-They run in a background tmux window: `oo-hook-<project>` for the local hooks and
-`oo-hook-<project>-polish` for the polish ones. The window becomes a shell when the command
+They run in a background tmux window: `oo-hook-<project>` for the local hooks,
+`oo-hook-<project>-polish` for the polish ones, `oo-hook-<project>-new` for new thread and
+`oo-hook-<project>-worktree` for worktree created. The window becomes a shell when the command
 exits, so its output stays readable. The next hook of the same kind replaces it and stops
 anything still running (e.g. a dev server), so a polish hook leaves a local hook's dev server
-alone. `OO_THREAD_ID`, `OO_PROJECT` and `OO_BRANCH` are set for them.
+alone. `OO_THREAD_ID`, `OO_THREAD_TITLE`, `OO_PROJECT` and `OO_BRANCH` are set for them.
 
 ### PRs and Done
 

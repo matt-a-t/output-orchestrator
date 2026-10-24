@@ -12,7 +12,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['⏎', 'open (or resume) its claude'],
 			['w / W', 'wake it / every thread closed mid-work ("keep going")'],
 			['u', 'rebase on origin/main (pushes a PR; conflicts go to claude)'],
-			['n', 'new thread'],
+			['n', 'new thread (form)'],
 			['e', 'edit the thread'],
 			['t', 'into / out of Local'],
 			['F', 'straight to Done'],
@@ -23,6 +23,16 @@ export const KEY_SECTIONS: KeySection[] = [
 			['P', 'projects (their hooks and wake prompt)'],
 			['?', 'these keys'],
 			['q', 'quit'],
+		],
+	},
+	{
+		title: 'New thread form',
+		keys: [
+			['tab / ↑/↓', 'next / previous field'],
+			['←/→', 'change project / pick a recent ticket'],
+			['⏎', 'create; starts claude on the initial prompt'],
+			['esc', 'cancel'],
+			['ctrl-u / ctrl-w', 'clear field / delete word'],
 		],
 	},
 	{
