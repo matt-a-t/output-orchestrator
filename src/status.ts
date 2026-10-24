@@ -85,7 +85,7 @@ ${THREAD_USAGE}
   its worktree and closes this claude. Moving to PR happens on the board.
 - **Offer Local when the user wants to try the change.** If they want to test or try it themselves, offer to
   put the thread in Local and run \`oo thread local in\` once they agree; \`oo thread local out\` brings it back.
-  Commit or approve the changes first, because the worktree has to be clean. This claude is closed and resumed
+  Uncommitted changes move with the thread, so there's no need to commit first. This claude is closed and resumed
   in the project's checkout (or back in its worktree) once the turn ends, so finish what you're saying first.
   Never move a thread into or out of Local without asking.
 `;
