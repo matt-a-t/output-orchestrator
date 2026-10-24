@@ -20,7 +20,7 @@ export function fixture(threads: Partial<Thread>[] = []): { dir: string; project
 	const now = new Date().toISOString();
 	const state: State = {
 		version: 1,
-		projects: [{ name: 'p', abbrev: '', path: project, color: 'cyan', wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }],
+		projects: [{ name: 'p', abbrev: '', path: project, worktrees: true, color: 'cyan', wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }],
 		threads: threads.map((t, i) => ({
 			id: String(i + 1),
 			title: `thread ${i + 1}`,

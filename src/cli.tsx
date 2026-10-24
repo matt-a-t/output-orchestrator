@@ -4,7 +4,7 @@ import { execa } from 'execa';
 import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
-import { COLORS, loadState, projectProblem, saveState } from './state.js';
+import { COLORS, isRepo, loadState, projectProblem, saveState } from './state.js';
 import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { editCommit } from './editor.js';
@@ -46,6 +46,7 @@ function projectCommand(args: string[]): number {
 			name: rest[1] ?? basename(path),
 			abbrev: '',
 			path,
+			worktrees: isRepo(path),
 			color: COLORS[state.projects.length % COLORS.length]!,
 			wakePrompt: '',
 			hooks: {},
@@ -59,11 +60,11 @@ function projectCommand(args: string[]): number {
 			return 1;
 		}
 		saveState({ ...state, projects: [...state.projects, project] });
-		console.log(`Added ${project.name} → ${path}`);
+		console.log(`Added ${project.name} → ${path}${project.worktrees ? '' : ' (not a git repo: threads run there directly)'}`);
 		return 0;
 	}
 	if (sub === 'list') {
-		for (const p of state.projects) console.log(`${p.name}\t${p.path}`);
+		for (const p of state.projects) console.log(`${p.name}\t${p.path}${p.worktrees ? '' : '\t(no worktrees)'}`);
 		return 0;
 	}
 	if (sub === 'rm' && rest[0]) {

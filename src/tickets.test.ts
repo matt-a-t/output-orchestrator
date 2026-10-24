@@ -7,6 +7,7 @@ const project = (p: Partial<Project>): Project => ({
 	name: 'p',
 	abbrev: '',
 	path: '/p',
+	worktrees: true,
 	color: 'cyan',
 	hooks: {},
 	tracker: 'none',
