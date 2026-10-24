@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { approvedTodo, inDir, todoWindow } from './threads.js';
+import { addThread, approvedTodo, inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -310,4 +310,13 @@ test('a project with worktrees off runs its threads in its directory, with no PR
 	// No git anywhere: the project dir isn't a repo, so any git call would fail the move.
 	assert.equal(await threadCommand(['move', '1', 'done'], ctx), 0);
 	assert.equal(loadState(file).threads.find(t => t.id === '1')?.column, 'done');
+});
+
+test('a project inside a thread\'s directory is nearer than the thread', () => {
+	// A thread in a project at the parent dir without worktrees, as ~ would be.
+	const { dir, project, state } = fixture();
+	const home = { ...state.projects[0]!, name: 'home', path: dir, worktrees: false };
+	const s = addThread({ ...state, projects: [...state.projects, home] }, { project: 'home', title: 'x' }).state;
+	assert.equal(resolveProject(s, join(project, 'sub'), undefined), 'p');
+	assert.equal(resolveProject(s, dir, undefined), 'home');
 });

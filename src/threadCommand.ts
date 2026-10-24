@@ -75,12 +75,16 @@ function parseColumn(name: string): Column {
 	return column;
 }
 
-/** The thread whose directory `cwd` is in, picking the innermost if they nest. */
+/**
+ * The thread whose directory `cwd` is in, picking the innermost if they nest. None if a project
+ * checkout inside it is nearer, e.g. ~/app under a thread in a project at ~ without worktrees.
+ */
 function threadAt(state: State, cwd: string): Thread | undefined {
-	return state.threads
+	const found = state.threads
 		.map(t => ({ t, dir: threadDir(state, t) }))
 		.filter(({ dir }) => dir && inDir(cwd, dir))
-		.sort((a, b) => b.dir!.length - a.dir!.length)[0]?.t;
+		.sort((a, b) => b.dir!.length - a.dir!.length)[0];
+	if (found && !state.projects.some(p => inDir(cwd, p.path) && p.path.length > found.dir!.length)) return found.t;
 }
 
 /** `--project`, else the project of the thread `cwd` is in (worktrees aren't inside the project), else the project containing `cwd`. */
