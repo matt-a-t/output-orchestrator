@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { addThread, approvedTodo, conflictPrompt, inDir, todoWindow } from './threads.js';
+import { addThread, approvedTodo, conflictPrompt, inDir, todosDone, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -270,6 +270,13 @@ test('todoWindow keeps the current step in view', () => {
 	// Near the end, or all done, the last few.
 	assert.deepEqual(todoWindow(todos(8, 10), 5), { start: 5, end: 10 });
 	assert.deepEqual(todoWindow(todos(10, 10), 5), { start: 5, end: 10 });
+});
+
+test('todosDone needs a list with every item done', () => {
+	assert.equal(todosDone(), false);
+	assert.equal(todosDone([]), false);
+	assert.equal(todosDone([{ subject: 'a', status: 'done' }, { subject: 'b', status: 'review' }]), false);
+	assert.equal(todosDone([{ subject: 'a', status: 'done' }, { subject: 'b', status: 'done' }]), true);
 });
 
 test('committing outside the board ticks off the checkpoint in review', async () => {

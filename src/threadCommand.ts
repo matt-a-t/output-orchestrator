@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, type Store } from './threads.js';
+import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, type Store } from './threads.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
@@ -301,7 +301,7 @@ Mark one active (\`oo thread todo <n> active\`) when you start it and review whe
 
 /** What a thread's claude is told as it starts: where the thread's checkpoints stand. */
 export function todoBriefing(todos: Todo[]): string | undefined {
-	if (!todos.length || todos.every(t => t.status === 'done')) return;
+	if (!todos.length || todosDone(todos)) return;
 	const list = todos.map((t, i) => `  ${i + 1}. [${t.status}] ${t.subject}`).join('\n');
 	return `This thread's checkpoints (${todoProgress(todos)} done):\n${list}\nOnes in review are waiting for the user to approve them on the board; otherwise carry on from the first one that isn't done. Keep their status current with \`oo thread todo <n> <status>\`.`;
 }

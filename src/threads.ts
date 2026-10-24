@@ -25,6 +25,11 @@ export function todoProgress(todos: Todo[]): string {
 	return `${todos.filter(t => t.status === 'done').length}/${todos.length}`;
 }
 
+/** Whether there's a todo list and every item on it is done. */
+export function todosDone(todos: Todo[] = []): boolean {
+	return todos.length > 0 && todos.every(t => t.status === 'done');
+}
+
 /** The new list, keeping the status of items that were already on it. */
 export function replaceTodos(todos: Todo[], subjects: string[]): Todo[] {
 	return subjects.map(subject => ({ subject, status: todos.find(t => t.subject === subject)?.status ?? 'pending' }));

@@ -67,6 +67,7 @@ import {
 	setTodoStatus,
 	threadDir,
 	todoProgress,
+	todosDone,
 	todoWindow,
 	type Store,
 	type WorktreeChange,
@@ -1256,6 +1257,12 @@ export function App() {
 					{merge[t.id]?.mergeable === 'CONFLICTING' ? (
 						<Text color="red" bold>
 							{' '}⚡
+						</Text>
+					) : null}
+					{/* Every step approved: ready to move on to Polish and a PR. */}
+					{t.column === 'active' && todosDone(t.todos) ? (
+						<Text color="green" bold>
+							{' '}✓ polish
 						</Text>
 					) : null}
 					{/* Finished threads get one line each so more of them fit. */}
