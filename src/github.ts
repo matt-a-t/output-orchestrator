@@ -123,6 +123,116 @@ export function mergeLabel(status: PrStatus): [string, string] | undefined {
 	}
 }
 
+/** A check on the PR's head: a CheckRun (Actions and other apps) or a StatusContext (the older status API). */
+export type PrCheck =
+	| { __typename: 'CheckRun'; name: string; status: string; conclusion: string }
+	| { __typename: 'StatusContext'; context: string; state: string };
+
+export type PrDetails = PrStatus & {
+	number: number;
+	title: string;
+	body: string;
+	url: string;
+	author: { login: string };
+	isDraft: boolean;
+	// APPROVED, CHANGES_REQUESTED or REVIEW_REQUIRED; empty when the repo doesn't require reviews.
+	reviewDecision: string;
+	reviews: { author: { login: string }; state: string; body: string }[];
+	statusCheckRollup: PrCheck[];
+	headRefName: string;
+	baseRefName: string;
+	additions: number;
+	deletions: number;
+};
+
+const DETAIL_FIELDS = 'number,title,body,url,author,isDraft,state,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup,headRefName,baseRefName,additions,deletions';
+
+/** What the PR viewer shows above the diff. */
+export async function prDetails(cwd: string, number: number): Promise<PrDetails> {
+	const { stdout } = await execa('gh', ['pr', 'view', String(number), '--json', DETAIL_FIELDS], { cwd });
+	return JSON.parse(stdout) as PrDetails;
+}
+
+/** The PR's diff as GitHub has it: what's pushed, not what's in the worktree. */
+export async function prDiff(cwd: string, number: number): Promise<string> {
+	return (await execa('gh', ['pr', 'diff', String(number), '--color=never'], { cwd })).stdout;
+}
+
+/** How the PR's checks stand, in words (and a color), or undefined if it has none. */
+export function checksLabel(checks: PrCheck[]): [string, string] | undefined {
+	let failing = 0;
+	let pending = 0;
+	let passing = 0;
+	for (const check of checks) {
+		const result = check.__typename === 'CheckRun' ? (check.status === 'COMPLETED' ? check.conclusion : 'PENDING') : check.state;
+		if (['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'].includes(result)) failing++;
+		else if (['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS', 'WAITING', ''].includes(result)) pending++;
+		// SUCCESS, NEUTRAL, SKIPPED and STALE don't hold anything up.
+		else passing++;
+	}
+	if (checks.length === 0) return;
+	const counts = [failing && `${failing} failing`, pending && `${pending} pending`, passing && `${passing} passing`].filter(Boolean).join(', ');
+	return [`checks: ${counts}`, failing ? 'red' : pending ? 'yellow' : 'green'];
+}
+
+let login: Promise<string> | undefined;
+
+/** Who gh is logged in as, asked once; GitHub won't let them approve their own PRs. */
+export function viewerLogin(cwd: string): Promise<string> {
+	login ??= execa('gh', ['api', 'user', '-q', '.login'], { cwd }).then(r => r.stdout.trim());
+	// Logged out (or offline) now needn't mean for the rest of the run.
+	login.catch(() => (login = undefined));
+	return login;
+}
+
+export type ReviewRequest = { number: number; title: string; url: string; author: { login: string }; updatedAt: string; isDraft: boolean };
+
+/** Open PRs in the repo that ask you (or a team you're on) for a review, most recently updated first. */
+export async function reviewRequests(cwd: string): Promise<ReviewRequest[]> {
+	const { stdout } = await execa(
+		'gh',
+		['pr', 'list', '--search', 'review-requested:@me sort:updated-desc', '--json', 'number,title,url,author,updatedAt,isDraft'],
+		{ cwd },
+	);
+	return JSON.parse(stdout) as ReviewRequest[];
+}
+
+export const REVIEW_EVENTS = ['approve', 'request-changes', 'comment'] as const;
+export type ReviewEvent = (typeof REVIEW_EVENTS)[number];
+
+/** A review comment on one line of the PR's diff; LEFT is the old side, RIGHT the new. */
+export type ReviewComment = { path: string; line: number; side: 'LEFT' | 'RIGHT'; body: string };
+
+const API_EVENTS: Record<ReviewEvent, string> = { approve: 'APPROVE', 'request-changes': 'REQUEST_CHANGES', comment: 'COMMENT' };
+
+/**
+ * Submit a review of the PR, with `comments` on lines of its diff. GitHub wants a body when
+ * requesting changes. gh pr review can't add line comments, so those go through the API.
+ */
+export async function submitReview(cwd: string, number: number, event: ReviewEvent, body: string, comments: ReviewComment[] = []): Promise<void> {
+	if (comments.length === 0) {
+		await execa('gh', ['pr', 'review', String(number), `--${event}`, '--body-file', '-'], { cwd, input: body });
+		return;
+	}
+	// gh fills in {owner}/{repo} from the checkout's remote.
+	const review = { event: API_EVENTS[event], body, comments };
+	await execa('gh', ['api', `repos/{owner}/{repo}/pulls/${number}/reviews`, '--input', '-'], { cwd, input: JSON.stringify(review) });
+}
+
+/**
+ * Merge the PR the first way the repo allows: a merge commit, else squash, else rebase. The branch
+ * is left for the board to clean up when it sees the merge. Returns how it merged.
+ */
+export async function mergePr(cwd: string, number: number): Promise<string> {
+	const { stdout } = await execa('gh', ['repo', 'view', '--json', 'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed'], { cwd });
+	const allowed = JSON.parse(stdout) as Record<string, boolean>;
+	const fields = { merge: 'mergeCommitAllowed', squash: 'squashMergeAllowed', rebase: 'rebaseMergeAllowed' } as const;
+	const method = (['merge', 'squash', 'rebase'] as const).find(m => allowed[fields[m]]);
+	if (!method) throw new Error("the repo doesn't allow merging");
+	await execa('gh', ['pr', 'merge', String(number), `--${method}`], { cwd });
+	return method;
+}
+
 /**
  * Open the PR in the browser: $BROWSER if set, else the OS's opener. Under WSL that's Windows'
  * explorer.exe, since xdg-open usually has no browser there (explorer exits 1 even when it works).

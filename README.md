@@ -195,10 +195,20 @@ cancels). Press `a` while claude is still writing to open the PR with what it wr
 A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
 running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's
-claude can open the PR when you ask it to. `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
+claude can open the PR when you ask it to. `v` shows the PR as GitHub has it: title, merge state,
+checks, reviews and description above its diff (through delta, with `n`/`N` between hunks like `d`).
+`m` there merges it, using a merge commit, squash or rebase, whichever the repo allows first, and the
+thread goes straight to Done. `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
 Windows' default browser). The board checks open PRs every minute and moves merged ones to Done. One in
 Local comes out of it on the way, with the checkout put back on the default branch and the merge pulled in;
 if the checkout has uncommitted changes, it stays in PR until they're dealt with.
+
+GitHub won't let you approve your own PR, so on someone else's the viewer has `a` approve,
+`x` request changes and `c` comment instead of `m`. The last two open the PR's diff in vim, like
+`c` on the board: write the main comment above the diff and `>>` notes under the lines they're
+about, which go on the PR as comments on those lines. Leave it untouched, or `:cq`, to go back. `R` lists the open PRs asking you, or a team you're on, for a review,
+across every project with a repo; `⏎` opens one in the viewer, and once you've reviewed it, it
+drops off the list.
 
 `u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
 branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread with a

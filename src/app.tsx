@@ -23,13 +23,13 @@ import {
 	stageAll,
 	worktreePath,
 } from './git.js';
-import { createPr, draftPr, findPr, mergeLabel, openPrInBrowser, prStatus, withTicket, type PrStatus } from './github.js';
+import { createPr, draftPr, findPr, mergeLabel, mergePr, openPrInBrowser, prStatus, reviewRequests, submitReview, withTicket, type PrStatus, type ReviewRequest } from './github.js';
 import { editText, loop } from './input.js';
 import { KEY_SECTIONS } from './keys.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadForm, type NewThreadSubmit } from './newThreadForm.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from './requests.js';
-import { diffPaneCommand, openChanges, reviewDiff, showDiff, writeCommit } from './review.js';
+import { diffPaneCommand, openChanges, reviewDiff, showDiff, showPr, writeCommit } from './review.js';
 import { ThreadView } from './thread.js';
 import { approvedPrompt } from './threadCommand.js';
 import {
@@ -118,6 +118,11 @@ const NEW_THREAD_LABEL_WIDTH = Math.max(...Object.values(NEW_THREAD_LABELS).map(
 
 // The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
 const LIST_TOP = 3;
+
+/** A PR asking you for a review, and the project it's in. */
+type Review = ReviewRequest & { project: Project };
+
+const REVIEW_DONE: Record<string, string> = { approve: 'Approved', 'request-changes': 'Requested changes on', comment: 'Commented on' };
 const CARD_HEIGHT = 2;
 const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
 // A thread in Local stays in its column, its card outlined in yellow, which takes a line above and below.
@@ -168,6 +173,8 @@ export function App() {
 	const [merge, setMerge] = useState<Record<string, PrStatus>>({});
 	// The import list (i), replacing the columns while it's open.
 	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[]; row: number } | null>(null);
+	// The review requests list (R), replacing the columns while it's open.
+	const [reviews, setReviews] = useState<{ requests: Review[]; row: number } | null>(null);
 	// An action waiting on y (any other key cancels); its question is shown as the message.
 	const [confirm, setConfirm] = useState<(() => void) | null>(null);
 	const ask = (question: string, action: () => void) => {
@@ -698,6 +705,62 @@ export function App() {
 	};
 	openPrRef.current = openPr;
 
+	/**
+	 * Show a PR in the viewer and do what was picked there: merge it (moving `thread`, if it's the
+	 * thread's, to Done) or submit a review. Returns whether anything was done.
+	 */
+	const viewPr = async (cwd: string, number: number, thread?: Thread): Promise<boolean> => {
+		const picked = await showPr(cwd, number);
+		if (picked === 'closed') return false;
+		if (picked.action === 'review') {
+			setBusy(`reviewing PR #${number}`);
+			await submitReview(cwd, number, picked.event, picked.body, picked.comments);
+			const lines = picked.comments.length;
+			setMessage(`${REVIEW_DONE[picked.event]} PR #${number}${lines ? ` with ${lines} line comment${lines === 1 ? '' : 's'}` : ''}`);
+			return true;
+		}
+		setBusy(`merging PR #${number}`);
+		const method = await mergePr(cwd, number);
+		setMessage(`Merged PR #${number} (${method})`);
+		// Straight to Done rather than on the next poll.
+		if (thread) await checkPr(thread);
+		return true;
+	};
+
+	/**
+	 * The open PRs asking you for a review, across projects (those with a repo), most recently
+	 * updated first. Projects gh can't ask about are named in the message.
+	 */
+	const fetchReviews = async (): Promise<Review[]> => {
+		const projects = state.projects.filter(p => p.worktrees && existsSync(p.path));
+		const failed: string[] = [];
+		const found = await Promise.all(
+			projects.map(project =>
+				reviewRequests(project.path).then(
+					requests => requests.map(r => ({ ...r, project })),
+					() => (failed.push(project.name), []),
+				),
+			),
+		);
+		if (failed.length) setMessage(`⚠ gh couldn't list PRs in ${failed.join(', ')}`);
+		return found.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	};
+
+	const openReviews = () =>
+		run(async () => {
+			const requests = await fetchReviews();
+			if (requests.length === 0) return setMessage(m => m || 'No PRs waiting for your review');
+			setReviews({ requests, row: 0 });
+		}, 'looking for review requests');
+
+	/** View a review request's PR, then refresh the list, since one you've reviewed drops off it. */
+	const viewReview = (review: Review) =>
+		run(async () => {
+			if (!(await viewPr(review.project.path, review.number))) return;
+			const requests = await fetchReviews();
+			setReviews(r => r && { requests, row: Math.min(r.row, Math.max(0, requests.length - 1)) });
+		}, `loading PR #${review.number}`);
+
 	/** Record the merge status of the thread's PR, or move the thread to Done (cleaning up its worktree) if it's merged. */
 	const checkPr = async (thread: Thread) => {
 		const project = projectByName(thread.project);
@@ -1089,6 +1152,23 @@ export function App() {
 			if (key.return) return importThread(picker.project, picker.threads[picker.row]!);
 			return;
 		}
+		if (reviews) {
+			const count = reviews.requests.length;
+			const review = reviews.requests[reviews.row];
+			if (input === 'q' || input === 'R' || key.escape) return setReviews(null);
+			if (input === 'j' || key.downArrow) return setReviews({ ...reviews, row: loop(reviews.row, 1, count) });
+			if (input === 'k' || key.upArrow) return setReviews({ ...reviews, row: loop(reviews.row, -1, count) });
+			if (input === 'r') {
+				return run(async () => {
+					const requests = await fetchReviews();
+					setReviews({ requests, row: Math.min(reviews.row, Math.max(0, requests.length - 1)) });
+				}, 'looking for review requests');
+			}
+			if (!review) return;
+			if (key.return || input === 'v') return viewReview(review);
+			if (input === 'b') return run(() => openPrInBrowser(review), 'opening PR in the browser');
+			return;
+		}
 		if (input === 'q') return ask('Quit?', exit);
 		if (key.escape && filter) {
 			setFilter(null);
@@ -1113,6 +1193,7 @@ export function App() {
 			});
 		}
 		if (input === 'P') return setShowProjects(true);
+		if (input === 'R') return openReviews();
 		if (input === '?') return setShowKeys(true);
 		if (input === 'i') return startImport();
 		if (input === 'p') {
@@ -1189,6 +1270,11 @@ export function App() {
 				setMessage(`Opened PR #${pr.number} in the browser`);
 			}, 'opening PR in the browser');
 		}
+		if (input === 'v') {
+			const { pr } = selected;
+			if (!pr) return setMessage(`#${selected.id} has no PR`);
+			return inWorktree(selected, async cwd => void (await viewPr(cwd, pr.number, selected)), { git: true, label: `loading PR #${pr.number}` });
+		}
 		if (input === 'o') {
 			return inWorktree(selected, async cwd => {
 				if (!(await openChanges(cwd, selected))) setMessage('No changes');
@@ -1225,7 +1311,7 @@ export function App() {
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
 	// The import list scrolls to keep the selected entry in view; it shows what fits in the space
-	// measured after each render, starting at entry `pickerTop`.
+	// measured after each render, starting at entry `pickerTop`. The review list shares the measuring.
 	const pickerList = useRef<DOMElement>(null);
 	const [pickerLines, setPickerLines] = useState(0);
 	useEffect(() => {
@@ -1248,6 +1334,12 @@ export function App() {
 			pickerShown.push(t);
 		}
 	} else pickerTop.current = 0;
+	// Review requests are a line each.
+	const reviewsTop = useRef(0);
+	if (reviews) {
+		reviewsTop.current = Math.min(reviewsTop.current, reviews.row);
+		reviewsTop.current = Math.max(reviewsTop.current, reviews.row - Math.max(1, pickerLines) + 1);
+	} else reviewsTop.current = 0;
 
 	const lastClick = useRef<{ target: string; at: number } | null>(null);
 	/** Whether this click is on the same thing as the last, soon enough to make a double-click. */
@@ -1279,6 +1371,15 @@ export function App() {
 			if (button !== 'left' || r === undefined) return;
 			setPicker(p => p && { ...p, row: r });
 			if (isDoubleClick(picker.threads[r]!.id)) importThread(picker.project, picker.threads[r]!);
+			return;
+		}
+		if (reviews) {
+			const last = reviews.requests.length - 1;
+			if (wheel) return setReviews(r => r && { ...r, row: Math.max(0, Math.min(last, r.row + wheel)) });
+			const r = reviewsTop.current + y - LIST_TOP;
+			if (button !== 'left' || y < LIST_TOP || r > last || r >= reviewsTop.current + pickerLines) return;
+			setReviews(rs => rs && { ...rs, row: r });
+			if (isDoubleClick(reviews.requests[r]!.url)) viewReview(reviews.requests[r]!);
 			return;
 		}
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
@@ -1482,6 +1583,26 @@ export function App() {
 				/>
 			) : showKeys ? (
 				<KeysView />
+			) : reviews ? (
+				<Box flexGrow={1} overflow="hidden" flexDirection="column">
+					<Text bold>
+						PRs waiting for your review <Text dimColor>(j/k move  ⏎/v view  b browser  r refresh  esc/q/R close, or click, double-click, scroll)</Text>
+					</Text>
+					<Text dimColor>
+						{'─'.repeat(Math.max(0, width - 13))} {String(reviews.row + 1).padStart(4)} of {String(reviews.requests.length).padEnd(3)}
+					</Text>
+					<Box ref={pickerList} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
+						{reviews.requests.slice(reviewsTop.current, reviewsTop.current + Math.max(1, pickerLines)).map((r, i) => (
+							<Text key={r.url} wrap="truncate" inverse={reviewsTop.current + i === reviews.row}>
+								<Text dimColor>{timeAgo(new Date(r.updatedAt)).padEnd(9)}</Text>
+								<Text color={r.project.color}>{(r.project.abbrev || r.project.name).padEnd(6)} </Text>
+								<Text color="cyan">#{r.number} </Text>
+								{r.isDraft ? <Text dimColor>draft </Text> : null}
+								{r.title} <Text dimColor>— {r.author.login}</Text>
+							</Text>
+						))}
+					</Box>
+				</Box>
 			) : picker ? (
 				<Box flexGrow={1} overflow="hidden" flexDirection="column">
 					<Text bold>
@@ -1534,19 +1655,19 @@ export function App() {
 				</Box>
 			)}
 			<Box marginTop={1} flexDirection="column" display={showProjects || showKeys || editing ? 'none' : 'flex'}>
-				{/* About the highlighted card, so not while the import list covers the board. */}
-				{selected?.plan && !picker ? (
+				{/* About the highlighted card, so not while the import or review list covers the board. */}
+				{selected?.plan && !picker && !reviews ? (
 					<Text dimColor wrap="truncate-end">
 						{selected.plan.split('\n').slice(0, 3).join(' · ')}
 					</Text>
 				) : null}
-				{selected?.todos?.length && !picker ? todoList(selected.todos) : null}
-				{selected?.ticket?.url && !picker ? (
+				{selected?.todos?.length && !picker && !reviews ? todoList(selected.todos) : null}
+				{selected?.ticket?.url && !picker && !reviews ? (
 					<Text dimColor>
 						{selected.ticket.key} {selected.ticket.url}
 					</Text>
 				) : null}
-				{selected?.pr && !picker ? (
+				{selected?.pr && !picker && !reviews ? (
 					<Text dimColor>
 						PR #{selected.pr.number} {selected.pr.url} (b opens it)
 						{selectedMerge ? <Text color={selectedMerge[1]}> — {selectedMerge[0]}</Text> : null}

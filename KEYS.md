@@ -44,6 +44,8 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 | `s` / `M-d` | claude with a shell / live diff beside it |
 | `c` | comment on the diff in vim |
 | `o` | changed hunks as a vim quickfix list |
+| `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
+| `R` | PRs waiting for your review, across projects (`⏎` views one) |
 | `b` | open the PR in your browser |
 
 ## In a diff
@@ -54,10 +56,13 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 | `a` | in `d`: approve the step. Beside claude: commit everything uncommitted (claude drafts the message, you edit it and add comments for claude in the commit form; esc cancels). `a` again while claude writes takes its message as it is |
 | `t` | beside claude: switch between the uncommitted and whole-thread diffs |
 | `r` | beside claude: refresh |
+| `m` | in `v`, your PR: merge it (with a confirm that says what's in the way, if anything) |
+| `a` / `x` / `c` | in `v`, someone else's PR: approve (with a confirm) / request changes / comment (in vim on the diff: the main comment above it, `>>` notes become line comments) |
+| `o` | in `v`: open the PR in your browser |
 | `S` | set up delta's header styles (`oo delta` from the shell), then back to the diff |
 | `q` | close |
-| `>> note` | in `c`: a comment on the diff line above it |
-| `:cq` | in `c`: send nothing |
+| `>> note` | in `c`, or `x`/`c` in `v`: a comment on the diff line above it |
+| `:cq` | in `c`: send nothing (in `v`: back to the PR) |
 
 ## In a form
 

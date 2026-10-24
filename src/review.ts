@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
+import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogin, type PrDetails, type ReviewComment, type ReviewEvent } from './github.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
-import { CLOSED, popup, shellQuote, type ProgressPopup } from './tmux.js';
+import { CLOSED, confirmPopup, popup, shellQuote, type ProgressPopup } from './tmux.js';
 
 // less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
 // 83) sets up delta's styles (`oo delta`) and comes back to the diff.
@@ -20,6 +21,18 @@ const DELTA_STATUS = 83;
 const PANE_KEYS = `${APPROVE_KEYS}r quit R\nt quit T\n`;
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
+// The PR viewer's o opens the browser ('O' is 79; b and w stay less's page back). On your own PR m
+// merges ('M' is 77); on someone else's a approves, x requests changes ('X' is 88) and c comments ('C' is 67).
+const PR_KEYS = `${DIFF_KEYS}o quit O\n`;
+const OWN_PR_KEYS = `${PR_KEYS}m quit M\n`;
+const REVIEW_PR_KEYS = `${PR_KEYS}a quit A\nx quit X\nc quit C\n`;
+const MERGE_STATUS = 77;
+const BROWSER_STATUS = 79;
+const REVIEW_STATUSES: Record<number, [ReviewEvent, string]> = {
+	[APPROVE_STATUS]: ['approve', 'approving'],
+	88: ['request-changes', 'requesting changes on'],
+	67: ['comment', 'on'],
+};
 // `oo delta`, then a pause so its answer stays up until you're back in the diff.
 const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
 // What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
@@ -43,6 +56,161 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 		// Back to the diff, restyled if you added them.
 		await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
 	}
+}
+
+export type PrAction = { action: 'merge' } | { action: 'review'; event: ReviewEvent; body: string; comments: ReviewComment[] };
+
+/**
+ * Show a PR as GitHub has it: its title, state, checks, reviews and description, then its diff, with
+ * n/N jumping between files and hunks like `showDiff`. `o` opens it in the browser and `S` sets up
+ * delta's styles. Your own PR can be merged with `m`; someone else's approved (`a`), sent back with
+ * changes requested (`x`) or commented on (`c`), the last two written in vim (see `writeReview`).
+ */
+export async function showPr(cwd: string, number: number): Promise<'closed' | PrAction> {
+	const [details, diff, me] = await Promise.all([prDetails(cwd, number), prDiff(cwd, number), viewerLogin(cwd)]);
+	const own = details.author.login === me;
+	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
+	const header = join(dir, 'header');
+	const patch = join(dir, 'pr.diff');
+	writeFileSync(header, prHeader(details));
+	writeFileSync(patch, diff + '\n');
+	const stat = diff ? `git apply --stat --summary ${shellQuote(patch)}; echo; delta --paging=never --navigate < ${shellQuote(patch)}` : "echo 'No changes'";
+	const keys = own ? lesskey('own-pr', OWN_PR_KEYS) : lesskey('review-pr', REVIEW_PR_KEYS);
+	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(keys)}`;
+	const title = ` PR #${number} — n/N next/prev hunk  ${own ? 'm merge' : 'a approve  x request changes  c comment'}  o browser  S styling  q close `;
+	try {
+		for (;;) {
+			const status = await popup(command, { cwd, title });
+			if (status === DELTA_STATUS) {
+				await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+				continue;
+			}
+			if (status === BROWSER_STATUS) {
+				await openPrInBrowser(details);
+				continue;
+			}
+			const review = own ? undefined : REVIEW_STATUSES[status];
+			if (review) {
+				const [event, verb] = review;
+				// Anything but y, or an empty comment, goes back to the PR.
+				if (event === 'approve') {
+					if (await confirmPopup(`Approve PR #${number}?`)) return { action: 'review', event, body: '', comments: [] };
+					continue;
+				}
+				const written = await writeReview(cwd, number, diff, event, verb);
+				if (written) return { action: 'review', event, ...written };
+				continue;
+			}
+			if (!own || status !== MERGE_STATUS) return 'closed';
+			// Say what's in the way, since GitHub may still let you merge past it.
+			const [label] = mergeLabel(details) ?? [];
+			const warning = label && label !== 'ready to merge' ? ` (${label})` : '';
+			if (await confirmPopup(`Merge PR #${number}${warning}?`)) return { action: 'merge' };
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Write a review of a PR in vim, on its diff: the main comment above the diff and `>>` notes under
+ * the lines they're about, which become comments on those lines. Requesting changes needs a main
+ * comment, so vim comes back with a reminder until it has one. Returns null if nothing was written
+ * (or vim quit with :cq).
+ */
+async function writeReview(cwd: string, number: number, diff: string, event: ReviewEvent, verb: string): Promise<{ body: string; comments: ReviewComment[] } | null> {
+	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
+	const file = join(dir, 'review.diff');
+	writeFileSync(
+		file,
+		[
+			`# Your review ${verb} PR #${number}. Write the main comment here, above the diff, and notes on`,
+			`# lines starting ${COMMENT} under the diff line they're about. Save and quit to send; :cq goes back.`,
+			'',
+			'',
+			diff,
+			'',
+		].join('\n'),
+	);
+	try {
+		for (;;) {
+			// :cq deletes the file, which means cancel.
+			await popup(`vim ${shellQuote(file)} || rm -f ${shellQuote(file)}`, { cwd, title: ` review #${number} — ${COMMENT} note ` });
+			if (!existsSync(file)) return null;
+			const text = readFileSync(file, 'utf8');
+			const review = parsePrReview(text);
+			if (!review.body && review.comments.length === 0) return null;
+			if (review.body || event !== 'request-changes') return review;
+			writeFileSync(file, `# Requesting changes needs a main comment above the diff.\n${text}`);
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Read back a review written by `writeReview`: everything above the diff (minus `# ` lines) is the
+ * main comment, and `>>` notes on diff lines are comments on them. Notes GitHub can't pin to a line
+ * (on a file or hunk header) are added to the main comment with where they were.
+ */
+export function parsePrReview(text: string): { body: string; comments: ReviewComment[] } {
+	const start = text.search(/^diff --git /m);
+	const top = start < 0 ? text : text.slice(0, start);
+	const notes = start < 0 ? [] : parseComments(text.slice(start));
+	const body = top
+		.split('\n')
+		.filter(l => !l.startsWith('# '))
+		.join('\n')
+		.trim();
+	const loose = notes.filter(n => !n.target).map(n => `- \`${n.location}\`: ${n.note.replaceAll('\n', '\n  ')}`);
+	return {
+		body: [body, loose.join('\n')].filter(Boolean).join('\n\n'),
+		comments: notes.flatMap(n => (n.target ? [{ ...n.target, body: n.note }] : [])),
+	};
+}
+
+const ANSI: Record<string, string> = { red: '31', green: '32', yellow: '33', magenta: '35', bold: '1', dim: '2' };
+const paint = (color: string, text: string) => `\x1b[${ANSI[color]}m${text}\x1b[0m`;
+
+const REVIEW_WORDS: Record<string, [string, string]> = {
+	APPROVED: ['approved', 'green'],
+	CHANGES_REQUESTED: ['requested changes', 'red'],
+	COMMENTED: ['commented', 'dim'],
+	DISMISSED: ['dismissed', 'dim'],
+};
+
+/** The top of the PR viewer: who wants to merge what, where it stands, the reviews so far and the description. */
+export function prHeader(pr: PrDetails): string {
+	const state = pr.state === 'OPEN' ? (pr.isDraft ? ['draft', 'dim'] : undefined) : [pr.state.toLowerCase(), 'magenta'];
+	const decision = REVIEW_WORDS[pr.reviewDecision] ?? (pr.reviewDecision === 'REVIEW_REQUIRED' ? ['review required', 'yellow'] : undefined);
+	const status = [state, pr.state === 'OPEN' ? mergeLabel(pr) : undefined, checksLabel(pr.statusCheckRollup), decision]
+		.filter((s): s is [string, string] => !!s)
+		.map(([text, color]) => paint(color, text));
+	// Each reviewer's latest say, skipping bare comments once they've approved or asked for changes.
+	const latest = new Map<string, string>();
+	for (const review of pr.reviews) {
+		if (review.state === 'PENDING') continue;
+		if (review.state === 'COMMENTED' && latest.has(review.author.login)) continue;
+		latest.set(review.author.login, review.state);
+	}
+	const reviews = [...latest].map(([login, state]) => {
+		const [word, color] = REVIEW_WORDS[state] ?? [state.toLowerCase(), 'dim'];
+		return `${login} ${paint(color, word)}`;
+	});
+	return [
+		paint('bold', `#${pr.number} ${pr.title}`),
+		`${pr.author.login} wants to merge ${pr.headRefName} into ${pr.baseRefName}  ${paint('green', `+${pr.additions}`)} ${paint('red', `−${pr.deletions}`)}`,
+		status.join(' · '),
+		reviews.length ? `reviews: ${reviews.join(', ')}` : '',
+		'',
+		// GitHub keeps bodies written in the browser with CRLFs, which less would show as ^M.
+		pr.body.replaceAll('\r', '').trim() || paint('dim', 'No description.'),
+		'',
+		paint('dim', '─'.repeat(40)),
+		'',
+	]
+		.filter((line, i) => line || i > 3)
+		.join('\n');
 }
 
 /**
@@ -176,7 +344,10 @@ export async function reviewDiff(cwd: string, thread: Thread): Promise<string | 
 	}
 }
 
-type Comment = { location: string; note: string };
+/** Where a note points, as GitHub's review comments want it: LEFT is the old side of the diff, RIGHT the new. */
+export type LineTarget = { path: string; line: number; side: 'LEFT' | 'RIGHT' };
+// `target` is unset for notes not under a diff line: general ones, or on a file or hunk header.
+type Comment = { location: string; note: string; target?: LineTarget };
 
 /** Pull `>>` notes out of an annotated unified diff, each pinned to the diff line above it. */
 export function parseComments(text: string): Comment[] {
@@ -186,16 +357,18 @@ export function parseComments(text: string): Comment[] {
 	let newLine = 0;
 	let inHunk = false;
 	let location: string | undefined; // where a note written here would point
+	let target: LineTarget | undefined; // the same, for GitHub
 	let last: Comment | undefined; // the note being continued by consecutive `>>` lines
 	for (const line of text.split('\n')) {
 		if (line.startsWith(COMMENT)) {
 			const note = line.slice(COMMENT.length).trim();
 			if (!note) continue;
 			if (last) last.note += `\n${note}`;
-			else comments.push((last = { location: location ?? 'general', note }));
+			else comments.push((last = { location: location ?? 'general', note, ...(target && { target }) }));
 			continue;
 		}
 		last = undefined;
+		target = undefined;
 		if (line.startsWith('diff --git ')) {
 			inHunk = false;
 			// Until `+++` says otherwise (e.g. a mode-only change has no `+++`).
@@ -216,12 +389,15 @@ export function parseComments(text: string): Comment[] {
 			location = `${file}:${Math.max(1, newLine)}`;
 		} else if (inHunk && line.startsWith('-')) {
 			location = `${file}:${Math.max(1, newLine)} (removed line ${oldLine}: \`${line.slice(1).trim()}\`)`;
+			target = { path: file!, line: oldLine, side: 'LEFT' };
 			oldLine++;
 		} else if (inHunk && line.startsWith('+')) {
 			location = `${file}:${newLine}`;
+			target = { path: file!, line: newLine, side: 'RIGHT' };
 			newLine++;
 		} else if (inHunk && line.startsWith(' ')) {
 			location = `${file}:${newLine}`;
+			target = { path: file!, line: newLine, side: 'RIGHT' };
 			oldLine++;
 			newLine++;
 		}

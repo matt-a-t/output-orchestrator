@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { withTicket } from './github.js';
+import { checksLabel, withTicket } from './github.js';
 
 const jira = { key: 'AV-123', url: 'https://example.atlassian.net/browse/AV-123' };
 const github = { key: '#45', url: 'https://github.com/o/r/issues/45' };
@@ -31,4 +31,13 @@ test('a longer key or issue number is not the same ticket', () => {
 test('no ticket, no change', () => {
 	const draft = { title: 'Add foo', body: 'Does foo.' };
 	assert.equal(withTicket(draft, undefined), draft);
+});
+
+test('checks are summed up by how they stand, colored by the worst', () => {
+	assert.equal(checksLabel([]), undefined);
+	const run = (status: string, conclusion = '') => ({ __typename: 'CheckRun' as const, name: 'ci', status, conclusion });
+	const ctx = (state: string) => ({ __typename: 'StatusContext' as const, context: 'ci', state });
+	assert.deepEqual(checksLabel([run('COMPLETED', 'SUCCESS'), run('COMPLETED', 'SKIPPED'), ctx('SUCCESS')]), ['checks: 3 passing', 'green']);
+	assert.deepEqual(checksLabel([run('IN_PROGRESS'), ctx('PENDING'), run('COMPLETED', 'SUCCESS')]), ['checks: 2 pending, 1 passing', 'yellow']);
+	assert.deepEqual(checksLabel([run('COMPLETED', 'FAILURE'), ctx('ERROR'), run('QUEUED')]), ['checks: 2 failing, 1 pending', 'red']);
 });
