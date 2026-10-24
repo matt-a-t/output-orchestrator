@@ -39,8 +39,8 @@ oo project add ~/code/my-repo    # once per repo; the name defaults to the folde
 oo                               # open the board
 ```
 
-On the board, `n` starts a thread in Planned (you give it a project and a title, and `e` adds a
-plan if you want one), and Enter opens its claude. `Ctrl-b b` (or `Alt-b`) brings you back to the
+On the board, `n` starts a thread in Planned (you give it a project, a ticket if the project
+has a tracker, and a title, and `e` adds a plan if you want one), and Enter opens its claude. `Ctrl-b b` (or `Alt-b`) brings you back to the
 board. `?` on the board lists every key, and so does [KEYS.md](KEYS.md).
 
 `oo` starts (or reattaches to) a tmux session called `oo` with the board in it. If you run it
@@ -55,24 +55,52 @@ A **thread** is one piece of work: a git worktree, a branch, possibly a PR, and 
 that worked on it. Its columns are **Planned → Active → Polish → PR → Done**. `H` / `L` move the
 selected thread between columns, and `J` / `K` reorder it within one.
 
-Leaving Planned (or opening a thread) gives it its own worktree and branch (`oo/<id>-<title>`),
+Leaving Planned (or opening a thread) gives it its own worktree and branch (`av-123-<title>` from its ticket, or `oo/<title>` without one),
 under `~/.local/share/output-orchestrator/worktrees/`, and claude runs there. If a thread in
 Planned has claude make a plan and you approve it, the plan is saved to the thread and the thread
 moves to Active.
+
+Thread numbers (`#12`) only mean something on this machine's board, so they stay out of git:
+branches and PRs are named after the thread's ticket instead (see [Tickets](#tickets)).
 
 Enter opens or jumps to the thread's `claude` window. If the window was closed (e.g. after a
 restart), Enter resumes the thread where it left off. If the window was closed while claude was
 still working, `w` resumes it in the background and tells it to keep going without you leaving
 the board, and `W` does the same for every thread like that, after asking first. The project's
 wake prompt (`P`) changes what it's told. `e` opens a thread's own screen. Its title,
-project, colour and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
+ticket, project, colour and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
 the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
 already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
 approved. Each card shows the thread number and project abbreviation (or name, if it has none),
-with the title beneath.
+with the title beneath (after its ticket key, if it has one).
+
+### Tickets
+
+Threads usually work on a ticket: a Jira ticket at work, a GitHub issue elsewhere. Set where a
+project's tickets come from with **tickets** in the projects screen (`P`):
+
+- **github**: issues in the project's repo, read with `gh`.
+- **jira**: also set **jira site** (e.g. `yourco.atlassian.net`) and **jira project**, the key
+  prefix (e.g. `AV`), so `123` means `AV-123`. oo reads Jira Cloud's REST API with an
+  [API token](https://id.atlassian.com/manage-profile/security/api-tokens): export
+  `JIRA_EMAIL` and `JIRA_API_TOKEN` in the shell you start `oo` from.
+
+`n` on such a project asks for the ticket first:
+
+```
+Attach key: AV-123     fetch the ticket; its summary is the title, its description the plan
+No key, use oo         no ticket: type a title as usual
+Recent tickets:        your five most recently updated open tickets, to pick from
+```
+
+The ticket names the branch (`av-123-<title>` for Jira, `45-<title>` for issue #45; threads
+without one get `oo/<title>`) and the PR: its title starts with `AV-123: ` or `#45: `, and its
+description ends with a link to the Jira ticket or `Closes #45`. Adding or changing a thread's
+ticket later (`e`) renames its branch to match, unless the branch has already been pushed.
+`oo thread add --ticket <key>` attaches one from the command line.
 
 ### Reviewing and approving
 
@@ -138,7 +166,7 @@ alone. `OO_THREAD_ID`, `OO_PROJECT` and `OO_BRANCH` are set for them.
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
 `gh pr create`, whatever branch the thread started from. claude drafts the title and description
-from the thread's commits and diff, and they open in vim for you to change first (an empty title
+from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
 cancels). `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
 Windows' default browser). The board checks open PRs every minute and moves merged ones to Done.
 

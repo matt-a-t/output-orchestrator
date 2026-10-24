@@ -140,9 +140,9 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const state = store.get();
 	if (request.op === 'add') {
 		if (!state.projects.some(p => p.name === request.project)) return { id, ok: false, message: `Unknown project "${request.project}"` };
-		const { thread } = addThread(state, { project: request.project, title: request.title, plan: request.plan });
+		const { thread } = addThread(state, { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket });
 		store.update(s => ({ ...s, threads: [...s.threads, thread] }));
-		return { id, ok: true, message: `Created #${thread.id}`, thread: thread.id };
+		return { id, ok: true, message: `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`, thread: thread.id };
 	}
 	const thread = state.threads.find(t => t.id === request.thread);
 	if (!thread) return { id, ok: false, message: `No thread #${request.thread}` };

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import type { Thread } from './state.js';
+import { isGithubKey, type TicketRef } from './tickets.js';
 
 export type Pr = NonNullable<Thread['pr']>;
 export type PrState = 'OPEN' | 'CLOSED' | 'MERGED';
@@ -29,6 +30,8 @@ export async function draftPr(cwd: string, thread: Thread, base: string, signal?
 		'what changed and why, in short paragraphs or bullets a reviewer can skim. No preamble.',
 		'',
 		`Thread title: ${thread.title}`,
+		// withTicket adds these, so claude's own would double up.
+		thread.ticket ? `Ticket: ${thread.ticket.key} (the title prefix and the link to it are added for you; leave them out)` : '',
 		thread.plan ? `Thread plan:\n${thread.plan}` : '',
 		'',
 		'Commits:',
@@ -46,6 +49,31 @@ export async function draftPr(cwd: string, thread: Thread, base: string, signal?
 	const cleanTitle = title?.replace(/^#+\s*/, '').trim();
 	if (!cleanTitle) return;
 	return { title: cleanTitle, body: rest.join('\n').trim() };
+}
+
+/**
+ * The PR titled and linked to the ticket: `AV-123: ` or `#45: ` in front of the title, and
+ * `Closes #45` (so merging closes the issue) or a link to the Jira ticket at the end of the body.
+ * Leaves either alone if it's already there.
+ */
+export function withTicket(draft: { title: string; body: string }, ticket: TicketRef | undefined): { title: string; body: string } {
+	if (!ticket) return draft;
+	// Keys are only letters, digits, - and #, so need no escaping.
+	const keyed = new RegExp(`^${ticket.key}(?![\\w-])`, 'i').test(draft.title);
+	const footer = ticketFooter(ticket, draft.body);
+	return {
+		title: keyed ? draft.title : `${ticket.key}: ${draft.title}`,
+		body: footer ? [draft.body, footer].filter(Boolean).join('\n\n') : draft.body,
+	};
+}
+
+/** What the body should end with to reference the ticket, unless it already does. */
+function ticketFooter({ key, url }: TicketRef, body: string): string | undefined {
+	if (isGithubKey(key)) {
+		const closes = new RegExp(`\\b(close[sd]?|fix(e[sd])?|resolve[sd]?) ${key}(?!\\d)`, 'i');
+		return closes.test(body) ? undefined : `Closes ${key}`;
+	}
+	if (url && !body.includes(url)) return `Jira: [${key}](${url})`;
 }
 
 /**

@@ -75,7 +75,10 @@ ${THREAD_USAGE}
   runs and shows on its card, so keep it current.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
-  and why, then tell the user its id. Keep the title short; put the detail in the plan.
+  and why, then tell the user its id. Keep the title short; put the detail in the plan. If it's for a Jira
+  ticket or GitHub issue, pass \`--ticket <key>\`: the thread's branch and PR are named after it.
+- **Threads' ids are local to this board.** \`#12\` means nothing on another machine, so don't put a thread
+  id in commits, branches or PRs. Refer to the thread's ticket (\`oo thread show\` lists it) instead.
 - **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is
   in flight, so you don't duplicate it.
 - **Move threads only when the user asks.** Never move your own thread to done or archived: that removes

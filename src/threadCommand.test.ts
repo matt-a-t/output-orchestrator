@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
-import { loadState } from './state.js';
+import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { approvedTodo, inDir, todoWindow } from './threads.js';
 
@@ -56,6 +56,30 @@ test('with the board closed, add and move write state.json', async t => {
 		threads.map(t => [t.id, t.title, t.plan, t.column]),
 		[['2', 'new thing', 'plan from stdin', 'planned'], ['1', 'thread 1', '', 'archived']],
 	);
+});
+
+test('add --ticket attaches the ticket in the project\'s form, and show prints it', async t => {
+	const { dir, project, state } = fixture();
+	saveState(
+		{ ...state, projects: state.projects.map(p => ({ ...p, tracker: 'jira', jiraSite: 'example.atlassian.net', jiraProject: 'AV' })) },
+		join(dir, 'state.json'),
+	);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	assert.equal(await threadCommand(['add', 'do', 'it', '--ticket', '123'], ctx), 0);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.ticket, { key: 'AV-123', url: 'https://example.atlassian.net/browse/AV-123' });
+	await threadCommand(['show', '1'], ctx);
+	assert.match(output.out(), /ticket: {2}AV-123 https:\/\/example\.atlassian\.net\/browse\/AV-123/);
+	assert.equal(await threadCommand(['add', 'bad', '--ticket', 'nope'], ctx), 1);
+	assert.match(output.err(), /Not a Jira key: nope/);
+});
+
+test('add --ticket needs the project to have a tracker', async t => {
+	const { dir, project } = fixture();
+	const output = capture(t);
+	assert.equal(await threadCommand(['add', 'do', 'it', '--ticket', '#4'], context(dir, project)), 1);
+	assert.match(output.err(), /p has no ticket tracker/);
+	assert.equal(loadState(join(dir, 'state.json')).threads.length, 0);
 });
 
 test('list hides archived threads unless asked for', async t => {
