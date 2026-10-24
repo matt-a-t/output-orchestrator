@@ -6,7 +6,8 @@ import { askClaude, truncateDiff } from './claude.js';
 import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
-import { confirmPopup, popup, shellQuote } from './tmux.js';
+import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
+import { CLOSED, popup, shellQuote, type ProgressPopup } from './tmux.js';
 
 // less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
 // 83) sets up delta's styles (`oo delta`) and comes back to the diff.
@@ -26,7 +27,7 @@ const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 
 /**
  * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
- * can be approved from there with `a` (and a confirm), and `S` sets up delta's styles. delta's paging would swallow less's exit
+ * can be approved from there with `a`, and `S` sets up delta's styles. delta's paging would swallow less's exit
  * status, so it's piped into less here instead.
  */
 export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Promise<'empty' | 'closed' | 'approved'> {
@@ -38,14 +39,9 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 	const command = `${statThenDiff(gitCommand(args))} | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : lesskey('diff', DIFF_KEYS))}`;
 	for (;;) {
 		const status = await popup(command, { cwd, title });
-		if (status === DELTA_STATUS) {
-			// Back to the diff, restyled if you added them.
-			await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
-			continue;
-		}
-		if (status !== APPROVE_STATUS) return 'closed';
-		// Anything but y goes back to the diff.
-		if (await confirmPopup(`Approve #${thread.id}'s step?`)) return 'approved';
+		if (status !== DELTA_STATUS) return status === APPROVE_STATUS ? 'approved' : 'closed';
+		// Back to the diff, restyled if you added them.
+		await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
 	}
 }
 
@@ -81,7 +77,8 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
 		'fi',
 		'case $status in',
 		`  ${TOGGLE_STATUS}) [ $mode = step ] && mode=thread || mode=step;;`,
-		`  ${APPROVE_STATUS}) clear; echo 'claude is writing the commit message…'; out=$(${ooCommit} 2>&1); clear; tmux display-message "$out";;`,
+		// oo commit has its own popups.
+		`  ${APPROVE_STATUS}) out=$(${ooCommit} 2>&1); [ -n "$out" ] && tmux display-message "$out";;`,
 		`  ${REFRESH_STATUS}) ;;`,
 		`  ${DELTA_STATUS}) clear; ${OO_DELTA}; clear;;`,
 		'  *) break;;',
@@ -267,4 +264,16 @@ export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSig
 	const reply = await askClaude(cwd, prompt, signal);
 	// In case it writes a body anyway.
 	return reply?.split('\n').find(l => l.trim())?.trim() || undefined;
+}
+
+/**
+ * In `progress`, have claude draft the commit message (q cancels), then edit it in the commit form,
+ * or take it as it is if a was pressed while claude wrote it. null if cancelled.
+ */
+export async function writeCommit(progress: ProgressPopup, cwd: string, thread: Thread): Promise<CommitForm | null> {
+	const drafted = await progress.cancellable('claude is writing the commit message', signal => draftCommit(cwd, thread, signal));
+	if (drafted === CLOSED) return null;
+	if (drafted && progress.accepted()) return { message: drafted, notes: '' };
+	const edited = await progress.edit(drafted ? commitFormText(drafted) : commitFormText('', "claude couldn't write a commit message; write one."));
+	return edited === CLOSED ? null : parseCommitForm(edited);
 }

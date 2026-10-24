@@ -1,7 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { COMMIT_FORM, commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
 import { popup, shellQuote } from './tmux.js';
 
 export const EDITOR = process.env.VISUAL || process.env.EDITOR || 'vim';
@@ -33,11 +32,6 @@ async function editLines(text: string, title: string): Promise<string[]> {
 export async function editPlan(plan: string, thread: string): Promise<string> {
 	const lines = await editLines([plan, '', `# The plan for ${thread}. Lines starting with "# " are ignored.`, ''].join('\n'), ' plan ');
 	return lines.join('\n').trim();
-}
-
-/** Edit a drafted commit message and comments for claude in the commit form; null if cancelled. */
-export async function editCommitForm(draft: string, note?: string): Promise<CommitForm | null> {
-	return parseCommitForm(await editInPopup(commitFormText(draft, note), COMMIT_FORM, ' commit '));
 }
 
 export type PrDraft = { title: string; body: string };

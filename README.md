@@ -119,27 +119,29 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   	hunk-header-style = line-number syntax dim
   	hunk-header-decoration-style = none
   ```
-- In a step diff, `a` approves the step (after a y/n confirm). Approving commits everything with
+- In a step diff, `a` approves the step. Approving commits everything with
   a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
   and **for claude** (comments to send along). Tab or ↑/↓ switches fields, ⏎ commits from either,
   esc cancels (leaving the changes staged), and ctrl-u / ctrl-w clear a field or delete a word.
-  If the thread's claude has stopped (✓), it's then told the step was committed, given your
+  Press `a` while claude is still writing to commit whatever it writes without opening the form
+  (`a` again goes back). If the thread's claude has stopped (✓), it's then told the step was committed, given your
   comments, and told to move on to the next checkpoint, or to stop if that was the last one.
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels).
 - `o` opens the changed hunks in vim as a quickfix list.
 
-Confirmations (quit, archive, approve, resuming a busy thread) all take `y`. Any other key cancels.
+Confirmations (quit, archive, resuming a busy thread) all take `y`. Any other key cancels.
 
 ### Working beside claude
 
 `s` opens a shell and `M-d` (alt-d) a diff to the right of the thread's claude window (starting
 claude if it isn't running) and jumps there. The diff is the step's, or the thread's when the
 step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
-closes it. `a` commits everything uncommitted, like approving from `d`: claude drafts the message
-and it opens in the same commit form (esc or an empty message cancels, leaving the changes staged),
-and a stopped claude is given your comments and told to move on. Pressing the
+closes it. `a` commits everything uncommitted, like approving from `d`:
+claude drafts the message (`a` again while it writes takes it as it is) and it opens in the same
+commit form (esc or an empty message cancels, leaving the changes staged), and a stopped claude is
+given your comments and told to move on. Pressing the
 other key swaps what's on the right, and either key jumps back to it later. From inside a
 thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
 scroll and go back to the board (see [KEYS.md](KEYS.md)).
@@ -189,7 +191,8 @@ alone. `OO_THREAD_ID`, `OO_THREAD_TITLE`, `OO_PROJECT` and `OO_BRANCH` are set f
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
 `gh pr create`, whatever branch the thread started from. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
-cancels). A thread in Local opens its PR from the project's checkout and stays in Local.
+cancels). Press `a` while claude is still writing to open the PR with what it writes, skipping vim.
+A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
 running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's
 claude can open the PR when you ask it to. `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,

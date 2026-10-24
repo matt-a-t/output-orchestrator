@@ -7,11 +7,10 @@ import { claimBoard } from './requests.js';
 import { COLORS, isHome, isRepo, loadState, projectProblem, saveState } from './state.js';
 import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
-import { commitFormCommand } from './commitForm.js';
-import { editCommitForm } from './editor.js';
+import { COMMIT_FORM, commitFormCommand, type CommitForm } from './commitForm.js';
 import { commit, stageAll } from './git.js';
 import { deltaCommand, noStyling } from './delta.js';
-import { diffPaneCommand, draftCommit } from './review.js';
+import { diffPaneCommand, writeCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
 import { approvedTodo, noRepo, setTodoStatus, threadDir } from './threads.js';
 import {
@@ -24,6 +23,7 @@ import {
 	labelWindow,
 	MIN_TMUX,
 	openSplit,
+	progressPopup,
 	pasteInto,
 	renameCurrentWindow,
 	selectExistingBoard,
@@ -150,9 +150,9 @@ async function splitCommand([role, id]: string[]): Promise<number> {
 }
 
 /**
- * `oo commit <id>`, for `a` in the diff beside claude: stage everything, have claude draft the
- * message, edit it in the commit form and commit, as approving a step on the board does (telling a
- * stopped claude to move on, with the form's comments, included).
+ * `oo commit <id>`, for `a` in the diff beside claude: stage everything, have claude draft
+ * the message, edit it in the commit form (or take it with a) and commit, as approving a step on
+ * the board does (telling a stopped claude to move on, with the form's comments, included).
  */
 async function commitCommand([id]: string[]): Promise<number> {
 	const state = loadState();
@@ -173,13 +173,19 @@ async function commitCommand([id]: string[]): Promise<number> {
 	}
 	const window = threadWindowName(id);
 	const waiting = threadStatus(id, cwd) === 'stopped' && (await windowNames()).includes(window);
-	const drafted = await draftCommit(cwd, thread);
-	const form = await editCommitForm(drafted ?? '', drafted ? undefined : "claude couldn't write a commit message; write one.");
-	if (!form) {
-		console.log('Commit cancelled (changes left staged)');
-		return 1;
+	let form: CommitForm | null;
+	const progress = progressPopup(' commit ', COMMIT_FORM);
+	try {
+		form = await writeCommit(progress, cwd, thread);
+		if (!form) {
+			console.log('Commit cancelled (changes left staged)');
+			return 1;
+		}
+		progress.status('committing');
+		await commit(cwd, `${form.message}\n`);
+	} finally {
+		await progress.close();
 	}
-	await commit(cwd, `${form.message}\n`);
 	console.log(`Committed on ${thread.branch ?? cwd}: ${form.message}`);
 	const item = approvedTodo(thread.todos ?? []);
 	const ticked = await approveTodo(thread.id);
