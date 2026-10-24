@@ -29,7 +29,7 @@ const FIELD_HINTS: Partial<Record<Field, string>> = {
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
 	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
-	...Object.fromEntries(HOOK_EVENTS.map(e => [e, 'shell command run in the project checkout (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  '])),
+	...Object.fromEntries(HOOK_EVENTS.map(e => [e, `shell command run in the ${e.endsWith('Polish') ? "thread's worktree" : 'project checkout'} (OO_THREAD_ID, OO_PROJECT, OO_BRANCH set)  `])),
 };
 const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
 

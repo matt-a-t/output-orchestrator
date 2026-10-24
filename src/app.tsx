@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { commitText, EDITOR, parseCommit, parsePr, prText } from './editor.js';
-import { runHook } from './hooks.js';
+import { runColumnHook, tryHook } from './hooks.js';
 import { checkout, currentRef, defaultBranch, hasWorktree, isDirty, commit, pushBranch, removeWorktree, stageAll, worktreePath } from './git.js';
 import { createPr, draftPr, findPr, openPrInBrowser, prState, withTicket } from './github.js';
 import { editText, loop } from './input.js';
@@ -18,7 +18,6 @@ import {
 	COLUMN_LABELS,
 	COLUMNS,
 	DEFAULT_WAKE_PROMPT,
-	HOOK_LABELS,
 	STATE_FILE,
 	TODO_MARKS,
 	loadState,
@@ -334,7 +333,7 @@ export function App() {
 		const move = async () => {
 			setColumn(thread.id, column);
 			setCursor({ col, row: columnThreads(column).length });
-			await syncWorktree({ ...thread, column });
+			await syncWorktree({ ...thread, column }, thread.column);
 			if (restart) await restartClaude({ ...thread, column }, column === 'planned' ? 'plan' : 'auto');
 		};
 		const project = projectByName(thread.project);
@@ -382,11 +381,13 @@ export function App() {
 		return change.path;
 	};
 
-	/** Keep the worktree in step with the column (see threads.ts). */
-	const syncWorktree = async (thread: Thread) => {
+	/** Keep the worktree in step with the column (see threads.ts), then run the project's hook for leaving `from`, if any. */
+	const syncWorktree = async (thread: Thread, from?: Column) => {
 		const project = projectByName(thread.project);
 		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
-		applyChange(thread, await syncWorktreeFor(project, thread));
+		const change = await syncWorktreeFor(project, thread);
+		const ran = from && (await runColumnHook(project, from, { ...thread, ...change.patch }));
+		applyChange(thread, { ...change, message: [change.message, ran].filter(Boolean).join('; ') || undefined });
 		await refreshWindows();
 	};
 
@@ -414,9 +415,7 @@ export function App() {
 
 	/** Run the project's hook; returns `done` with how it went. A hook that can't start doesn't undo the move. */
 	const hook = async (project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string): Promise<string> => {
-		const ran = await runHook(project, event, thread, cwd).catch(
-			err => `✗ ${HOOK_LABELS[event]} hook didn't start: ${err instanceof Error ? err.message : String(err)}`,
-		);
+		const ran = await tryHook(project, event, thread, cwd);
 		return ran ? `${done}; ${ran}` : done;
 	};
 
@@ -572,7 +571,9 @@ export function App() {
 		const patch = { pr, branch: thread.branch, base: thread.base };
 		setColumn(thread.id, 'pr', patch);
 		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
-		setMessage(`${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`);
+		const opened = `${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`;
+		const ran = await runColumnHook(project, thread.column, { ...thread, ...patch, column: 'pr' });
+		setMessage(ran ? `${opened}; ${ran}` : opened);
 	};
 
 	// Move threads whose PR has merged to Done (which also cleans up the worktree).
@@ -972,8 +973,8 @@ export function App() {
 				ask(`Archive #${selected.id}?`, () =>
 					run(async () => {
 						updateThread(selected.id, { column: 'archived' });
-						await syncWorktree({ ...selected, column: 'archived' });
 						setMessage(`Archived #${selected.id}`);
+						await syncWorktree({ ...selected, column: 'archived' }, selected.column);
 					}, 'archiving'),
 				);
 			}, 'checking for uncommitted changes');
@@ -1132,7 +1133,10 @@ export function App() {
 	const card = (t: Thread, isSelected: boolean) => {
 		const oneLine = cardHeight(t.column) === 1;
 		const color = t.color ?? projectByName(t.project)?.color;
-		const [badge, badgeColor] = liveWindows.has(threadWindowName(t.id))
+		const live = liveWindows.has(threadWindowName(t.id));
+		// Changes aren't ready to review until claude stops working on them.
+		const working = live && statuses[t.id] === 'working';
+		const [badge, badgeColor] = live
 			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
 			: resumeId(t)
 				? ['↻', stalled(t) ? 'red' : 'gray']
@@ -1149,7 +1153,7 @@ export function App() {
 					<Text color={badgeColor}>{badge} </Text>
 					<Text bold>#{t.id} </Text>
 					<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
-					{unreviewed.has(t.id) ? (
+					{unreviewed.has(t.id) && !working ? (
 						<Text color="magenta" bold>
 							{' '}±
 						</Text>

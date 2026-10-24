@@ -145,14 +145,22 @@ to try its change. If the thread's claude is working, the move waits until its t
 ### Project hooks
 
 Each project can set hooks in the projects screen (`P`). These are shell commands that run when
-something happens on the board. So far there are two, enter local and leave local. They run in
-the project's checkout once the branch is checked out or the checkout is back on main (for an
-imported thread, enter runs in the thread's own directory). For example, `npm install && npm run
-dev` as the enter local hook gives you a running dev server for the thread.
+something happens on the board. There are four:
 
-They run in a background tmux window named `oo-hook-<project>`. The window becomes a shell when
-the command exits, so its output stays readable. The next hook replaces it and stops anything
-still running (e.g. a dev server). `OO_THREAD_ID`, `OO_PROJECT` and `OO_BRANCH` are set for them.
+- **Enter local** and **leave local** run in the project's checkout once the branch is checked out
+  or the checkout is back on main (for an imported thread, enter runs in the thread's own
+  directory). For example, `npm install && npm run dev` as the enter local hook gives you a
+  running dev server for the thread.
+- **Enter polish** and **leave polish** run when a thread moves into or out of Polish, whether
+  with the board's keys, by opening its PR, or with `oo thread move`. They run in the thread's
+  worktree, or the project's checkout if the move removed it (Done, archived). For example, `npm
+  run lint -- --fix && npm test` as the enter polish hook tidies up and checks the thread's work.
+
+They run in a background tmux window: `oo-hook-<project>` for the local hooks and
+`oo-hook-<project>-polish` for the polish ones. The window becomes a shell when the command
+exits, so its output stays readable. The next hook of the same kind replaces it and stops
+anything still running (e.g. a dev server), so a polish hook leaves a local hook's dev server
+alone. `OO_THREAD_ID`, `OO_PROJECT` and `OO_BRANCH` are set for them.
 
 ### PRs and Done
 

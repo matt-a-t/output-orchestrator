@@ -2,6 +2,7 @@
 import { relative, resolve, isAbsolute } from 'node:path';
 import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
 import { prState } from './github.js';
+import { runColumnHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
 import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
@@ -177,6 +178,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	store.update(s => setColumn(s, thread.id, request.column));
 	const { patch, message } = await syncWorktree(project, moved);
 	if (patch) store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch } : t)) }));
-	const messages = [moveWarning(state, thread, request.column), message, `Moved #${thread.id} to ${COLUMN_LABELS[request.column]}`];
+	const ran = await runColumnHook(project, thread.column, { ...moved, ...patch });
+	const messages = [moveWarning(state, thread, request.column), message, `Moved #${thread.id} to ${COLUMN_LABELS[request.column]}`, ran];
 	return done(messages.filter(Boolean).join('\n'));
 }
