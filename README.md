@@ -107,6 +107,18 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
 - `d` shows the diff since the last commit (the current **step**), and `D` the whole thread
   against the branch it came from. Both go through `delta` in `less`, under a `git diff --stat` of
   the changed files and how much each changed, and `n` / `N` jump between files and hunks.
+  delta's styles come from your git config. With its defaults, file headers and hunk headers
+  look much alike, so this `~/.gitconfig` section is recommended: it makes file headers a solid
+  bar and hunk headers dim. Leave `navigate`, `file-modified-label` and `hunk-label` at their
+  defaults, because `n` / `N` look for them.
+
+  ```ini
+  [delta]
+  	file-style = bold black "#87afff"
+  	file-decoration-style = "#87afff" ol ul
+  	hunk-header-style = line-number syntax dim
+  	hunk-header-decoration-style = none
+  ```
 - In a step diff, `a` approves the step (after a y/n confirm). Approving commits everything with
   a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
   and **for claude** (comments to send along). Tab or ↑/↓ switches fields, ⏎ commits from either,
