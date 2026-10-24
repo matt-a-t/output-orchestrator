@@ -731,7 +731,6 @@ export function App() {
 		}, label);
 
 	const newThread = () => {
-		if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
 		// One project means nothing to choose.
 		if (state.projects.length === 1) return newThreadIn(state.projects[0]!);
 		const current = filter ?? selected?.project;
@@ -984,7 +983,6 @@ export function App() {
 
 	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
 	const startImport = () => {
-		if (state.projects.length === 0) return setMessage('No projects yet — run: oo project add <path>');
 		const filtered = filter ? projectByName(filter) : state.projects.length === 1 ? state.projects[0] : undefined;
 		if (filtered) return openPicker(filtered);
 		setPrompt({ step: 'project', index: 0, then: 'import' });
