@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { COMMIT_FORM, type CommitForm } from './commitForm.js';
 import { EDITOR, parsePr, prText } from './editor.js';
@@ -23,14 +23,16 @@ import {
 	stageAll,
 	worktreePath,
 } from './git.js';
-import { createPr, draftPr, findPr, mergeLabel, mergePr, openPrInBrowser, prStatus, reviewRequests, submitReview, withTicket, type PrStatus, type ReviewRequest } from './github.js';
-import { editText, loop } from './input.js';
-import { KEY_SECTIONS } from './keys.js';
+import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, reviewRequests, submitReview, withTicket, type PrStatus, type ReviewRequest } from './github.js';
+import { loop } from './input.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadForm, type NewThreadSubmit } from './newThreadForm.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from './requests.js';
 import { diffPaneCommand, openChanges, reviewDiff, showDiff, showPr, writeCommit } from './review.js';
 import { ThreadView } from './thread.js';
+import { Card, cardHeight, cardLines, LOCAL_BORDER_LINES } from './board/card.js';
+import { Footer } from './board/footer.js';
+import { KeysView } from './board/keysView.js';
 import { approvedPrompt } from './threadCommand.js';
 import {
 	COLORS,
@@ -38,7 +40,6 @@ import {
 	COLUMNS,
 	DEFAULT_WAKE_PROMPT,
 	STATE_FILE,
-	TODO_MARKS,
 	loadState,
 	saveState,
 	type Column,
@@ -46,8 +47,6 @@ import {
 	type ProjectHook,
 	type State,
 	type Thread,
-	type Todo,
-	type TodoStatus,
 } from './state.js';
 import { fetchTicket, recentTickets, ticketUrl, type Ticket } from './tickets.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
@@ -68,9 +67,6 @@ import {
 	approvedTodo,
 	setTodoStatus,
 	threadDir,
-	todoProgress,
-	todosDone,
-	todoWindow,
 	type Store,
 	type WorktreeChange,
 } from './threads.js';
@@ -90,50 +86,23 @@ type PrSteps = {
 	close: () => Promise<void>;
 };
 
-const BADGES: Partial<Record<Status, [string, string]>> = {
-	working: ['⚙', 'yellow'],
-	waiting: ['⏸', 'red'],
-	stopped: ['✓', 'green'],
-};
-
 /** Claude session ID to resume the thread with, if its transcript still exists. */
 function resumeId(thread: Thread): string | undefined {
 	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
 }
 
-const LEGEND: [string, string | undefined, string][] = [
-	['⚙', 'yellow', 'working'],
-	['⏸', 'red', 'needs you'],
-	['✓', 'green', 'stopped'],
-	['○', 'gray', 'open, no activity yet'],
-	['↻', 'gray', 'closed, resumable'],
-	['↻', 'red', 'closed mid-work, w wakes it'],
-	['±', 'magenta', 'changes to review'],
-	['⚡', 'red', 'PR has conflicts'],
-];
-
 /** Picking the project to import from (`i` with no filter). */
 type Prompt = { step: 'project'; index: number };
 const NEW_THREAD_LABEL_WIDTH = Math.max(...Object.values(NEW_THREAD_LABELS).map(l => l.length)) + 2;
 
-// The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
+// The columns and the import list start below the title bar, a header and a rule.
 const LIST_TOP = 3;
 
 /** A PR asking you for a review, and the project it's in. */
 type Review = ReviewRequest & { project: Project };
 
 const REVIEW_DONE: Record<string, string> = { approve: 'Approved', 'request-changes': 'Requested changes on', comment: 'Commented on' };
-const CARD_HEIGHT = 2;
-const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
-// A thread in Local stays in its column, its card outlined in yellow, which takes a line above and below.
-const LOCAL_BORDER_LINES = 2;
-const cardLines = (t: Thread) => cardHeight(t.column) + (t.local ? LOCAL_BORDER_LINES : 0);
 const DOUBLE_CLICK_MS = 400;
-// The highlighted thread's todos shown below the board; the rest are summed up as "N more".
-const MAX_TODO_LINES = 5;
-const TODO_COLORS: Record<TodoStatus, string> = { pending: 'gray', active: 'yellow', review: 'magenta', done: 'green' };
-
-const HELP = 'h/l j/k move  ⏎ open  n new  d diff  s/M-d shell/diff beside claude  q quit';
 
 export function App() {
 	const { exit } = useApp();
@@ -367,7 +336,6 @@ export function App() {
 	const colThreads = columnThreads(COLUMNS[cursor.col]!);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
 	const selected: Thread | undefined = colThreads[row];
-	const selectedMerge = selected && merge[selected.id] && mergeLabel(merge[selected.id]!);
 
 	const updateThread = (id: string, patch: Partial<Thread>) =>
 		setState(s => ({
@@ -1409,60 +1377,6 @@ export function App() {
 		return () => void mouse.off('press', listener);
 	}, []);
 
-	/** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
-	const card = (t: Thread, isSelected: boolean) => {
-		const oneLine = cardHeight(t.column) === 1;
-		const color = t.color ?? projectByName(t.project)?.color;
-		const live = liveWindows.has(threadWindowName(t.id));
-		// Changes aren't ready to review until claude stops working on them.
-		const working = live && statuses[t.id] === 'working';
-		const [badge, badgeColor] = live
-			? (BADGES[statuses[t.id]!] ?? ['○', 'gray'])
-			: resumeId(t)
-				? ['↻', stalled(t) ? 'red' : 'gray']
-				: [' ', undefined];
-		const title = (
-			<>
-				{t.ticket ? <Text color="blue">{t.ticket.key} </Text> : null}
-				{t.title}
-			</>
-		);
-		return (
-			<Box key={t.id} flexDirection="column" {...(t.local ? { borderStyle: 'round', borderColor: 'yellow' } : {})}>
-				<Text wrap="truncate" inverse={isSelected}>
-					<Text color={badgeColor}>{badge} </Text>
-					<Text bold>#{t.id} </Text>
-					<Text color={color}>{projectByName(t.project)?.abbrev || t.project}</Text>
-					{unreviewed.has(t.id) && !working ? (
-						<Text color="magenta" bold>
-							{' '}±
-						</Text>
-					) : null}
-					{merge[t.id]?.mergeable === 'CONFLICTING' ? (
-						<Text color="red" bold>
-							{' '}⚡
-						</Text>
-					) : null}
-					{/* Every step approved: ready to move on to Polish and a PR. */}
-					{t.column === 'active' && todosDone(t.todos) ? (
-						<Text color="green" bold>
-							{' '}✓ polish
-						</Text>
-					) : null}
-					{/* Finished threads get one line each so more of them fit. */}
-					{oneLine ? ' ' : null}
-					{oneLine ? title : null}
-				</Text>
-				{oneLine ? null : (
-					<Text wrap="truncate" inverse={isSelected}>
-						{'  '}
-						{title}
-					</Text>
-				)}
-			</Box>
-		);
-	};
-
 	/** The `n` form: a field per line, with the recent tickets under the ticket field while it's active. */
 	const newThreadBox = (form: NewThreadForm) => {
 		const project = projectByName(form.project);
@@ -1519,42 +1433,6 @@ export function App() {
 					);
 				})}
 				<Text dimColor>tab or ↑/↓ field  ←/→ project / ticket  ⏎ create  esc cancel  ctrl-u clear  ctrl-w delete word</Text>
-			</Box>
-		);
-	};
-
-	/** The highlighted thread's progress through claude's task list, with the current step in view. */
-	const todoList = (todos: Todo[]) => {
-		const { start, end } = todoWindow(todos, MAX_TODO_LINES);
-		// Step numbers are right-aligned so the subjects line up past step 9.
-		const width = String(todos.length).length;
-		const indent = ' '.repeat(width + 4);
-		const more = (n: number, arrow: string) =>
-			n > 0 ? (
-				<Text dimColor>
-					{indent}
-					{arrow} {n} more
-				</Text>
-			) : null;
-		return (
-			<Box flexDirection="column">
-				<Text>
-					<Text bold>todo</Text> {todoProgress(todos)}
-				</Text>
-				{more(start, '↑')}
-				{todos.slice(start, end).map((todo, i) => (
-					<Text key={start + i} wrap="truncate">
-						{'  '}
-						<Text color={TODO_COLORS[todo.status]} dimColor={todo.status === 'done'}>
-							{String(start + i + 1).padStart(width)}.
-						</Text>{' '}
-						<Text color={TODO_COLORS[todo.status]}>{TODO_MARKS[todo.status]}</Text>{' '}
-						<Text bold={todo.status === 'active' || todo.status === 'review'} dimColor={todo.status === 'done'}>
-							{todo.subject}
-						</Text>
-					</Text>
-				))}
-				{more(todos.length - end, '↓')}
 			</Box>
 		);
 	};
@@ -1647,32 +1525,36 @@ export function App() {
 								</Text>
 								<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
 								{start > 0 ? <Text dimColor>  ↑ {start} more</Text> : null}
-								{threads.slice(start, end).map((t, i) => card(t, c === cursor.col && start + i === row))}
+								{threads.slice(start, end).map((t, i) => (
+									<Card
+										key={t.id}
+										thread={t}
+										selected={c === cursor.col && start + i === row}
+										project={projectByName(t.project)}
+										live={liveWindows.has(threadWindowName(t.id))}
+										status={statuses[t.id]}
+										resumable={!!resumeId(t)}
+										stalled={stalled(t)}
+										unreviewed={unreviewed.has(t.id)}
+										merge={merge[t.id]}
+									/>
+								))}
 								{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
 							</Box>
 						);
 					})}
 				</Box>
 			)}
-			<Box marginTop={1} flexDirection="column" display={showProjects || showKeys || editing ? 'none' : 'flex'}>
-				{/* About the highlighted card, so not while the import or review list covers the board. */}
-				{selected?.plan && !picker && !reviews ? (
-					<Text dimColor wrap="truncate-end">
-						{selected.plan.split('\n').slice(0, 3).join(' · ')}
-					</Text>
-				) : null}
-				{selected?.todos?.length && !picker && !reviews ? todoList(selected.todos) : null}
-				{selected?.ticket?.url && !picker && !reviews ? (
-					<Text dimColor>
-						{selected.ticket.key} {selected.ticket.url}
-					</Text>
-				) : null}
-				{selected?.pr && !picker && !reviews ? (
-					<Text dimColor>
-						PR #{selected.pr.number} {selected.pr.url} (b opens it)
-						{selectedMerge ? <Text color={selectedMerge[1]}> — {selectedMerge[0]}</Text> : null}
-					</Text>
-				) : null}
+			<Footer
+				// About the highlighted card, so not while the import or review list covers the board.
+				thread={picker || reviews ? undefined : selected}
+				merge={selected && merge[selected.id]}
+				busy={busy}
+				message={message}
+				confirming={!!confirm}
+				width={width}
+				hidden={showProjects || showKeys || !!editing}
+			>
 				{prompt ? (
 					<Box flexDirection="column">
 						<Text bold>Import — project? (j/k move, ⏎ choose, esc cancel)</Text>
@@ -1686,60 +1568,7 @@ export function App() {
 					</Box>
 				) : null}
 				{form ? newThreadBox(form) : null}
-				{busy ? (
-					<Text color="cyan">{busy}…</Text>
-				) : (
-					<Text color={message.startsWith('✗') ? 'red' : confirm || message.startsWith('⚠') ? 'yellow' : 'green'}>{message}</Text>
-				)}
-				<Text>
-					{LEGEND.map(([badge, color, label]) => (
-						<Text key={label}>
-							<Text color={color}>{badge}</Text>
-							<Text dimColor> {label}   </Text>
-						</Text>
-					))}
-				</Text>
-				{/* The way into every other key, kept in the corner so it's always in the same place. */}
-				<Box justifyContent="space-between" width={width}>
-					<Text dimColor wrap="truncate-end">
-						{HELP}
-					</Text>
-					<Box flexShrink={0} marginLeft={2}>
-						<Text dimColor>? all keys</Text>
-					</Box>
-				</Box>
-			</Box>
-		</Box>
-	);
-}
-
-/** The `?` screen: every key, a section per box, as many side by side as fit. */
-function KeysView() {
-	return (
-		<Box flexGrow={1} overflow="hidden" flexDirection="column">
-			<Text bold>
-				Keys <Text dimColor>(? / q / esc close · also in KEYS.md)</Text>
-			</Text>
-			<Box flexWrap="wrap">
-				{KEY_SECTIONS.map(section => {
-					const keyWidth = Math.max(...section.keys.map(([k]) => k.length)) + 2;
-					return (
-						<Box key={section.title} flexDirection="column" width={48} marginTop={1} marginRight={2}>
-							<Text bold color="cyan">
-								{section.title}
-							</Text>
-							{section.keys.map(([k, what]) => (
-								<Box key={k}>
-									<Box width={keyWidth} flexShrink={0}>
-										<Text>{k}</Text>
-									</Box>
-									<Text dimColor>{what}</Text>
-								</Box>
-							))}
-						</Box>
-					);
-				})}
-			</Box>
+			</Footer>
 		</Box>
 	);
 }
