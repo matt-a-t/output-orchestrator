@@ -21,6 +21,8 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['⚡', 'red', 'PR has conflicts'],
 ];
 
+// The columns and the import list start below the title bar, a header and a rule.
+export const LIST_TOP = 3;
 // Each card is two lines, or one in Done.
 const CARD_HEIGHT = 2;
 export const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);

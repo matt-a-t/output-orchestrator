@@ -1,39 +1,28 @@
-import { existsSync } from 'node:fs';
 import { useEffect, useRef, useState } from 'react';
-import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
-import { openPrInBrowser, reviewRequests, type PrStatus, type ReviewRequest } from './github.js';
-import { runNewThreadHook } from './hooks.js';
+import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement } from 'ink';
+import type { PrStatus } from './github.js';
 import { loop } from './input.js';
-import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadForm, type NewThreadSubmit } from './newThreadForm.js';
 import { ProjectsView } from './projects.js';
 import { ThreadView } from './thread.js';
 import type { Board } from './board/board.js';
-import { Card, cardHeight, cardLines, LOCAL_BORDER_LINES } from './board/card.js';
+import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES } from './board/card.js';
 import { runBinding } from './board/bindings.js';
-import { launchClaude, openThread, resumeId, stalled } from './board/claude.js';
+import { openThread, resumeId, stalled } from './board/claude.js';
+import { useDoubleClick } from './board/doubleClick.js';
 import { Footer } from './board/footer.js';
+import { ImportList, ImportProject } from './board/importPicker.js';
 import { KeysView } from './board/keysView.js';
 import { usePendingLocal } from './board/local.js';
-import { checkPr, viewPr } from './board/pr.js';
+import { NewThread, useRecentTickets } from './board/newThread.js';
+import { fetchReviews, ReviewList, type Review } from './board/reviewList.js';
+import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
 import { COLORS, COLUMN_LABELS, COLUMNS, type Column, type Project, type Thread } from './state.js';
-import { fetchTicket, recentTickets, ticketUrl, type Ticket } from './tickets.js';
-import { listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
+import { listOutsideThreads, type OutsideThread } from './transcripts.js';
 import { mouse, type MouseEvent } from './mouse.js';
-import { addThread, createWorktree as worktreeFor, setColumn as moveTo } from './threads.js';
+import { setColumn as moveTo } from './threads.js';
 import { threadWindowName } from './tmux.js';
-
-/** Picking the project to import from (`i` with no filter). */
-type Prompt = { step: 'project'; index: number };
-const NEW_THREAD_LABEL_WIDTH = Math.max(...Object.values(NEW_THREAD_LABELS).map(l => l.length)) + 2;
-
-// The columns and the import list start below the title bar, a header and a rule.
-const LIST_TOP = 3;
-
-/** A PR asking you for a review, and the project it's in. */
-type Review = ReviewRequest & { project: Project };
-const DOUBLE_CLICK_MS = 400;
 
 export function App() {
 	const { exit } = useApp();
@@ -45,11 +34,11 @@ export function App() {
 	filterRef.current = filter;
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
-	const [prompt, setPrompt] = useState<Prompt | null>(null);
-	// The new-thread form (n), over the bottom of the board.
-	const [form, setForm] = useState<NewThreadForm | null>(null);
-	// The form's recent tickets, for the project they're from; a string is why they couldn't be listed.
-	const [recent, setRecent] = useState<{ project: string; tickets: Ticket[] | string | null } | null>(null);
+	// Asking which project to import from (i with no filter), over the bottom of the board.
+	const [choosingImport, setChoosingImport] = useState(false);
+	// The new-thread form (n), over the bottom of the board, opened on this project.
+	const [newThreadIn, setNewThreadIn] = useState<Project | null>(null);
+	const recent = useRecentTickets();
 	const [showProjects, setShowProjects] = useState(false);
 	const [showKeys, setShowKeys] = useState(false);
 	// The thread form (e), replacing the board while it's open.
@@ -62,9 +51,9 @@ export function App() {
 	// The merge status of open PRs, from the PR poll; not saved, since the poll refills it on startup.
 	const [merge, setMerge] = useState<Record<string, PrStatus>>({});
 	// The import list (i), replacing the columns while it's open.
-	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[]; row: number } | null>(null);
+	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[] } | null>(null);
 	// The review requests list (R), replacing the columns while it's open.
-	const [reviews, setReviews] = useState<{ requests: Review[]; row: number } | null>(null);
+	const [reviews, setReviews] = useState<Review[] | null>(null);
 	// An action waiting on y (any other key cancels); its question is shown as the message.
 	const [confirm, setConfirm] = useState<(() => void) | null>(null);
 	const ask = (question: string, action: () => void) => {
@@ -152,139 +141,33 @@ export function App() {
 	usePendingLocal(board, statuses);
 	usePrPoll(stateRef, setMerge, thread => checkPr(board, thread));
 
-	/**
-	 * The open PRs asking you for a review, across projects (those with a repo), most recently
-	 * updated first. Projects gh can't ask about are named in the message.
-	 */
-	const fetchReviews = async (): Promise<Review[]> => {
-		const projects = state.projects.filter(p => p.worktrees && existsSync(p.path));
-		const failed: string[] = [];
-		const found = await Promise.all(
-			projects.map(project =>
-				reviewRequests(project.path).then(
-					requests => requests.map(r => ({ ...r, project })),
-					() => (failed.push(project.name), []),
-				),
-			),
-		);
-		if (failed.length) setMessage(`⚠ gh couldn't list PRs in ${failed.join(', ')}`);
-		return found.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-	};
-
-	const openReviews = () =>
-		run(async () => {
-			const requests = await fetchReviews();
-			if (requests.length === 0) return setMessage(m => m || 'No PRs waiting for your review');
-			setReviews({ requests, row: 0 });
-		}, 'looking for review requests');
-
-	/** View a review request's PR, then refresh the list, since one you've reviewed drops off it. */
-	const viewReview = (review: Review) =>
-		run(async () => {
-			if (!(await viewPr(board, review.project.path, review.number))) return;
-			const requests = await fetchReviews();
-			setReviews(r => r && { requests, row: Math.min(r.row, Math.max(0, requests.length - 1)) });
-		}, `loading PR #${review.number}`);
-
+	/** Open the new-thread form on the filtered or highlighted project. */
 	const newThread = () => {
 		const project = projectByName(filter ?? selected?.project ?? '') ?? state.projects[0]!;
-		setForm(newThreadForm(project.name));
-		loadRecent(project);
-	};
-
-	/** List the project's recent tickets for the form, if it has a tracker. */
-	const loadRecent = (project: Project) => {
-		if (project.tracker === 'none') return setRecent(null);
-		if (recent?.project === project.name && Array.isArray(recent.tickets)) return;
-		setRecent({ project: project.name, tickets: null });
-		recentTickets(project).then(
-			tickets => setRecent(r => (r?.project === project.name ? { ...r, tickets } : r)),
-			(err: unknown) => setRecent(r => (r?.project === project.name ? { ...r, tickets: err instanceof Error ? err.message : String(err) } : r)),
-		);
-	};
-
-	const recentFor = (project: string) => (recent?.project === project && Array.isArray(recent.tickets) ? recent.tickets : []);
-
-	const formInput = (form: NewThreadForm, input: string, key: Key) => {
-		const next = newThreadKey(form, input, key, { projects: state.projects, tickets: recentFor(form.project) });
-		if ('problem' in next) return setMessage(`✗ ${next.problem}`);
-		if ('done' in next) {
-			setForm(null);
-			return next.done ? submitNewThread(next.done) : setMessage('Cancelled');
-		}
-		if (next.project !== form.project) loadRecent(projectByName(next.project)!);
-		setForm(next);
-	};
-
-	/**
-	 * Create the thread from the form, titled and planned from its ticket when it has one, then run the
-	 * project's new thread hook and start its claude in the background on the initial prompt, if there
-	 * is one. With a prompt, the worktree comes first so the hook runs in it.
-	 */
-	const submitNewThread = ({ project: name, ticketKey, ticket: known, title, prompt }: NewThreadSubmit) =>
-		run(async () => {
-			const project = projectByName(name)!;
-			const thread = await threadFromForm(project, title, ticketKey, known);
-			if (!thread) return;
-			const change = prompt && !thread.cwd ? await worktreeFor(project, thread) : undefined;
-			if (change?.patch) updateThread(thread.id, change.patch);
-			const created = { ...thread, ...change?.patch };
-			const ran = await runNewThreadHook(project, created, prompt);
-			if (prompt) await launchClaude(board, created, created.cwd ?? change!.path, { background: true, prompt });
-			const done = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`;
-			if (ran || prompt) setMessage([done, ran, prompt && 'started claude on your prompt'].filter(Boolean).join(' · '));
-		}, ticketKey ? `reading ${ticketKey}` : 'creating thread');
-
-	const threadFromForm = async (project: Project, title: string, ticketKey?: string, known?: Ticket): Promise<Thread | undefined> => {
-		if (!ticketKey) return createThread(project.name, title);
-		const ticket = await fetchTicket(project, ticketKey).catch((err: unknown) => {
-			setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
-			return known;
-		});
-		if (ticket) return createThread(project.name, title || ticket.summary, { ticket: { key: ticketKey, url: ticket.url }, plan: ticket.description });
-		// Without the ticket there's nothing to title the thread after.
-		if (!title) return void setMessage(`✗ Couldn't read ${ticketKey}, so it needs a title — press n to try again`);
-		const url = await ticketUrl(project, ticketKey).catch(() => '');
-		return createThread(project.name, title, { ticket: { key: ticketKey, url } });
-	};
-
-	const createThread = (project: string, title: string, fields: Partial<Pick<Thread, 'ticket' | 'plan'>> = {}) => {
-		const { thread } = addThread(stateRef.current, { project, title, ...fields });
-		setState(s => ({ ...s, threads: [...s.threads, thread] }));
-		setCursor({ col: 0, row: stateRef.current.threads.filter(t => t.column === 'planned' && (!filter || t.project === filter)).length });
-		setMessage(`Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}${thread.plan ? '' : ' — e to add a plan'}`);
-		return thread;
-	};
-
-	const promptInput = (prompt: Prompt, input: string, key: Key) => {
-		if (key.escape) {
-			setPrompt(null);
-			return setMessage('Cancelled');
-		}
-		const count = state.projects.length;
-		if (input === 'j' || key.downArrow) return setPrompt({ ...prompt, index: (prompt.index + 1) % count });
-		if (input === 'k' || key.upArrow) return setPrompt({ ...prompt, index: (prompt.index + count - 1) % count });
-		if (key.return) {
-			setPrompt(null);
-			return openPicker(state.projects[prompt.index]!);
-		}
+		setNewThreadIn(project);
+		recent.loadRecent(project);
 	};
 
 	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
 	const startImport = () => {
 		const filtered = filter ? projectByName(filter) : state.projects.length === 1 ? state.projects[0] : undefined;
 		if (filtered) return openPicker(filtered);
-		setPrompt({ step: 'project', index: 0 });
+		setChoosingImport(true);
 	};
 
 	const openPicker = (project: Project) =>
 		run(async () => {
 			const threads = await listOutsideThreads(project.path);
 			if (threads.length === 0) return setMessage(`No claude threads to import in ${project.path}`);
-			setPicker({ project: project.name, threads, row: 0 });
+			setPicker({ project: project.name, threads });
 		}, 'looking for threads');
 
-	const linkedThread = (outside: OutsideThread) => state.threads.find(t => t.sessionId === outside.id);
+	const openReviews = () =>
+		run(async () => {
+			const requests = await fetchReviews(board);
+			if (requests.length === 0) return setMessage(m => m || 'No PRs waiting for your review');
+			setReviews(requests);
+		}, 'looking for review requests');
 
 	/** Where the thread is shown with `f` as the filter: its column, and its row there. */
 	const positionOf = (thread: Thread, f: string | null) => {
@@ -301,32 +184,9 @@ export function App() {
 		return true;
 	};
 
-	const importThread = (project: string, outside: OutsideThread) => {
-		setPicker(null);
-		const linked = linkedThread(outside);
-		if (linked) {
-			if (!showThread(linked)) setMessage(`That thread is already imported as archived #${linked.id}`);
-			return;
-		}
-		const { thread } = addThread(state, {
-			title: outside.title,
-			plan: outside.title === outside.firstPrompt ? '' : outside.firstPrompt,
-			project,
-			sessionId: outside.id,
-			transcriptPath: outside.transcriptPath,
-			cwd: outside.cwd,
-		});
-		setState(s => ({ ...s, threads: [...s.threads, thread] }));
-		setCursor({ col: 0, row: columnThreads('planned').length });
-		setMessage(
-			recentlyActive(outside.transcriptPath)
-				? `⚠ Imported #${thread.id}, but it looks active elsewhere — close it there before ⏎`
-				: `Imported #${thread.id} — ⏎ resumes it`,
-		);
-	};
-
 	useInput((input, key) => {
-		if (busy || showProjects || editing) return;
+		// The form, the import and review lists and the import prompt take their own keys.
+		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews) return;
 		setMessage('');
 		if (showKeys) {
 			if (input === '?' || input === 'q' || key.escape) setShowKeys(false);
@@ -335,33 +195,6 @@ export function App() {
 		if (confirm) {
 			setConfirm(null);
 			return input === 'y' ? confirm() : setMessage('Cancelled');
-		}
-		if (form) return formInput(form, input, key);
-		if (prompt) return promptInput(prompt, input, key);
-		if (picker) {
-			const count = picker.threads.length;
-			if (input === 'q' || input === 'i' || key.escape) return setPicker(null);
-			if (input === 'j' || key.downArrow) return setPicker({ ...picker, row: loop(picker.row, 1, count) });
-			if (input === 'k' || key.upArrow) return setPicker({ ...picker, row: loop(picker.row, -1, count) });
-			if (key.return) return importThread(picker.project, picker.threads[picker.row]!);
-			return;
-		}
-		if (reviews) {
-			const count = reviews.requests.length;
-			const review = reviews.requests[reviews.row];
-			if (input === 'q' || input === 'R' || key.escape) return setReviews(null);
-			if (input === 'j' || key.downArrow) return setReviews({ ...reviews, row: loop(reviews.row, 1, count) });
-			if (input === 'k' || key.upArrow) return setReviews({ ...reviews, row: loop(reviews.row, -1, count) });
-			if (input === 'r') {
-				return run(async () => {
-					const requests = await fetchReviews();
-					setReviews({ requests, row: Math.min(reviews.row, Math.max(0, requests.length - 1)) });
-				}, 'looking for review requests');
-			}
-			if (!review) return;
-			if (key.return || input === 'v') return viewReview(review);
-			if (input === 'b') return run(() => openPrInBrowser(review), 'opening PR in the browser');
-			return;
 		}
 		if (input === 'q') return ask('Quit?', exit);
 		if (key.escape && filter) {
@@ -423,78 +256,13 @@ export function App() {
 
 	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
 
-	// The import list scrolls to keep the selected entry in view; it shows what fits in the space
-	// measured after each render, starting at entry `pickerTop`. The review list shares the measuring.
-	const pickerList = useRef<DOMElement>(null);
-	const [pickerLines, setPickerLines] = useState(0);
-	useEffect(() => {
-		if (!pickerList.current) return;
-		const lines = measureElement(pickerList.current).height;
-		if (lines !== pickerLines) setPickerLines(lines);
-	});
-	const pickerTop = useRef(0);
-	const entryHeight = (t: OutsideThread) => (t.title === t.firstPrompt ? 1 : 2);
-	const pickerShown: OutsideThread[] = [];
-	if (picker) {
-		const { threads, row: selectedRow } = picker;
-		const linesFrom = (from: number, to: number) => threads.slice(from, to + 1).reduce((n, t) => n + entryHeight(t), 0);
-		pickerTop.current = Math.min(pickerTop.current, selectedRow);
-		while (pickerTop.current < selectedRow && linesFrom(pickerTop.current, selectedRow) > pickerLines) pickerTop.current++;
-		let lines = 0;
-		for (const t of threads.slice(pickerTop.current)) {
-			lines += entryHeight(t);
-			if (lines > pickerLines) break;
-			pickerShown.push(t);
-		}
-	} else pickerTop.current = 0;
-	// Review requests are a line each.
-	const reviewsTop = useRef(0);
-	if (reviews) {
-		reviewsTop.current = Math.min(reviewsTop.current, reviews.row);
-		reviewsTop.current = Math.max(reviewsTop.current, reviews.row - Math.max(1, pickerLines) + 1);
-	} else reviewsTop.current = 0;
-
-	const lastClick = useRef<{ target: string; at: number } | null>(null);
-	/** Whether this click is on the same thing as the last, soon enough to make a double-click. */
-	const isDoubleClick = (target: string) => {
-		const now = Date.now();
-		const double = lastClick.current?.target === target && now - lastClick.current.at < DOUBLE_CLICK_MS;
-		lastClick.current = double ? null : { target, at: now };
-		return double;
-	};
-
-	/** The import list's entry at screen row `y`; an entry is one line, or two when it shows its first prompt. */
-	const pickerRowAt = (y: number) => {
-		let top = LIST_TOP;
-		for (const [r, t] of pickerShown.entries()) {
-			top += entryHeight(t);
-			if (y < top) return pickerTop.current + r;
-		}
-	};
+	const isDoubleClick = useDoubleClick();
 
 	// The layout is a fixed grid, so a press's cell says what it's on. The wheel stops at the ends rather than looping.
 	const onMouse = ({ button, x, y }: MouseEvent) => {
-		if (busy || showProjects || showKeys || editing || form || prompt || confirm) return;
+		if (busy || showProjects || showKeys || editing || newThreadIn || choosingImport || picker || reviews || confirm) return;
 		setMessage('');
 		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
-		if (picker) {
-			const last = picker.threads.length - 1;
-			if (wheel) return setPicker(p => p && { ...p, row: Math.max(0, Math.min(last, p.row + wheel)) });
-			const r = y >= LIST_TOP ? pickerRowAt(y) : undefined;
-			if (button !== 'left' || r === undefined) return;
-			setPicker(p => p && { ...p, row: r });
-			if (isDoubleClick(picker.threads[r]!.id)) importThread(picker.project, picker.threads[r]!);
-			return;
-		}
-		if (reviews) {
-			const last = reviews.requests.length - 1;
-			if (wheel) return setReviews(r => r && { ...r, row: Math.max(0, Math.min(last, r.row + wheel)) });
-			const r = reviewsTop.current + y - LIST_TOP;
-			if (button !== 'left' || y < LIST_TOP || r > last || r >= reviewsTop.current + pickerLines) return;
-			setReviews(rs => rs && { ...rs, row: r });
-			if (isDoubleClick(reviews.requests[r]!.url)) viewReview(reviews.requests[r]!);
-			return;
-		}
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(colThreads.length - 1, row + wheel)) });
 		const col = Math.floor(x / colWidth);
 		if (button !== 'left' || y < 1 || col >= COLUMNS.length) return;
@@ -522,66 +290,6 @@ export function App() {
 		return () => void mouse.off('press', listener);
 	}, []);
 
-	/** The `n` form: a field per line, with the recent tickets under the ticket field while it's active. */
-	const newThreadBox = (form: NewThreadForm) => {
-		const project = projectByName(form.project);
-		const tickets = recent?.project === form.project ? recent.tickets : null;
-		const cursor = <Text inverse> </Text>;
-		const value = (field: NewThreadField, active: boolean) => {
-			if (field === 'project') return <Text color={project?.color}>{active ? `‹ ${form.project} ›` : form.project}</Text>;
-			if (field === 'ticket') {
-				return (
-					<Text color="blue">
-						{form.ticketKey}
-						{active ? cursor : null}
-						{!form.ticketKey ? <Text dimColor>{active ? '  type a key or ←/→ for recent' : 'none'}</Text> : null}
-					</Text>
-				);
-			}
-			return (
-				<Text>
-					{form[field]}
-					{active ? cursor : null}
-					{field === 'prompt' && !form.prompt && !active ? <Text dimColor>none — claude isn't started</Text> : null}
-				</Text>
-			);
-		};
-		return (
-			<Box flexDirection="column" borderStyle="round" borderColor={project?.color} paddingX={1}>
-				<Text bold>New thread</Text>
-				{newThreadFields(project).map(field => {
-					const active = field === form.field;
-					return (
-						<Box key={field} flexDirection="column">
-							<Text wrap="wrap">
-								<Text dimColor={!active}>
-									{active ? '› ' : '  '}
-									{`${NEW_THREAD_LABELS[field]}:`.padEnd(NEW_THREAD_LABEL_WIDTH)}
-								</Text>
-								{value(field, active)}
-							</Text>
-							{field === 'ticket' && active ? (
-								<Box flexDirection="column" marginLeft={NEW_THREAD_LABEL_WIDTH + 2}>
-									{tickets === null ? <Text dimColor>loading recent tickets…</Text> : null}
-									{typeof tickets === 'string' ? <Text dimColor>{tickets}</Text> : null}
-									{Array.isArray(tickets) && tickets.length === 0 ? <Text dimColor>none open and assigned to you</Text> : null}
-									{Array.isArray(tickets)
-										? tickets.map((t, i) => (
-												<Text key={t.key} wrap="truncate" inverse={i === form.ticket}>
-													<Text color="blue">{t.key}</Text> {t.summary}
-												</Text>
-											))
-										: null}
-								</Box>
-							) : null}
-						</Box>
-					);
-				})}
-				<Text dimColor>tab or ↑/↓ field  ←/→ project / ticket  ⏎ create  esc cancel  ctrl-u clear  ctrl-w delete word</Text>
-			</Box>
-		);
-	};
-
 	return (
 		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
@@ -607,57 +315,16 @@ export function App() {
 			) : showKeys ? (
 				<KeysView />
 			) : reviews ? (
-				<Box flexGrow={1} overflow="hidden" flexDirection="column">
-					<Text bold>
-						PRs waiting for your review <Text dimColor>(j/k move  ⏎/v view  b browser  r refresh  esc/q/R close, or click, double-click, scroll)</Text>
-					</Text>
-					<Text dimColor>
-						{'─'.repeat(Math.max(0, width - 13))} {String(reviews.row + 1).padStart(4)} of {String(reviews.requests.length).padEnd(3)}
-					</Text>
-					<Box ref={pickerList} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
-						{reviews.requests.slice(reviewsTop.current, reviewsTop.current + Math.max(1, pickerLines)).map((r, i) => (
-							<Text key={r.url} wrap="truncate" inverse={reviewsTop.current + i === reviews.row}>
-								<Text dimColor>{timeAgo(new Date(r.updatedAt)).padEnd(9)}</Text>
-								<Text color={r.project.color}>{(r.project.abbrev || r.project.name).padEnd(6)} </Text>
-								<Text color="cyan">#{r.number} </Text>
-								{r.isDraft ? <Text dimColor>draft </Text> : null}
-								{r.title} <Text dimColor>— {r.author.login}</Text>
-							</Text>
-						))}
-					</Box>
-				</Box>
+				<ReviewList board={board} requests={reviews} active={!busy} onClose={() => setReviews(null)} />
 			) : picker ? (
-				<Box flexGrow={1} overflow="hidden" flexDirection="column">
-					<Text bold>
-						Import a {picker.project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
-					</Text>
-					<Text dimColor>
-						{'─'.repeat(Math.max(0, width - 13))} {String(picker.row + 1).padStart(4)} of {String(picker.threads.length).padEnd(3)}
-					</Text>
-					<Box ref={pickerList} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
-						{pickerShown.map((s, i) => {
-							const r = pickerTop.current + i;
-							const linked = linkedThread(s);
-							const active = recentlyActive(s.transcriptPath);
-							return (
-								<Box key={s.id} flexDirection="column" flexShrink={0}>
-									<Text wrap="truncate" inverse={r === picker.row}>
-										<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
-										{linked ? <Text color="cyan">#{linked.id} </Text> : null}
-										{active ? <Text color="yellow">● active </Text> : null}
-										{s.title}
-									</Text>
-									{s.title !== s.firstPrompt ? (
-										<Text wrap="truncate" dimColor>
-											{'         '}
-											{s.firstPrompt}
-										</Text>
-									) : null}
-								</Box>
-							);
-						})}
-					</Box>
-				</Box>
+				<ImportList
+					board={board}
+					project={picker.project}
+					threads={picker.threads}
+					active={!busy}
+					onClose={() => setPicker(null)}
+					onShow={showThread}
+				/>
 			) : (
 				<Box ref={boardRef} flexGrow={1} overflow="hidden">
 					{COLUMNS.map((column, c) => {
@@ -700,19 +367,8 @@ export function App() {
 				width={width}
 				hidden={showProjects || showKeys || !!editing}
 			>
-				{prompt ? (
-					<Box flexDirection="column">
-						<Text bold>Import — project? (j/k move, ⏎ choose, esc cancel)</Text>
-						{state.projects.map((p, i) => (
-							<Text key={p.name} inverse={i === prompt.index}>
-								{'  '}
-								<Text color={p.color}>{p.name}</Text>
-								<Text dimColor> {p.path}</Text>
-							</Text>
-						))}
-					</Box>
-				) : null}
-				{form ? newThreadBox(form) : null}
+				{choosingImport ? <ImportProject board={board} active={!busy} onPick={openPicker} onClose={() => setChoosingImport(false)} /> : null}
+				{newThreadIn ? <NewThread board={board} project={newThreadIn} recent={recent} active={!busy} onClose={() => setNewThreadIn(null)} /> : null}
 			</Footer>
 		</Box>
 	);
