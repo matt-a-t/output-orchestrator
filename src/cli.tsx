@@ -4,7 +4,7 @@ import { execa } from 'execa';
 import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
-import { COLORS, isRepo, loadState, projectProblem, saveState } from './state.js';
+import { COLORS, isHome, isRepo, loadState, projectProblem, saveState } from './state.js';
 import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { commitFormCommand } from './commitForm.js';
@@ -69,6 +69,11 @@ function projectCommand(args: string[]): number {
 		return 0;
 	}
 	if (sub === 'rm' && rest[0]) {
+		const home = state.projects.find(p => p.name === rest[0] && isHome(p));
+		if (home) {
+			console.error(`${home.name} is the built-in home project and can't be removed`);
+			return 1;
+		}
 		if (state.threads.some(t => t.project === rest[0] && t.column !== 'archived')) {
 			console.error(`Project "${rest[0]}" still has unarchived threads`);
 			return 1;

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
 import { editText, loop } from './input.js';
-import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
+import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
 const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
 type Field = (typeof FIELDS)[number];
@@ -134,6 +134,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0 });
 		if (input === 'x') {
+			if (isHome(current)) return setMessage(`✗ ${current.name} is the built-in home project and can't be removed`);
 			if (state.threads.some(t => t.project === current.name && t.column !== 'archived')) {
 				return setMessage(`✗ ${current.name} still has unarchived threads`);
 			}
@@ -155,7 +156,6 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				{pad('abbrev', abbrevWidth)}
 				{pad('colour', 9)}path
 			</Text>
-			{state.projects.length === 0 ? <Text dimColor>  No projects yet — n to add one</Text> : null}
 			{state.projects.map((p, i) => (
 				<Text key={p.name} wrap="truncate" inverse={!form && i === row}>
 					{'  '}

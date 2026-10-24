@@ -112,9 +112,25 @@ export function loadState(file = STATE_FILE): State {
 	try {
 		raw = readFileSync(file, 'utf8');
 	} catch {
-		return { version: 1, projects: [], threads: [] };
+		return withHome({ version: 1, projects: [], threads: [] });
 	}
-	return StateSchema.parse(JSON.parse(raw));
+	return withHome(StateSchema.parse(JSON.parse(raw)));
+}
+
+/** Whether `project` is the built-in one at the home directory. */
+export function isHome(project: Project, home = homedir()): boolean {
+	return project.path === home;
+}
+
+/**
+ * The state with a project at `home` (worktrees off), added last if there isn't one, so there's
+ * always somewhere to start threads that work on the machine or claude's settings.
+ */
+export function withHome(state: State, home = homedir()): State {
+	if (state.projects.some(p => isHome(p, home))) return state;
+	const name = state.projects.some(p => p.name === 'home') ? '~' : 'home';
+	const project: Project = { name, abbrev: '', path: home, worktrees: false, color: 'white', wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' };
+	return { ...state, projects: [...state.projects, project] };
 }
 
 export function saveState(state: State, file = STATE_FILE): string {
@@ -134,6 +150,9 @@ export function isRepo(path: string): boolean {
 /** Why `project` can't be saved over the project currently named `original` (undefined for a new one), if it can't. */
 export function projectProblem(state: State, project: Project, original?: string): string | undefined {
 	if (!project.name) return 'Name is empty';
+	const old = state.projects.find(p => p.name === original);
+	if (old && isHome(old) && project.path !== old.path) return `${old.name} is the built-in home project — its path is always ${old.path}`;
+	if (!old && isHome(project)) return `${project.path} is already the ${state.projects.find(p => isHome(p))?.name} project`;
 	if (project.name !== original && state.projects.some(p => p.name === project.name)) return `Project "${project.name}" already exists`;
 	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
 	if (project.worktrees && !isRepo(project.path)) return `${project.path} isn't a git repo — turn worktrees off for a project without one`;

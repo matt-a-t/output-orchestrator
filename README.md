@@ -200,9 +200,10 @@ resumes anyway.
 
 ### Projects without a repo
 
-A project doesn't have to be a git repo: `oo project add ~ home` or `oo project add ~/.claude`
-gives you somewhere to start threads that work on your machine or your claude settings. A path
-that isn't a repo gets **worktrees** turned off (also in the projects screen, `P`), and then
+A project doesn't have to be a git repo. There's always a **home** project at `~`, without you
+adding it, for threads that work on your machine or your claude settings; you can rename or
+recolour it in the projects screen (`P`), but not move or remove it. `oo project add ~/.claude`
+adds another like it. A path that isn't a repo gets **worktrees** turned off (also in the projects screen, `P`), and then
 every thread runs in the project directory itself, several at once. There's no branch, so
 diffs, comments, approve, Local and PR are off for them; `F` moves one to Done when you're
 finished.
