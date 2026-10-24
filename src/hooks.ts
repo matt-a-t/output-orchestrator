@@ -4,12 +4,13 @@ import { HOOK_LABELS, type Column, type Project, type ProjectHook, type Thread }
 import { killWindow, openWindow } from './tmux.js';
 
 /**
- * One window per project for each kind of hook (local, polish, new thread), so a hook still running
+ * One window per project for each kind of hook (local, polish, new thread, worktree created), so a hook still running
  * (e.g. a dev server) is stopped by the next of its kind but not by another kind.
  */
 export function hookWindowName(project: Project, hook: ProjectHook): string {
 	if (hook === 'enterPolish' || hook === 'leavePolish') return `oo-hook-${project.name}-polish`;
 	if (hook === 'newThread') return `oo-hook-${project.name}-new`;
+	if (hook === 'worktreeCreated') return `oo-hook-${project.name}-worktree`;
 	return `oo-hook-${project.name}`;
 }
 

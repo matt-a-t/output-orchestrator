@@ -28,6 +28,7 @@ const isChoice = (field: Field): field is Choice => field in CHOICES;
 // Where each hook runs, for its hint.
 const HOOK_WHERE: Record<ProjectHook, string> = {
 	newThread: "as a thread is added, in its worktree if it's been made yet (it has with an initial prompt), else the project checkout",
+	worktreeCreated: "in a thread's worktree each time it's made (first opened, reopened from Done, back from Local)",
 	enterLocal: 'in the project checkout',
 	leaveLocal: 'in the project checkout',
 	enterPolish: "in the thread's worktree",

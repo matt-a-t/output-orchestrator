@@ -25,6 +25,7 @@ test('each kind of hook has its own window, so one doesn\'t stop another', () =>
 	assert.equal(hookWindowName(project, 'leaveLocal'), 'oo-hook-web');
 	assert.equal(hookWindowName(project, 'enterPolish'), 'oo-hook-web-polish');
 	assert.equal(hookWindowName(project, 'newThread'), 'oo-hook-web-new');
+	assert.equal(hookWindowName(project, 'worktreeCreated'), 'oo-hook-web-worktree');
 });
 
 test('hooks are told about the thread, and the new thread hook its prompt', () => {
