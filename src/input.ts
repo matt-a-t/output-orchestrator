@@ -45,7 +45,9 @@ export function fieldKey(value: string, edit: Edit, input: string, key: Key): { 
 	if (key.ctrl || key.meta) return;
 	if (input === 'i' || key.return) return { value, edit: value.length };
 	if (input === 'I') return { value, edit: 0 };
-	if (input === 'd') return edit === 'd' ? { value: '', edit: 0 } : { value, edit: 'd' };
+	// Typed quickly, dd can arrive as one input.
+	if (input === 'dd' || (input === 'd' && edit === 'd')) return { value: '', edit: 0 };
+	if (input === 'd') return { value, edit: 'd' };
 }
 
 /** Step `index` by `delta` through a list of `length` items, looping at both ends. */

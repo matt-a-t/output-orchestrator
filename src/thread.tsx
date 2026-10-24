@@ -194,7 +194,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			<Text dimColor>
 				{typeof edit === 'number'
 					? EDITING_HELP
-					: `${FIELD_HELP}  j/k ↑/↓ or tab field  ←/→ or space change  space on plan opens $EDITOR  ⏎ save  esc cancel`}
+					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' ? '←/→ or space change  ⏎ save' : FIELDS[field] === 'plan' ? 'space opens $EDITOR  ⏎ save' : FIELD_HELP}  j/k ↑/↓ or tab field  esc cancel`}
 			</Text>
 		</Box>
 	);

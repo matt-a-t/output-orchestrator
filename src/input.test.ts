@@ -47,6 +47,7 @@ test('dd clears the field and edits it', () => {
 	const first = fieldKey('Fix', null, 'd', key());
 	assert.deepEqual(first, { value: 'Fix', edit: 'd' });
 	assert.deepEqual(fieldKey('Fix', 'd', 'd', key()), { value: '', edit: 0 });
+	assert.deepEqual(fieldKey('Fix', null, 'dd', key()), { value: '', edit: 0 });
 	// Anything else in between is the form's, which drops the pending d.
 	assert.equal(fieldKey('Fix', 'd', 'j', key()), undefined);
 });

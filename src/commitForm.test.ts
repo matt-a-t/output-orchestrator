@@ -4,22 +4,29 @@ import type { Key } from 'ink';
 import { commitFormText, formKey, parseCommitForm, type FormState } from './commitForm.js';
 
 const key = (k: Partial<Key> = {}) => k as Key;
-const start: FormState = { values: ['Fix', ''], field: 0 };
+const start: FormState = { values: ['Fix', ''], field: 0, edit: null };
 
-test('typing goes into the focused field, and tab, ↑ and ↓ switch fields', () => {
-	const typed = formKey(start, 'e', key());
-	assert.deepEqual(typed, { values: ['Fixe', ''], field: 0 });
-	const switched = formKey(start, '', key({ tab: true })) as FormState;
-	assert.equal(switched.field, 1);
-	assert.deepEqual(formKey(switched, 'x', key()), { values: ['Fix', 'x'], field: 1 });
-	assert.equal((formKey(switched, '', key({ upArrow: true })) as FormState).field, 0);
+test('a field is typed into after i, and tab, ↑, ↓, j and k switch fields', () => {
+	assert.deepEqual(formKey(start, 'e', key()), start);
+	const editing = formKey(start, 'i', key()) as FormState;
+	assert.deepEqual(formKey(editing, 'e', key()), { values: ['Fixe', ''], field: 0, edit: 4 });
+	const switched = formKey(editing, '', key({ tab: true })) as FormState;
+	assert.deepEqual(switched, { values: ['Fix', ''], field: 1, edit: null });
+	assert.deepEqual(formKey(formKey(switched, 'i', key()) as FormState, 'x', key()), { values: ['Fix', 'x'], field: 1, edit: 1 });
+	assert.equal((formKey(switched, 'k', key()) as FormState).field, 0);
 	assert.equal((formKey(start, '', key({ downArrow: true })) as FormState).field, 1);
 });
 
-test('enter submits both fields from either one, and esc cancels', () => {
+test('⏎ edits the field, then submits both fields from either one', () => {
 	const done = { done: { message: 'Fix', notes: 'also b' } };
-	assert.deepEqual(formKey({ values: ['Fix', 'also b'], field: 0 }, '', key({ return: true })), done);
-	assert.deepEqual(formKey({ values: ['Fix', 'also b'], field: 1 }, '', key({ return: true })), done);
+	const values: FormState['values'] = ['Fix', 'also b'];
+	assert.deepEqual(formKey({ values, field: 0, edit: null }, '', key({ return: true })), { values, field: 0, edit: 3 });
+	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, '', key({ return: true })), done);
+	assert.deepEqual(formKey({ values, field: 1, edit: 0 }, '', key({ return: true })), done);
+});
+
+test('esc stops editing, and esc again cancels', () => {
+	assert.deepEqual(formKey({ ...start, edit: 3 }, '', key({ escape: true })), start);
 	assert.deepEqual(formKey(start, '', key({ escape: true })), { done: null });
 });
 
