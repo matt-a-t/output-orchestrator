@@ -261,9 +261,12 @@ tput civis
 while [ ! -e "$dir/done" ]; do
 	if [ -e "$dir/go" ]; then
 		rm -f "$dir/go"
+		# The status line has no newline after it, and an editor that doesn't take the whole screen draws from there.
+		clear
 		tput cnorm
 		$editor "$dir/edit.md"
 		touch "$dir/edited"
+		clear
 		tput civis
 		continue
 	fi
