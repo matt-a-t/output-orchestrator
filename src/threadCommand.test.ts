@@ -284,4 +284,9 @@ test('a stopped claude is told which step was committed and what comes next, or 
 	);
 	assert.match(approvedPrompt([todo('a', 'done'), todo('b', 'done')], 1, 'Add b'), /"b" \(commit: Add b\)\. That was the last step, so don't start anything else/);
 	assert.match(approvedPrompt([], -1, 'Fix'), /^The user approved your changes and committed them \(commit: Fix\)\. That was the last step/);
+	assert.match(
+		approvedPrompt([todo('a', 'done'), todo('b', 'pending')], 0, 'Add a', 'rename x'),
+		/\(commit: Add a\)\. The user's comments, to handle before moving on: "rename x"\. Move on to the next checkpoint: 2\./,
+	);
+	assert.match(approvedPrompt([todo('a', 'done')], 0, 'Add a', 'rename x'), /to handle before you stop: "rename x"\. That was the last step/);
 });
