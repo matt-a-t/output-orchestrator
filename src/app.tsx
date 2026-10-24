@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
+import { existsSync, watchFile, unwatchFile } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { useEffect, useRef, useState } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
@@ -33,25 +33,22 @@ import { ThreadView } from './thread.js';
 import { Card, cardHeight, cardLines, LOCAL_BORDER_LINES } from './board/card.js';
 import { Footer } from './board/footer.js';
 import { KeysView } from './board/keysView.js';
+import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
 import { approvedPrompt } from './threadCommand.js';
 import {
 	COLORS,
 	COLUMN_LABELS,
 	COLUMNS,
 	DEFAULT_WAKE_PROMPT,
-	STATE_FILE,
-	loadState,
-	saveState,
 	type Column,
 	type Project,
 	type ProjectHook,
-	type State,
 	type Thread,
 } from './state.js';
 import { fetchTicket, recentTickets, ticketUrl, type Ticket } from './tickets.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
 import { mouse, type MouseEvent } from './mouse.js';
-import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from './status.js';
+import { CLAUDE_SETTINGS_FILE } from './status.js';
 import {
 	addThread,
 	applyRequest,
@@ -107,10 +104,7 @@ const DOUBLE_CLICK_MS = 400;
 export function App() {
 	const { exit } = useApp();
 	const { columns: width, rows: height } = useWindowSize();
-	const [state, setState] = useState<State>(loadState);
-	// For callbacks that outlive a render (the PR poll).
-	const stateRef = useRef(state);
-	stateRef.current = state;
+	const { state, setState, stateRef } = useStateFile();
 	const [cursor, setCursor] = useState({ col: 0, row: 0 });
 	const [filter, setFilter] = useState<string | null>(null);
 	const [message, setMessage] = useState('');
@@ -124,20 +118,15 @@ export function App() {
 	const [showKeys, setShowKeys] = useState(false);
 	// The thread form (e), replacing the board while it's open.
 	const [editing, setEditing] = useState<string | null>(null);
-	const lastWritten = useRef<string | null>(null);
-	const [statuses, setStatuses] = useState<Record<string, Status>>({});
-	const statusesRef = useRef(statuses);
-	statusesRef.current = statuses;
+	const { statuses, statusesRef, sessionStarts } = useStatuses(stateRef, setState);
+	const { liveWindows, refreshWindows } = useLiveWindows();
+	const unreviewed = useUnreviewed(stateRef);
+	useRestoreCarried(stateRef);
 	// The latest render's Local moves, for the request poll, whose effect only sees the first render's.
 	const localMoves = useRef<LocalMoves>(null!);
 	const openPrRef = useRef<(thread: Thread, steps: PrSteps) => Promise<Outcome>>(null!);
 	// `oo thread local` moves waiting for the thread's claude to finish its turn: thread id → entering.
 	const pendingLocal = useRef(new Map<string, boolean>());
-	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
-	const sessionStarts = useRef(new Map<string, number>());
-	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
-	// Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved.
-	const [unreviewed, setUnreviewed] = useState<Set<string>>(new Set());
 	// The merge status of open PRs, from the PR poll; not saved, since the poll refills it on startup.
 	const [merge, setMerge] = useState<Record<string, PrStatus>>({});
 	// The import list (i), replacing the columns while it's open.
@@ -154,69 +143,6 @@ export function App() {
 	const boardRef = useRef<DOMElement>(null);
 	const [boardHeight, setBoardHeight] = useState(0);
 	const scrollOffsets = useRef<Partial<Record<Column, number>>>({});
-
-	const refreshWindows = () =>
-		windowNames()
-			.then(names => setLiveWindows(new Set(names)))
-			.catch(() => {});
-
-	useEffect(() => {
-		lastWritten.current = saveState(state);
-	}, [state]);
-
-	// Pick up external changes, e.g. `oo project add` from another shell.
-	useEffect(() => {
-		watchFile(STATE_FILE, { interval: 1000 }, () => {
-			try {
-				if (readFileSync(STATE_FILE, 'utf8') !== lastWritten.current) setState(loadState());
-			} catch {}
-		});
-		return () => unwatchFile(STATE_FILE);
-	}, []);
-
-	// Undo the commit carrying a thread's uncommitted changes, if a move into or out of Local died before it could.
-	useEffect(() => {
-		const { threads, projects } = stateRef.current;
-		const dirs = new Set([...threads.filter(t => !t.cwd).map(t => threadDir(stateRef.current, t)), ...projects.map(p => p.path)]);
-		for (const dir of dirs) if (dir) void restoreChanges(dir).catch(() => {});
-	}, []);
-
-	// Fold hook events (see status.ts) into per-thread status and the latest claude session ID.
-	useEffect(() => {
-		const reader = new EventReader();
-		const poll = () => {
-			const dirs = new Map(stateRef.current.threads.map(t => [t.id, threadDir(stateRef.current, t)]));
-			const events = reader.read().filter(e => fromThreadDir(e, dirs.get(e.thread)));
-			if (events.length === 0) return;
-			setStatuses(prev => {
-				const next = { ...prev };
-				for (const e of events) {
-					const status = nextStatus(next[e.thread], e);
-					if (status) next[e.thread] = status;
-				}
-				return next;
-			});
-			const started = new Map<string, { sessionId: string; transcriptPath?: string }>();
-			for (const e of events) {
-				if (e.event === 'SessionStart') sessionStarts.current.set(e.thread, (sessionStarts.current.get(e.thread) ?? 0) + 1);
-				if (e.event === 'SessionStart' && e.session) {
-					started.set(e.thread, { sessionId: e.session, transcriptPath: e.transcript });
-				}
-			}
-			if (started.size === 0) return;
-			setState(s => {
-				const changed = s.threads.some(t => {
-					const latest = started.get(t.id);
-					return latest && (latest.sessionId !== t.sessionId || latest.transcriptPath !== t.transcriptPath);
-				});
-				if (!changed) return s;
-				return { ...s, threads: s.threads.map(t => ({ ...t, ...started.get(t.id) })) };
-			});
-		};
-		poll();
-		watchFile(EVENTS_FILE, { interval: 500 }, poll);
-		return () => unwatchFile(EVENTS_FILE, poll);
-	}, []);
 
 	// Apply `oo thread …` requests (see requests.ts), one at a time.
 	useEffect(() => {
@@ -298,38 +224,8 @@ export function App() {
 		return () => unwatchFile(requestsFile(), poll);
 	}, []);
 
-	// Badges only mean something while the thread's window is open.
-	useEffect(() => {
-		refreshWindows();
-		const timer = setInterval(refreshWindows, 2000);
-		return () => clearInterval(timer);
-	}, []);
-
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 
-	useEffect(() => {
-		let checking = false;
-		const check = async () => {
-			if (checking) return;
-			checking = true;
-			try {
-				const dirty = new Set<string>();
-				const threads = stateRef.current.threads.filter(t => t.column !== 'archived' && !noRepo(stateRef.current, t));
-				await Promise.all(
-					threads.map(async t => {
-						const dir = threadDir(stateRef.current, t);
-						if (dir && (await isDirty(dir).catch(() => false))) dirty.add(t.id);
-					}),
-				);
-				setUnreviewed(prev => (prev.size === dirty.size && [...dirty].every(id => prev.has(id)) ? prev : dirty));
-			} finally {
-				checking = false;
-			}
-		};
-		check();
-		const timer = setInterval(check, 3000);
-		return () => clearInterval(timer);
-	}, []);
 	const visible = (t: Thread, f = filter) => t.column !== 'archived' && (!f || t.project === f);
 	const columnThreads = (column: Column, f = filter) => state.threads.filter(t => t.column === column && visible(t, f));
 
@@ -761,28 +657,7 @@ export function App() {
 		setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left].filter(Boolean).join('; '));
 		await syncWorktree({ ...thread, local: undefined, column: 'done' }).catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
 	};
-	const checkPrRef = useRef(checkPr);
-	checkPrRef.current = checkPr;
-
-	// Keep open PRs' merge status current, and move threads whose PR has merged to Done.
-	useEffect(() => {
-		let polling = false;
-		const poll = async () => {
-			if (polling) return;
-			polling = true;
-			try {
-				const threads = stateRef.current.threads;
-				// Threads that left PR (by hand, or closed) no longer have a status worth showing.
-				setMerge(m => Object.fromEntries(Object.entries(m).filter(([id]) => threads.some(t => t.id === id && t.column === 'pr' && t.pr))));
-				for (const thread of threads) await checkPrRef.current(thread);
-			} finally {
-				polling = false;
-			}
-		};
-		poll();
-		const timer = setInterval(poll, 60_000);
-		return () => clearInterval(timer);
-	}, []);
+	usePrPoll(stateRef, setMerge, checkPr);
 
 	/** Run fn in the thread's worktree (or an imported thread's directory), if it has one; `git` if fn needs the thread's branch. */
 	const inWorktree = (thread: Thread, fn: (cwd: string) => Promise<void>, { git = false, label }: { git?: boolean; label?: string } = {}) =>
@@ -984,12 +859,12 @@ export function App() {
 		const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(project, thread));
 		const window = threadWindowName(thread.id);
 		if (!(await windowNames()).includes(window)) {
-			const starts = sessionStarts.current.get(thread.id) ?? 0;
+			const starts = sessionStarts.get(thread.id) ?? 0;
 			await launchClaude(thread, cwd, { background: true });
 			// It may be waiting on "resume anyway?" instead.
 			if (!(await windowNames()).includes(window)) return false;
 			const deadline = Date.now() + 30_000;
-			while ((sessionStarts.current.get(thread.id) ?? 0) === starts) {
+			while ((sessionStarts.get(thread.id) ?? 0) === starts) {
 				if (Date.now() > deadline) {
 					setMessage(`✗ #${thread.id}'s claude didn't start in time; not woken`);
 					return false;
