@@ -180,6 +180,28 @@ export async function stageAll(cwd: string): Promise<boolean> {
 	return staged.exitCode !== 0;
 }
 
+// The subject of the temporary commit that carries a thread's uncommitted changes to its new
+// checkout when it moves into or out of Local.
+const CARRY_SUBJECT = 'oo: carry uncommitted changes';
+
+/**
+ * Commit everything uncommitted (untracked files too), so it moves with the branch; returns false
+ * if there was nothing. Skips hooks and signing, and uses its own identity: it's undone by
+ * restoreChanges as soon as the branch is checked out again.
+ */
+export async function carryChanges(cwd: string): Promise<boolean> {
+	if (!(await stageAll(cwd))) return false;
+	const config = ['-c', 'user.name=oo', '-c', 'user.email=oo@localhost', '-c', 'commit.gpgsign=false'];
+	await git(cwd, [...config, 'commit', '-q', '--no-verify', '-m', CARRY_SUBJECT]);
+	return true;
+}
+
+/** Undo carryChanges' commit, leaving its changes uncommitted. Does nothing unless HEAD is that commit. */
+export async function restoreChanges(cwd: string): Promise<void> {
+	const subject = await execa('git', ['-C', cwd, 'log', '-1', '--format=%s'], { reject: false });
+	if (subject.stdout === CARRY_SUBJECT) await git(cwd, ['reset', '-q', 'HEAD~1']);
+}
+
 export async function pushBranch(cwd: string, branch: string): Promise<void> {
 	await git(cwd, ['push', '-u', 'origin', branch]);
 }

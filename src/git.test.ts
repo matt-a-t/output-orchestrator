@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { branchName, currentRef, isDirty, rebaseInProgress, rebaseOnMain, renameBranch } from './git.js';
+import { branchName, carryChanges, currentRef, isDirty, rebaseInProgress, rebaseOnMain, renameBranch, restoreChanges } from './git.js';
 import type { Thread } from './state.js';
 
 const thread = (t: Partial<Thread>): Thread => ({
@@ -101,4 +101,27 @@ test('leaves a conflicting rebase in progress and says which files', async () =>
 	const clone = await behindMain('a\n', 'mine\n', 'theirs\n');
 	assert.deepEqual(await rebaseOnMain(clone, 'main'), { result: 'conflicts', files: ['f'] });
 	assert.ok(await rebaseInProgress(clone));
+});
+
+test('carries uncommitted changes from the worktree to the repo with the branch', async () => {
+	const { repo: r, worktree } = await repo('oo/do-the-thing');
+	const head = (cwd: string) => execa('git', ['-C', cwd, 'rev-parse', 'HEAD']).then(x => x.stdout);
+	const before = await head(worktree);
+	writeFileSync(join(worktree, 'new.txt'), 'new');
+	assert.equal(await carryChanges(worktree), true);
+	await execa('git', ['-C', r, 'worktree', 'remove', worktree]);
+	await execa('git', ['-C', r, 'checkout', '-q', 'oo/do-the-thing']);
+	await restoreChanges(r);
+	assert.equal(await head(r), before);
+	assert.equal(readFileSync(join(r, 'new.txt'), 'utf8'), 'new');
+	assert.equal((await execa('git', ['-C', r, 'status', '--porcelain'])).stdout, '?? new.txt');
+	// Again is a no-op: HEAD is a real commit now.
+	await restoreChanges(r);
+	assert.equal(await head(r), before);
+});
+
+test('carries nothing from a clean worktree', async () => {
+	const { worktree } = await repo('oo/do-the-thing');
+	assert.equal(await carryChanges(worktree), false);
+	assert.equal(await isDirty(worktree), false);
 });
