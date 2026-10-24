@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, undelivered, type Store } from './threads.js';
+import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, messagesPrompt, undelivered, type Store } from './threads.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
@@ -396,8 +396,11 @@ function localBriefing(state: State, t: Thread): string | undefined {
 	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or t on the board) brings it back to its worktree.`;
 }
 
-/** Claude hook for SessionStart (see sessionHook.ts): whether it's in Local and the thread's checkpoints, for claude; undefined if there's neither. */
-export function sessionStarted(input: any, ctx: Context): string | undefined {
+/**
+ * Claude hook for SessionStart (see sessionHook.ts): whether it's in Local, the thread's checkpoints and
+ * messages waiting for it, for claude; undefined if there's none of those. The messages count as delivered then.
+ */
+export async function sessionStarted(input: any, ctx: Context): Promise<string | undefined> {
 	const state = loadState(join(ctx.dir, 'state.json'));
 	let id: string;
 	try {
@@ -406,7 +409,10 @@ export function sessionStarted(input: any, ctx: Context): string | undefined {
 		return;
 	}
 	const thread = state.threads.find(t => t.id === id)!;
-	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? [])].filter(Boolean);
+	const messages = undelivered(thread.inbox);
+	// Briefly, since claude waits on this hook to start; a board busy with something slow applies it later.
+	if (messages.length) await change({ op: 'delivered', thread: id, count: messages.length }, { ...ctx, timeoutMs: 5_000 });
+	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? []), messages.length ? messagesPrompt(state, messages) : undefined].filter(Boolean);
 	return parts.length ? parts.join('\n') : undefined;
 }
 

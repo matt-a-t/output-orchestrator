@@ -264,23 +264,23 @@ test('todo <n> <status> sets one checkpoint\'s status, with or without a thread 
 	assert.match(output.err(), /Unknown status "finished"/);
 });
 
-test('a starting claude is told where the checkpoints stand, until they\'re all done', () => {
+test('a starting claude is told where the checkpoints stand, until they\'re all done', async () => {
 	const todos = [{ subject: 'a', status: 'done' as const }, { subject: 'b', status: 'active' as const }];
 	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
-	const briefing = sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	const briefing = (await sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' })))!;
 	assert.match(briefing, /\(1\/2 done\)/);
 	assert.match(briefing, /2\. \[active\] b/);
-	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
-	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
+	assert.equal(await sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
+	assert.equal(await sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
 });
 
-test('a claude starting in Local is told so, with or without checkpoints', () => {
+test('a claude starting in Local is told so, with or without checkpoints', async () => {
 	const { dir, project } = fixture([{ column: 'active', local: true, branch: 'oo/1-x' }, { cwd: '/work/two', column: 'active', local: true }]);
-	const briefing = sessionStarted({ cwd: project }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	const briefing = (await sessionStarted({ cwd: project }, context(dir, '/', { OO_THREAD_ID: '1' })))!;
 	assert.match(briefing, new RegExp(`You're in Local: working in the project's own checkout at ${project} on oo/1-x`));
 	assert.match(briefing, /oo thread local out/);
 	// Imported threads stay in their own directory, so there's nothing to say.
-	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
+	assert.equal(await sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
 });
 
 test('approving a step ticks off the checkpoint in review, else the active one', () => {
@@ -420,4 +420,18 @@ test('the messages prompt names each sender and how to reply', () => {
 	assert.match(prompt, /oo thread send 1 …/);
 	const fromUser = messagesPrompt(state, [{ from: 'user', text: 'hi', ts: '', delivered: false }]);
 	assert.doesNotMatch(fromUser, /Reply with/);
+});
+
+test('a starting claude hears the messages waiting for it, once', async () => {
+	const inbox = [
+		{ from: '2', text: 'already seen', ts: '', delivered: true },
+		{ from: '2', text: 'foo is now bar', ts: '', delivered: false },
+	];
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', inbox }, { cwd: '/work/two', title: 'rename' }]);
+	const ctx = context(dir, '/', { OO_THREAD_ID: '1' });
+	const briefing = (await sessionStarted({ cwd: '/work/one' }, ctx))!;
+	assert.match(briefing, /From thread #2 "rename": foo is now bar/);
+	assert.doesNotMatch(briefing, /already seen/);
+	assert.ok(loadState(join(dir, 'state.json')).threads[0]!.inbox!.every(m => m.delivered));
+	assert.equal(await sessionStarted({ cwd: '/work/one' }, ctx), undefined);
 });
