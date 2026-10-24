@@ -2,7 +2,7 @@ import { existsSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Box, Text, measureElement, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
-import { COMMIT_FORM, commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
+import { COMMIT_FORM, type CommitForm } from './commitForm.js';
 import { EDITOR, parsePr, prText } from './editor.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import {
@@ -29,7 +29,7 @@ import { KEY_SECTIONS } from './keys.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadForm, type NewThreadSubmit } from './newThreadForm.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from './requests.js';
-import { diffPaneCommand, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
+import { diffPaneCommand, openChanges, reviewDiff, showDiff, writeCommit } from './review.js';
 import { ThreadView } from './thread.js';
 import { approvedPrompt } from './threadCommand.js';
 import {
@@ -848,15 +848,7 @@ export function App() {
 		let form: CommitForm | null;
 		const progress = progressPopup(' commit ', COMMIT_FORM);
 		try {
-			const drafted = await progress.cancellable('claude is writing the commit message', signal => draftCommit(cwd, thread, signal));
-			if (drafted && drafted !== CLOSED && progress.accepted()) form = { message: drafted.trim(), notes: '' };
-			else {
-				const edited =
-					drafted === CLOSED
-						? CLOSED
-						: await progress.edit(drafted ? commitFormText(drafted) : commitFormText('', "claude couldn't write a commit message; write one."));
-				form = edited === CLOSED ? null : parseCommitForm(edited);
-			}
+			form = await writeCommit(progress, cwd, thread);
 			if (!form) return setMessage('⚠ Commit cancelled (changes left staged)');
 			progress.status('committing');
 			await commit(cwd, `${form.message}\n`);

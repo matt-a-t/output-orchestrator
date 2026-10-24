@@ -119,7 +119,7 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   	hunk-header-style = line-number syntax dim
   	hunk-header-decoration-style = none
   ```
-- In a step diff, `a` approves the step (after a y/n confirm). Approving commits everything with
+- In a step diff, `a` approves the step. Approving commits everything with
   a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
   and **for claude** (comments to send along). Tab or ↑/↓ switches fields, ⏎ commits from either,
   esc cancels (leaving the changes staged), and ctrl-u / ctrl-w clear a field or delete a word.
@@ -131,16 +131,17 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   feedback (`:cq` cancels).
 - `o` opens the changed hunks in vim as a quickfix list.
 
-Confirmations (quit, archive, approve, resuming a busy thread) all take `y`. Any other key cancels.
+Confirmations (quit, archive, resuming a busy thread) all take `y`. Any other key cancels.
 
 ### Working beside claude
 
 `s` opens a shell and `M-d` (alt-d) a diff to the right of the thread's claude window (starting
 claude if it isn't running) and jumps there. The diff is the step's, or the thread's when the
 step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
-closes it. `a` commits everything uncommitted, like approving from `d`: claude drafts the message
-and it opens in the same commit form (esc or an empty message cancels, leaving the changes staged),
-and a stopped claude is given your comments and told to move on. Pressing the
+closes it. `a` commits everything uncommitted, like approving from `d`:
+claude drafts the message (`a` again while it writes takes it as it is) and it opens in the same
+commit form (esc or an empty message cancels, leaving the changes staged), and a stopped claude is
+given your comments and told to move on. Pressing the
 other key swaps what's on the right, and either key jumps back to it later. From inside a
 thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
 scroll and go back to the board (see [KEYS.md](KEYS.md)).
