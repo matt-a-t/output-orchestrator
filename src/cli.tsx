@@ -165,7 +165,7 @@ async function commitCommand([id]: string[]): Promise<number> {
 	if (waiting && (await windowNames()).includes(window)) {
 		const todos = loadState().threads.find(t => t.id === id)?.todos ?? [];
 		await pasteInto(window, approvedPrompt(todos, item, message.split('\n')[0]!));
-		console.log('Told claude to move on');
+		console.log('Told claude');
 	}
 	return 0;
 }

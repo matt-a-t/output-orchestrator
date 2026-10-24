@@ -71,7 +71,7 @@ ${THREAD_USAGE}
 - **Work through the thread's checkpoints.** Once the plan is approved, save its checkpoints with
   \`oo thread todo set --file - <<'EOF'\`, one per line: each a step the user can review and commit on its own.
   Mark one \`active\` as you start it and \`review\` when it's ready, then stop for the user to review it;
-  approving the step on the board commits it, marks it \`done\` and tells you to move on. The list stays on the thread across claude
+  approving the step on the board commits it, marks it \`done\` and tells you to move on, or to stop after the last one. The list stays on the thread across claude
   runs and shows on its card, so keep it current.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what

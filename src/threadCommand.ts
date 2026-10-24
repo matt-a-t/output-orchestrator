@@ -310,9 +310,7 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: str
 	const then =
 		next !== -1
 			? `Move on to the next checkpoint: ${next + 1}. ${todos[next]!.subject}. Mark it active with \`oo thread todo ${next + 1} active\`.`
-			: todos.length
-				? "All checkpoints are done; carry on with what's left (e.g. the PR)."
-				: 'Move on to the next step.';
+			: "That was the last step, so don't start anything else: stop and wait for the user. Moving the thread to PR happens on the board.";
 	return `${done} (commit: ${commitSubject}). ${then}`;
 }
 
