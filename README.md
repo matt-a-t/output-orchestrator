@@ -120,9 +120,11 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   	hunk-header-decoration-style = none
   ```
 - In a step diff, `a` approves the step (after a y/n confirm). Approving commits everything with
-  a message claude drafts, and you edit its subject on the board (esc cancels, leaving the changes
-  staged; the drafted body is kept as is). If the thread's claude has stopped (✓), it's then told
-  the step was committed and to move on to the next checkpoint.
+  a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
+  and **for claude** (comments to send along). Tab or ↑/↓ switches fields, ⏎ commits from either,
+  esc cancels (leaving the changes staged), and ctrl-u / ctrl-w clear a field or delete a word.
+  If the thread's claude has stopped (✓), it's then told the step was committed, given your
+  comments, and told to move on to the next checkpoint, or to stop if that was the last one.
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels).
@@ -136,8 +138,8 @@ Confirmations (quit, archive, approve, resuming a busy thread) all take `y`. Any
 claude if it isn't running) and jumps there. The diff is the step's, or the thread's when the
 step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
 closes it. `a` commits everything uncommitted, like approving from `d`: claude drafts the message
-and it opens in `$EDITOR` (an empty subject cancels, leaving the changes staged), and a stopped
-claude is told to move on. Pressing the
+and it opens in the same commit form (esc or an empty message cancels, leaving the changes staged),
+and a stopped claude is given your comments and told to move on. Pressing the
 other key swaps what's on the right, and either key jumps back to it later. From inside a
 thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
 scroll and go back to the board (see [KEYS.md](KEYS.md)).
@@ -246,5 +248,6 @@ types. After changing code, `rm -rf dist && npm run build` and restart the board
 the running board keeps the code it started with, while claude hooks pick up the new build
 straight away. [PLAN.md](PLAN.md) has the design and milestones.
 
-To release: `npm version patch` (or `minor`), `npm publish`, `git push --follow-tags`.
-`prepublishOnly` does a clean build first.
+To release: `npm version patch` (or `minor`), then `git push --follow-tags`. Pushing the tag runs
+the [publish workflow](.github/workflows/publish.yml), which tests the build and publishes it to npm
+with provenance through trusted publishing, so nothing is published from your machine.

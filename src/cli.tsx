@@ -7,11 +7,12 @@ import { claimBoard } from './requests.js';
 import { COLORS, loadState, projectProblem, saveState } from './state.js';
 import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
-import { editCommit } from './editor.js';
+import { commitFormCommand } from './commitForm.js';
+import { editCommitForm } from './editor.js';
 import { commit, stageAll } from './git.js';
 import { diffPaneCommand, draftCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
-import { approvedTodo, threadDir } from './threads.js';
+import { approvedTodo, setTodoStatus, threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
 	BOARD_WINDOW,
@@ -135,8 +136,8 @@ async function splitCommand([role, id]: string[]): Promise<number> {
 
 /**
  * `oo commit <id>`, for `a` in the diff beside claude: stage everything, have claude draft the
- * message, edit it in $EDITOR and commit, as approving a step on the board does (telling a stopped
- * claude to move on included).
+ * message, edit it in the commit form and commit, as approving a step on the board does (telling a
+ * stopped claude to move on, with the form's comments, included).
  */
 async function commitCommand([id]: string[]): Promise<number> {
 	const state = loadState();
@@ -152,20 +153,24 @@ async function commitCommand([id]: string[]): Promise<number> {
 	}
 	const window = threadWindowName(id);
 	const waiting = threadStatus(id, cwd) === 'stopped' && (await windowNames()).includes(window);
-	const message = await editCommit((await draftCommit(cwd, thread)) ?? '', thread.branch ?? cwd);
-	if (!message) {
+	const drafted = await draftCommit(cwd, thread);
+	const form = await editCommitForm(drafted ?? '', drafted ? undefined : "claude couldn't write a commit message; write one.");
+	if (!form) {
 		console.log('Commit cancelled (changes left staged)');
 		return 1;
 	}
-	await commit(cwd, message);
-	console.log(`Committed on ${thread.branch ?? cwd}: ${message.split('\n')[0]}`);
+	await commit(cwd, `${form.message}\n`);
+	console.log(`Committed on ${thread.branch ?? cwd}: ${form.message}`);
 	const item = approvedTodo(thread.todos ?? []);
 	const ticked = await approveTodo(thread.id);
 	if (ticked) console.log(ticked);
 	if (waiting && (await windowNames()).includes(window)) {
-		const todos = loadState().threads.find(t => t.id === id)?.todos ?? [];
-		await pasteInto(window, approvedPrompt(todos, item, message.split('\n')[0]!));
-		console.log('Told claude to move on');
+		// Ticked here rather than reloaded: a running board may not have saved its tick yet.
+		const todos = item === -1 ? (thread.todos ?? []) : setTodoStatus(thread.todos ?? [], item, 'done');
+		await pasteInto(window, approvedPrompt(todos, item, form.message, form.notes));
+		console.log(form.notes ? 'Told claude, with your comments' : 'Told claude');
+	} else if (form.notes) {
+		console.log(`Claude wasn't waiting, so your comments weren't sent: ${form.notes}`);
 	}
 	return 0;
 }
@@ -179,6 +184,8 @@ if (cmd === 'project') {
 	process.exit(await splitCommand(args));
 } else if (cmd === 'commit') {
 	process.exit(await commitCommand(args));
+} else if (cmd === 'commit-form') {
+	process.exit(await commitFormCommand(args));
 } else if (cmd) {
 	console.error(USAGE);
 	process.exit(1);

@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { COMMIT_FORM, commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
 import { popup, shellQuote } from './tmux.js';
 
 export const EDITOR = process.env.VISUAL || process.env.EDITOR || 'vim';
@@ -10,17 +11,22 @@ function uncommented(text: string): string[] {
 	return text.split('\n').filter(l => !l.startsWith('# '));
 }
 
-/** Edit `text` in $EDITOR in a popup; returns its lines minus those starting with `# `. */
-async function editLines(text: string, title: string): Promise<string[]> {
+/** Run `editor` on a file holding `text` in a popup; returns what the file holds once it exits. */
+async function editInPopup(text: string, editor: string, title: string): Promise<string> {
 	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
 	const file = join(dir, 'edit.md');
 	writeFileSync(file, text);
 	try {
-		await popup(`${EDITOR} ${shellQuote(file)}`, { title });
-		return uncommented(readFileSync(file, 'utf8'));
+		await popup(`${editor} ${shellQuote(file)}`, { title });
+		return readFileSync(file, 'utf8');
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+/** Edit `text` in $EDITOR in a popup; returns its lines minus those starting with `# `. */
+async function editLines(text: string, title: string): Promise<string[]> {
+	return uncommented(await editInPopup(text, EDITOR, title));
 }
 
 /** Edit a thread's plan in $EDITOR. */
@@ -29,16 +35,9 @@ export async function editPlan(plan: string, thread: string): Promise<string> {
 	return lines.join('\n').trim();
 }
 
-/** Edit a drafted commit message. Returns the message, or null if the subject is left empty. */
-export async function editCommit(draft: string, branch: string): Promise<string | null> {
-	const lines = await editLines(
-		[draft, '', `# Line 1: subject. Everything after: body. Committed on ${branch} on save.`, '# Leave the subject empty to cancel.', ''].join('\n'),
-		' commit ',
-	);
-	const subject = lines.shift()?.trim() ?? '';
-	if (!subject) return null;
-	const body = lines.join('\n').trim();
-	return body ? `${subject}\n\n${body}\n` : `${subject}\n`;
+/** Edit a drafted commit message and comments for claude in the commit form; null if cancelled. */
+export async function editCommitForm(draft: string, note?: string): Promise<CommitForm | null> {
+	return parseCommitForm(await editInPopup(commitFormText(draft, note), COMMIT_FORM, ' commit '));
 }
 
 export type PrDraft = { title: string; body: string };
@@ -63,24 +62,4 @@ export function parsePr(text: string): PrDraft | null {
 	const title = lines.shift()?.trim() ?? '';
 	if (!title) return null;
 	return { title, body: lines.join('\n').trim() };
-}
-
-/** The text to edit for a commit message, with `# ` notes such as `note`. */
-export function commitText(message: string, note?: string): string {
-	return [
-		message,
-		'',
-		...(note ? [`# ${note}`] : []),
-		'# Line 1: subject. Everything after: body. Leave the subject empty to cancel.',
-		'',
-	].join('\n');
-}
-
-/** Read back commitText once edited as a commit message. Returns null if the subject is left empty. */
-export function parseCommit(text: string): string | null {
-	const lines = uncommented(text);
-	const subject = lines.shift()?.trim() ?? '';
-	if (!subject) return null;
-	const body = lines.join('\n').trim();
-	return body ? `${subject}\n\n${body}\n` : `${subject}\n`;
 }

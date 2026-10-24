@@ -227,24 +227,23 @@ function formatComments(comments: Comment[]): string {
 }
 
 /**
- * Have claude draft a commit message for the staged changes, in the style of the branch's recent
- * commits. Returns undefined if claude fails or says nothing.
+ * Have claude draft a one-line commit message for the staged changes, in the style of the branch's
+ * recent subjects. Returns undefined if claude fails or says nothing.
  */
 export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSignal): Promise<string | undefined> {
 	const git = async (args: string[]) => (await execa('git', ['-C', cwd, ...args])).stdout;
-	const log = await git(['log', '-5', '--format=%B---']).catch(() => '');
+	// Subjects only: full messages as examples make each draft longer than the last.
+	const log = await git(['log', '-5', '--format=%s']).catch(() => '');
 	const stat = await git(['diff', '--cached', '--stat']);
 	const diff = truncateDiff(await git(['diff', '--cached']));
 	const prompt = [
-		'Write a git commit message for the staged changes below.',
-		'Reply with only the message: a short imperative subject line, a blank line, then a body',
-		'saying what changed and why, unless the change is trivial. Match the style of the recent',
-		'commits. No preamble and no trailers.',
+		'Write a one-line git commit message for the staged changes below.',
+		'Reply with only the message: a short imperative subject under 60 characters, with no body,',
+		'no trailing period and no preamble. Match the style of the recent commits.',
 		'',
 		`Thread title: ${thread.title}`,
-		thread.plan ? `Thread plan:\n${thread.plan}` : '',
 		'',
-		'Recent commits (each ends with ---):',
+		'Recent commits:',
 		log,
 		'',
 		'Diff stat:',
@@ -253,5 +252,7 @@ export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSig
 		'Diff:',
 		diff,
 	].join('\n');
-	return (await askClaude(cwd, prompt, signal)) || undefined;
+	const reply = await askClaude(cwd, prompt, signal);
+	// In case it writes a body anyway.
+	return reply?.split('\n').find(l => l.trim())?.trim() || undefined;
 }
