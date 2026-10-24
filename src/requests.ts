@@ -14,6 +14,8 @@ export type Request =
 	| { id: string; op: 'move'; thread: string; column: Column }
 	// Only the board can do this one (it checks out, moves claude and runs hooks); 'toggle' is what t does.
 	| { id: string; op: 'local'; thread: string; local: boolean | 'toggle' }
+	// Board-only too (it pushes, opens the PR and runs hooks); without a body, claude drafts the PR, and the title too unless given.
+	| { id: string; op: 'pr'; thread: string; title?: string; body?: string }
 	| { id: string; op: 'plan'; thread: string; plan: string }
 	| { id: string; op: 'todos'; thread: string; subjects: string[] }
 	// `item` counts from 1, as `oo thread show` lists them.
@@ -57,7 +59,7 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'plan', 'todos', 'todo'].includes(r.op);
+const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'pr', 'plan', 'todos', 'todo'].includes(r.op);
 const isResponse = (r: any) => typeof r.id === 'string' && typeof r.ok === 'boolean';
 
 /** The board's side: new requests since the last read. */

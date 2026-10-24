@@ -54,14 +54,20 @@ import {
 	type Store,
 	type WorktreeChange,
 } from './threads.js';
-import { CLOSED, killWindow, openSplit, openWindow, pasteInto, progressPopup, threadWindowLabel, threadWindowName, windowNames } from './tmux.js';
+import { CLOSED, killWindow, openSplit, openWindow, pasteInto, progressPopup, threadWindowLabel, threadWindowName, windowNames, type ProgressPopup } from './tmux.js';
 
 type PermissionMode = 'plan' | 'auto';
-type LocalOutcome = { ok: boolean; message: string };
+type Outcome = { ok: boolean; message: string };
 type LocalMoves = {
-	enterLocal: (thread: Thread) => Promise<LocalOutcome>;
-	leaveLocal: (thread: Thread) => Promise<LocalOutcome>;
+	enterLocal: (thread: Thread) => Promise<Outcome>;
+	leaveLocal: (thread: Thread) => Promise<Outcome>;
 	localProblem: (thread: Thread, entering: boolean) => Promise<string | undefined>;
+};
+/** How opening a PR says how it's going and gets its title and description (null: cancelled). */
+type PrSteps = {
+	status: (text: string) => void;
+	describe: (cwd: string, thread: Thread, base: string) => Promise<{ title: string; body: string } | null>;
+	close: () => Promise<void>;
 };
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
@@ -138,6 +144,7 @@ export function App() {
 	statusesRef.current = statuses;
 	// The latest render's Local moves, for the request poll, whose effect only sees the first render's.
 	const localMoves = useRef<LocalMoves>(null!);
+	const openPrRef = useRef<(thread: Thread, steps: PrSteps) => Promise<Outcome>>(null!);
 	// `oo thread local` moves waiting for the thread's claude to finish its turn: thread id → entering.
 	const pendingLocal = useRef(new Map<string, boolean>());
 	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
@@ -231,7 +238,7 @@ export function App() {
 		const localRequest = async ({ id, thread: threadId, local }: Extract<Request, { op: 'local' }>): Promise<Response> => {
 			const thread = stateRef.current.threads.find(t => t.id === threadId);
 			if (!thread) return { id, ok: false, message: `No thread #${threadId}` };
-			const answer = (outcome: LocalOutcome): Response => ({ id, ...outcome, thread: thread.id });
+			const answer = (outcome: Outcome): Response => ({ id, ...outcome, thread: thread.id });
 			const entering = local === 'toggle' ? !thread.local : local;
 			if (entering === !!thread.local) return answer({ ok: true, message: `#${thread.id} is already ${entering ? 'in' : 'out of'} Local` });
 			const moves = localMoves.current;
@@ -249,11 +256,38 @@ export function App() {
 				setBusy(null);
 			}
 		};
+		// Like moving to PR on the board, except the description is given (or claude's draft, unedited) and there's no popup.
+		const prRequest = async ({ id, thread: threadId, title, body }: Extract<Request, { op: 'pr' }>): Promise<Response> => {
+			const state = stateRef.current;
+			const thread = state.threads.find(t => t.id === threadId);
+			if (!thread) return { id, ok: false, message: `No thread #${threadId}` };
+			const answer = (outcome: Outcome): Response => ({ id, ...outcome, thread: thread.id });
+			const problem = moveProblem(state, thread, 'pr');
+			if (problem) return answer({ ok: false, message: problem });
+			try {
+				return answer(
+					await openPrRef.current(thread, {
+						status: text => setBusy(text),
+						describe: async (cwd, thread, base) => {
+							const draft =
+								body !== undefined
+									? { title: title ?? thread.title, body }
+									: await draftPr(cwd, thread, base).then(written => written && { ...written, ...(title !== undefined && { title }) });
+							return withTicket(draft ?? { title: title ?? thread.title, body: thread.plan }, thread.ticket);
+						},
+						close: async () => {},
+					}),
+				);
+			} finally {
+				setBusy(null);
+			}
+		};
 		let queue = Promise.resolve();
 		const poll = () => {
 			for (const request of reader.read()) {
 				queue = queue.then(async () => {
-					const response = await (request.op === 'local' ? localRequest(request) : applyRequest(store, request)).catch(err => ({
+					const handled = request.op === 'local' ? localRequest(request) : request.op === 'pr' ? prRequest(request) : applyRequest(store, request);
+					const response = await handled.catch(err => ({
 						id: request.id,
 						ok: false,
 						message: err instanceof Error ? err.message : String(err),
@@ -327,8 +361,8 @@ export function App() {
 	const moveThread = (thread: Thread, column: (typeof COLUMNS)[number]) => {
 		if (thread.column === column) return;
 		const col = COLUMNS.indexOf(column);
-		// Its branch is checked out in the project's checkout, not its worktree, until it comes back.
-		if (thread.local) return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
+		// Its branch is checked out in the project's checkout, not its worktree, until it comes back. Opening its PR works from there.
+		if (thread.local && column !== 'pr') return setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
 		const problem = moveProblem(state, thread, column);
 		if (problem) return setMessage(problem);
 		// Its claude is in plan mode just while it's Planned (see launchClaude), so an open one restarts on the way in or out.
@@ -338,7 +372,7 @@ export function App() {
 		if (warning) setMessage(warning);
 		// Done closes its claude window.
 		if (column === 'done' && statuses[thread.id] === 'working') return setMessage(`⚠ claude is still working on #${thread.id}`);
-		if (column === 'pr') return void run(() => openPr(thread), 'opening PR');
+		if (column === 'pr') return void run(() => openPrFromBoard(thread), 'opening PR');
 		const move = async () => {
 			setColumn(thread.id, column);
 			setCursor({ col, row: columnThreads(column).length });
@@ -462,7 +496,7 @@ export function App() {
 	 * dev environment, and move claude there with it, then run the project's enter local hook.
 	 * The worktree is removed meanwhile. Only one thread per project fits.
 	 */
-	const enterLocal = async (thread: Thread): Promise<LocalOutcome> => {
+	const enterLocal = async (thread: Thread): Promise<Outcome> => {
 		const problem = await localProblem(thread, true);
 		if (problem) return { ok: false, message: problem };
 		const project = projectByName(thread.project)!;
@@ -485,7 +519,7 @@ export function App() {
 	 * Put the project's checkout back on the default branch and move the thread back into its
 	 * worktree, then run the project's leave local hook.
 	 */
-	const leaveLocal = async (thread: Thread): Promise<LocalOutcome> => {
+	const leaveLocal = async (thread: Thread): Promise<Outcome> => {
 		const problem = await localProblem(thread, false);
 		if (problem) return { ok: false, message: problem };
 		const project = projectByName(thread.project)!;
@@ -524,70 +558,88 @@ export function App() {
 		}
 	}, [statuses]);
 
-	/** Push the thread's branch and open its PR (unless it has one already), then move it to PR. */
-	const openPr = async (thread: Thread) => {
+	/**
+	 * Push the thread's branch and open its PR (unless it has one already), then move it to PR.
+	 * `steps` says how it's going and writes the title and description; null from `describe` is cancelled.
+	 */
+	const openPr = async (thread: Thread, steps: PrSteps): Promise<Outcome> => {
 		const project = projectByName(thread.project);
-		if (!project) return setMessage(`✗ Unknown project "${thread.project}"`);
+		if (!project) return { ok: false, message: `Unknown project "${thread.project}"` };
 		if (thread.cwd) {
-			if (!existsSync(thread.cwd)) return setMessage(`✗ ${thread.cwd} no longer exists`);
+			if (!existsSync(thread.cwd)) return { ok: false, message: `${thread.cwd} no longer exists` };
 			// An imported thread has no branch of its own until now: it's whatever its directory is on.
 			if (!thread.branch) {
 				const branch = await currentRef(thread.cwd);
 				const base = await defaultBranch(thread.cwd);
 				if (/^[0-9a-f]{40}$/.test(branch) || branch === base) {
-					return setMessage(`⚠ ${thread.cwd} is on ${branch} — switch #${thread.id}'s work onto a branch there first`);
+					return { ok: false, message: `${thread.cwd} is on ${branch} — switch #${thread.id}'s work onto a branch there first` };
 				}
 				thread = { ...thread, branch, base };
 			}
 		}
-		if (!thread.branch) return setMessage(`#${thread.id} has no branch yet — open it first`);
-		// This reopens the worktree if the thread is coming back from Done.
-		const cwd = thread.cwd ?? (await createWorktree(project, thread));
-		if (await isDirty(cwd)) return setMessage(`⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them first`);
-		// Open from here until the PR is, so the board isn't left looking usable while it waits.
-		const progress = progressPopup(' pull request ', EDITOR);
+		if (!thread.branch) return { ok: false, message: `#${thread.id} has no branch yet — open it first` };
+		// In Local its branch is checked out in the project's checkout, so the PR is opened from there. Otherwise
+		// this reopens the worktree if the thread is coming back from Done.
+		const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(project, thread));
+		if (await isDirty(cwd)) return { ok: false, message: `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first` };
+		const branch = thread.branch;
 		let existing: Thread['pr'];
 		let pr: Thread['pr'];
 		try {
-			progress.status('looking for a PR');
-			existing = pr = thread.pr ?? (await findPr(cwd, thread.branch));
+			steps.status('looking for a PR');
+			existing = pr = thread.pr ?? (await findPr(cwd, branch));
 			if (!pr) {
 				// The PR goes into the default branch (see createPr), so describe the changes against that.
 				const target = await defaultBranch(cwd);
-				const base = target ? `origin/${target}` : (thread.base ?? 'HEAD');
-				const written = await progress.cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal));
-				if (written === CLOSED) return setMessage('Cancelled');
-				const edited = await progress.edit(
-					written
-						? prText(withTicket(written, thread.ticket), thread.branch)
-						: prText(
-								withTicket({ title: thread.title, body: thread.plan }, thread.ticket),
-								thread.branch,
-								"claude couldn't write the PR description; this is from the thread.",
-							),
-				);
-				const draft = edited === CLOSED ? null : parsePr(edited);
-				if (!draft) return setMessage('Cancelled');
-				progress.status(`pushing ${thread.branch}`);
-				await pushBranch(cwd, thread.branch);
-				progress.status('opening PR');
+				const draft = await steps.describe(cwd, { ...thread, branch }, target ? `origin/${target}` : (thread.base ?? 'HEAD'));
+				if (!draft) return { ok: true, message: 'Cancelled' };
+				steps.status(`pushing ${branch}`);
+				await pushBranch(cwd, branch);
+				steps.status('opening PR');
 				pr = await createPr(cwd, thread, draft.title, draft.body);
 			} else {
-				progress.status(`pushing ${thread.branch}`);
-				await pushBranch(cwd, thread.branch);
+				steps.status(`pushing ${branch}`);
+				await pushBranch(cwd, branch);
 			}
 		} finally {
-			await progress.close();
+			await steps.close();
 		}
-		const patch = { pr, branch: thread.branch, base: thread.base };
+		const patch = { pr, branch, base: thread.base };
 		setColumn(thread.id, 'pr', patch);
 		setCursor({ col: COLUMNS.indexOf('pr'), row: columnThreads('pr').length });
 		const opened = `${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`;
 		const ran = await runColumnHook(project, thread.column, { ...thread, ...patch, column: 'pr' });
-		setMessage(ran ? `${opened}; ${ran}` : opened);
 		// A push may have fixed (or caused) conflicts, so don't wait for the next poll to show it.
 		void checkPr({ ...thread, ...patch, column: 'pr' });
+		return { ok: true, message: ran ? `${opened}; ${ran}` : opened };
 	};
+
+	/** The board's way: claude drafts the PR in a popup, then the user edits it there. */
+	const openPrFromBoard = async (thread: Thread) => {
+		// Open from here until the PR is, so the board isn't left looking usable while it waits.
+		let progress: ProgressPopup | undefined;
+		const popup = () => (progress ??= progressPopup(' pull request ', EDITOR));
+		const { ok, message } = await openPr(thread, {
+			status: text => popup().status(text),
+			describe: async (cwd, thread, base) => {
+				const written = await popup().cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal));
+				if (written === CLOSED) return null;
+				const edited = await popup().edit(
+					written
+						? prText(withTicket(written, thread.ticket), thread.branch!)
+						: prText(
+								withTicket({ title: thread.title, body: thread.plan }, thread.ticket),
+								thread.branch!,
+								"claude couldn't write the PR description; this is from the thread.",
+							),
+				);
+				return edited === CLOSED ? null : parsePr(edited);
+			},
+			close: async () => void (await progress?.close()),
+		});
+		setMessage(ok ? message : `⚠ ${message}`);
+	};
+	openPrRef.current = openPr;
 
 	/** Record the merge status of the thread's PR, or move the thread to Done (cleaning up its worktree) if it's merged. */
 	const checkPr = async (thread: Thread) => {

@@ -146,8 +146,8 @@ export function moveProblem(state: State, thread: Thread, column: Column): strin
 
 /** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
 export function boardOnlyMove(thread: Thread, column: Column): string | undefined {
+	if (column === 'pr') return `Moving #${thread.id} to PR opens its PR — use oo thread pr, or do it from the board`;
 	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or t on the board)`;
-	if (column === 'pr') return `Moving #${thread.id} to PR opens the PR description editor — do it from the board`;
 }
 
 /** The state being changed: the board's, or state.json when it isn't running. */
@@ -170,6 +170,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const done = (message: string) => ({ id, ok: true, message, thread: thread.id });
 	// The board handles these itself, before they get here.
 	if (request.op === 'local') return { id, ok: false, message: 'Moving into or out of Local needs the board running' };
+	if (request.op === 'pr') return { id, ok: false, message: 'Opening a PR needs the board running' };
 	if (request.op === 'plan') {
 		const now = new Date().toISOString();
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));
