@@ -319,19 +319,23 @@ test('committing outside the board ticks off the checkpoint in review', async ()
 	assert.equal(await approveTodo('2', context(dir, '/')), undefined);
 });
 
-test('a stopped claude is told which step was committed and what comes next, or to stop after the last', () => {
+test('a stopped claude is told which step was committed and what comes next, and nothing after the last', () => {
 	const todo = (subject: string, status: 'pending' | 'done') => ({ subject, status });
 	assert.equal(
 		approvedPrompt([todo('a', 'done'), todo('b', 'pending')], 0, 'Add a'),
 		'The user approved and committed your step "a" (commit: Add a). Move on to the next checkpoint: 2. b. Mark it active with `oo thread todo 2 active`.',
 	);
-	assert.match(approvedPrompt([todo('a', 'done'), todo('b', 'done')], 1, 'Add b'), /"b" \(commit: Add b\)\. That was the last step, so don't start anything else/);
-	assert.match(approvedPrompt([], -1, 'Fix'), /^The user approved your changes and committed them \(commit: Fix\)\. That was the last step/);
+	assert.equal(approvedPrompt([todo('a', 'done'), todo('b', 'done')], 1, 'Add b'), undefined);
+	assert.equal(approvedPrompt([], -1, 'Fix'), undefined);
+	assert.equal(
+		approvedPrompt([], -1, 'Fix', 'rename x'),
+		'The user approved your changes and committed them (commit: Fix). The user\'s comments, to handle before you stop: "rename x". That was the last step: open its PR (`oo thread pr`) only when the user asks.',
+	);
 	assert.match(
 		approvedPrompt([todo('a', 'done'), todo('b', 'pending')], 0, 'Add a', 'rename x'),
 		/\(commit: Add a\)\. The user's comments, to handle before moving on: "rename x"\. Move on to the next checkpoint: 2\./,
 	);
-	assert.match(approvedPrompt([todo('a', 'done')], 0, 'Add a', 'rename x'), /to handle before you stop: "rename x"\. That was the last step/);
+	assert.match(approvedPrompt([todo('a', 'done')], 0, 'Add a', 'rename x')!, /to handle before you stop: "rename x"\. That was the last step: open its PR/);
 });
 
 test('a project with worktrees off runs its threads in its directory, with no PR', async t => {
