@@ -25,6 +25,7 @@ import {
 import { createPr, draftPr, findPr, mergeLabel, openPrInBrowser, prStatus, withTicket, type PrStatus } from './github.js';
 import { editText, loop } from './input.js';
 import { KEY_SECTIONS } from './keys.js';
+import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadForm, type NewThreadSubmit } from './newThreadForm.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from './requests.js';
 import { diffPaneCommand, draftCommit, openChanges, reviewDiff, showDiff } from './review.js';
@@ -47,7 +48,7 @@ import {
 	type Todo,
 	type TodoStatus,
 } from './state.js';
-import { fetchTicket, normalizeKey, recentTickets, ticketUrl, type Ticket, type TicketRef } from './tickets.js';
+import { fetchTicket, recentTickets, ticketUrl, type Ticket } from './tickets.js';
 import { copyTranscript, listOutsideThreads, recentlyActive, timeAgo, type OutsideThread } from './transcripts.js';
 import { mouse, type MouseEvent } from './mouse.js';
 import { CLAUDE_SETTINGS_FILE, EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from './status.js';
@@ -110,19 +111,9 @@ const LEGEND: [string, string | undefined, string][] = [
 	['⚡', 'red', 'PR has conflicts'],
 ];
 
-/**
- * The `n` flow (pick a project, pick its ticket if it has a tracker, then type the title if the
- * ticket didn't give one), or picking the project to import from (`i` with no filter).
- */
-type Prompt =
-	| { step: 'project'; index: number; then: 'new' | 'import' }
-	// Rows: attach a key (typed in place), no ticket, then the recent tickets.
-	| { step: 'ticket'; project: string; row: number; key: string }
-	| { step: 'title'; project: string; title: string; ticket?: TicketRef };
-// The ticket step's rows before the recent tickets.
-const ATTACH_ROW = 0;
-const NO_TICKET_ROW = 1;
-const FIRST_RECENT_ROW = 2;
+/** Picking the project to import from (`i` with no filter). */
+type Prompt = { step: 'project'; index: number };
+const NEW_THREAD_LABEL_WIDTH = Math.max(...Object.values(NEW_THREAD_LABELS).map(l => l.length)) + 2;
 
 // The columns and the import list start below the title bar, a header and a rule; each card is two lines, or one in Done.
 const LIST_TOP = 3;
@@ -150,7 +141,9 @@ export function App() {
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
 	const [prompt, setPrompt] = useState<Prompt | null>(null);
-	// The ticket step's recent tickets, for the project they're from; a string is why they couldn't be listed.
+	// The new-thread form (n), over the bottom of the board.
+	const [form, setForm] = useState<NewThreadForm | null>(null);
+	// The form's recent tickets, for the project they're from; a string is why they couldn't be listed.
 	const [recent, setRecent] = useState<{ project: string; tickets: Ticket[] | string | null } | null>(null);
 	const [showProjects, setShowProjects] = useState(false);
 	const [showKeys, setShowKeys] = useState(false);
@@ -730,17 +723,17 @@ export function App() {
 			setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
 		}, label);
 
+	/** Open the new-thread form on the filtered or highlighted project. */
 	const newThread = () => {
-		// One project means nothing to choose.
-		if (state.projects.length === 1) return newThreadIn(state.projects[0]!);
-		const current = filter ?? selected?.project;
-		setPrompt({ step: 'project', index: Math.max(0, state.projects.findIndex(p => p.name === current)), then: 'new' });
+		const project = projectByName(filter ?? selected?.project ?? '') ?? state.projects[0]!;
+		setForm(newThreadForm(project.name));
+		loadRecent(project);
 	};
 
-	/** Ask for the thread's ticket if the project has a tracker (listing the recent ones meanwhile), else its title. */
-	const newThreadIn = (project: Project) => {
-		if (project.tracker === 'none') return setPrompt({ step: 'title', project: project.name, title: '' });
-		setPrompt({ step: 'ticket', project: project.name, row: ATTACH_ROW, key: '' });
+	/** List the project's recent tickets for the form, if it has a tracker. */
+	const loadRecent = (project: Project) => {
+		if (project.tracker === 'none') return setRecent(null);
+		if (recent?.project === project.name && Array.isArray(recent.tickets)) return;
 		setRecent({ project: project.name, tickets: null });
 		recentTickets(project).then(
 			tickets => setRecent(r => (r?.project === project.name ? { ...r, tickets } : r)),
@@ -748,23 +741,41 @@ export function App() {
 		);
 	};
 
-	/** Start a thread on the ticket, titled and planned from it; if it can't be read, ask for the title instead. */
-	const threadFromTicket = (project: Project, key: string, known?: Ticket) =>
+	const recentFor = (project: string) => (recent?.project === project && Array.isArray(recent.tickets) ? recent.tickets : []);
+
+	const formInput = (form: NewThreadForm, input: string, key: Key) => {
+		const next = newThreadKey(form, input, key, { projects: state.projects, tickets: recentFor(form.project) });
+		if ('problem' in next) return setMessage(`✗ ${next.problem}`);
+		if ('done' in next) {
+			setForm(null);
+			return next.done ? submitNewThread(next.done) : setMessage('Cancelled');
+		}
+		if (next.project !== form.project) loadRecent(projectByName(next.project)!);
+		setForm(next);
+	};
+
+	/** Create the thread from the form, titled and planned from its ticket when it has one. */
+	const submitNewThread = ({ project: name, ticketKey, ticket: known, title }: NewThreadSubmit) =>
 		run(async () => {
-			const ticket = await fetchTicket(project, key).catch((err: unknown) => {
-				setMessage(`⚠ Couldn't read ${key}: ${err instanceof Error ? err.message : String(err)}`);
+			const project = projectByName(name)!;
+			if (!ticketKey) return void createThread(name, title);
+			const ticket = await fetchTicket(project, ticketKey).catch((err: unknown) => {
+				setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
 				return known;
 			});
-			if (ticket) return createThread(project.name, ticket.summary, { ticket: { key, url: ticket.url }, plan: ticket.description });
-			const url = await ticketUrl(project, key).catch(() => '');
-			setPrompt({ step: 'title', project: project.name, title: '', ticket: { key, url } });
-		}, `reading ${key}`);
+			if (ticket) return void createThread(name, title || ticket.summary, { ticket: { key: ticketKey, url: ticket.url }, plan: ticket.description });
+			// Without the ticket there's nothing to title the thread after.
+			if (!title) return setMessage(`✗ Couldn't read ${ticketKey}, so it needs a title — press n to try again`);
+			const url = await ticketUrl(project, ticketKey).catch(() => '');
+			createThread(name, title, { ticket: { key: ticketKey, url } });
+		}, ticketKey ? `reading ${ticketKey}` : 'creating thread');
 
 	const createThread = (project: string, title: string, fields: Partial<Pick<Thread, 'ticket' | 'plan'>> = {}) => {
 		const { thread } = addThread(stateRef.current, { project, title, ...fields });
 		setState(s => ({ ...s, threads: [...s.threads, thread] }));
 		setCursor({ col: 0, row: stateRef.current.threads.filter(t => t.column === 'planned' && (!filter || t.project === filter)).length });
 		setMessage(`Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}${thread.plan ? '' : ' — e to add a plan'}`);
+		return thread;
 	};
 
 	/**
@@ -808,53 +819,13 @@ export function App() {
 			setPrompt(null);
 			return setMessage('Cancelled');
 		}
-		if (prompt.step === 'project') {
-			const count = state.projects.length;
-			if (input === 'j' || key.downArrow) return setPrompt({ ...prompt, index: (prompt.index + 1) % count });
-			if (input === 'k' || key.upArrow) return setPrompt({ ...prompt, index: (prompt.index + count - 1) % count });
-			if (key.return) {
-				const project = state.projects[prompt.index]!;
-				if (prompt.then === 'import') {
-					setPrompt(null);
-					return openPicker(project);
-				}
-				return newThreadIn(project);
-			}
-			return;
-		}
-		if (prompt.step === 'ticket') {
-			const project = projectByName(prompt.project)!;
-			const tickets = recent?.project === prompt.project && Array.isArray(recent.tickets) ? recent.tickets : [];
-			const count = FIRST_RECENT_ROW + tickets.length;
-			// j/k would be part of a key being typed.
-			const typing = prompt.row === ATTACH_ROW;
-			if (key.downArrow || (!typing && input === 'j') || key.tab) return setPrompt({ ...prompt, row: loop(prompt.row, 1, count) });
-			if (key.upArrow || (!typing && input === 'k')) return setPrompt({ ...prompt, row: loop(prompt.row, -1, count) });
-			if (key.return) {
-				if (prompt.row === NO_TICKET_ROW) return setPrompt({ step: 'title', project: prompt.project, title: '' });
-				if (prompt.row === ATTACH_ROW) {
-					const normalized = normalizeKey(project, prompt.key);
-					if (!normalized) return setMessage(`✗ Not a ${project.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${prompt.key || '(empty)'}`);
-					setPrompt(null);
-					return threadFromTicket(project, normalized);
-				}
-				const ticket = tickets[prompt.row - FIRST_RECENT_ROW]!;
-				setPrompt(null);
-				return threadFromTicket(project, ticket.key, ticket);
-			}
-			if (!typing) return;
-			const typed = editText(prompt.key, input, key);
-			if (typed !== undefined) setPrompt({ ...prompt, key: typed });
-			return;
-		}
+		const count = state.projects.length;
+		if (input === 'j' || key.downArrow) return setPrompt({ ...prompt, index: (prompt.index + 1) % count });
+		if (input === 'k' || key.upArrow) return setPrompt({ ...prompt, index: (prompt.index + count - 1) % count });
 		if (key.return) {
-			const title = prompt.title.trim();
-			if (!title) return;
 			setPrompt(null);
-			return createThread(prompt.project, title, { ticket: prompt.ticket });
+			return openPicker(state.projects[prompt.index]!);
 		}
-		const title = editText(prompt.title, input, key);
-		if (title !== undefined) setPrompt({ ...prompt, title });
 	};
 
 	/**
@@ -985,7 +956,7 @@ export function App() {
 	const startImport = () => {
 		const filtered = filter ? projectByName(filter) : state.projects.length === 1 ? state.projects[0] : undefined;
 		if (filtered) return openPicker(filtered);
-		setPrompt({ step: 'project', index: 0, then: 'import' });
+		setPrompt({ step: 'project', index: 0 });
 	};
 
 	const openPicker = (project: Project) =>
@@ -1047,6 +1018,7 @@ export function App() {
 			setConfirm(null);
 			return input === 'y' ? confirm() : setMessage('Cancelled');
 		}
+		if (form) return formInput(form, input, key);
 		if (prompt) return promptInput(prompt, input, key);
 		if (picker) {
 			const count = picker.threads.length;
@@ -1236,7 +1208,7 @@ export function App() {
 
 	// The layout is a fixed grid, so a press's cell says what it's on. The wheel stops at the ends rather than looping.
 	const onMouse = ({ button, x, y }: MouseEvent) => {
-		if (busy || showProjects || showKeys || editing || prompt || confirm) return;
+		if (busy || showProjects || showKeys || editing || form || prompt || confirm) return;
 		setMessage('');
 		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
 		if (picker) {
@@ -1329,45 +1301,62 @@ export function App() {
 		);
 	};
 
-	/** The `n` flow's ticket step: attach a key, go without one, or pick one of the recent tickets. */
-	const ticketPicker = (prompt: Extract<Prompt, { step: 'ticket' }>) => {
-		const tickets = recent?.project === prompt.project ? recent.tickets : null;
-		const row = (i: number, text: ReactNode) => (
-			<Text key={i} wrap="truncate" inverse={i === prompt.row}>
-				{'  '}
-				{text}
-			</Text>
-		);
-		return (
-			<Box flexDirection="column">
+	/** The `n` form: a field per line, with the recent tickets under the ticket field while it's active. */
+	const newThreadBox = (form: NewThreadForm) => {
+		const project = projectByName(form.project);
+		const tickets = recent?.project === form.project ? recent.tickets : null;
+		const cursor = <Text inverse> </Text>;
+		const value = (field: NewThreadField, active: boolean) => {
+			if (field === 'project') return <Text color={project?.color}>{active ? `‹ ${form.project} ›` : form.project}</Text>;
+			if (field === 'ticket') {
+				return (
+					<Text color="blue">
+						{form.ticketKey}
+						{active ? cursor : null}
+						{!form.ticketKey ? <Text dimColor>{active ? '  type a key or ←/→ for recent' : 'none'}</Text> : null}
+					</Text>
+				);
+			}
+			return (
 				<Text>
-					<Text bold>New thread in </Text>
-					<Text color={projectByName(prompt.project)?.color}>{prompt.project}</Text>
-					<Text bold> — ticket?</Text>
-					<Text dimColor> (↑/↓ move, ⏎ choose, esc cancel)</Text>
+					{form[field]}
+					{active ? cursor : null}
+					{field === 'prompt' && !form.prompt && !active ? <Text dimColor>none — claude isn't started</Text> : null}
 				</Text>
-				{row(
-					ATTACH_ROW,
-					<>
-						Attach key: {prompt.key}
-						{prompt.row === ATTACH_ROW ? <Text inverse> </Text> : null}
-					</>,
-				)}
-				{row(NO_TICKET_ROW, 'No key, use oo')}
-				<Text dimColor>Recent tickets:</Text>
-				{tickets === null ? <Text dimColor>  loading…</Text> : null}
-				{typeof tickets === 'string' ? <Text dimColor>  {tickets}</Text> : null}
-				{Array.isArray(tickets) && tickets.length === 0 ? <Text dimColor>  none open and assigned to you</Text> : null}
-				{Array.isArray(tickets)
-					? tickets.map((t, i) =>
-							row(
-								FIRST_RECENT_ROW + i,
-								<>
-									<Text color="blue">{t.key}</Text> {t.summary}
-								</>,
-							),
-						)
-					: null}
+			);
+		};
+		return (
+			<Box flexDirection="column" borderStyle="round" borderColor={project?.color} paddingX={1}>
+				<Text bold>New thread</Text>
+				{newThreadFields(project).map(field => {
+					const active = field === form.field;
+					return (
+						<Box key={field} flexDirection="column">
+							<Text wrap="wrap">
+								<Text dimColor={!active}>
+									{active ? '› ' : '  '}
+									{`${NEW_THREAD_LABELS[field]}:`.padEnd(NEW_THREAD_LABEL_WIDTH)}
+								</Text>
+								{value(field, active)}
+							</Text>
+							{field === 'ticket' && active ? (
+								<Box flexDirection="column" marginLeft={NEW_THREAD_LABEL_WIDTH + 2}>
+									{tickets === null ? <Text dimColor>loading recent tickets…</Text> : null}
+									{typeof tickets === 'string' ? <Text dimColor>{tickets}</Text> : null}
+									{Array.isArray(tickets) && tickets.length === 0 ? <Text dimColor>none open and assigned to you</Text> : null}
+									{Array.isArray(tickets)
+										? tickets.map((t, i) => (
+												<Text key={t.key} wrap="truncate" inverse={i === form.ticket}>
+													<Text color="blue">{t.key}</Text> {t.summary}
+												</Text>
+											))
+										: null}
+								</Box>
+							) : null}
+						</Box>
+					);
+				})}
+				<Text dimColor>tab or ↑/↓ field  ←/→ project / ticket  ⏎ create  esc cancel  ctrl-u clear  ctrl-w delete word</Text>
 			</Box>
 		);
 	};
@@ -1502,9 +1491,9 @@ export function App() {
 						{selectedMerge ? <Text color={selectedMerge[1]}> — {selectedMerge[0]}</Text> : null}
 					</Text>
 				) : null}
-				{prompt?.step === 'project' ? (
+				{prompt ? (
 					<Box flexDirection="column">
-						<Text bold>{prompt.then === 'import' ? 'Import' : 'New thread'} — project? (j/k move, ⏎ choose, esc cancel)</Text>
+						<Text bold>Import — project? (j/k move, ⏎ choose, esc cancel)</Text>
 						{state.projects.map((p, i) => (
 							<Text key={p.name} inverse={i === prompt.index}>
 								{'  '}
@@ -1514,18 +1503,7 @@ export function App() {
 						))}
 					</Box>
 				) : null}
-				{prompt?.step === 'ticket' ? ticketPicker(prompt) : null}
-				{prompt?.step === 'title' ? (
-					<Text>
-						<Text bold>New thread in </Text>
-						<Text color={projectByName(prompt.project)?.color}>{prompt.project}</Text>
-						{prompt.ticket ? <Text color="blue"> {prompt.ticket.key}</Text> : null}
-						<Text bold> — title: </Text>
-						{prompt.title}
-						<Text inverse> </Text>
-						<Text dimColor>  (⏎ create, esc cancel)</Text>
-					</Text>
-				) : null}
+				{form ? newThreadBox(form) : null}
 				{busy ? (
 					<Text color="cyan">{busy}…</Text>
 				) : (
