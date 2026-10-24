@@ -14,6 +14,7 @@ import {
 	hasWorktree,
 	isDirty,
 	commit,
+	pullBranch,
 	pushBranch,
 	rebaseInProgress,
 	rebaseOnMain,
@@ -571,6 +572,30 @@ export function App() {
 		return { ok: true, message: await hook(project, 'leaveLocal', back, project.path, done) };
 	};
 
+	/**
+	 * Take a thread whose PR merged out of Local on its way to Done: put the project's checkout back
+	 * on the default branch with the merge pulled in, then run the project's leave local hook. Unlike
+	 * leaveLocal there's no worktree to bring back, and Done closes its claude anyway.
+	 */
+	const leaveLocalForDone = async (thread: Thread): Promise<string> => {
+		const project = projectByName(thread.project)!;
+		const back: Thread = { ...thread, local: undefined };
+		if (thread.cwd) {
+			updateThread(thread.id, { local: undefined });
+			return hook(project, 'leaveLocal', back, project.path, `#${thread.id} is out of Local`);
+		}
+		const main = (await defaultBranch(project.path)) ?? 'main';
+		await closeClaude(thread);
+		await checkout(project.path, main);
+		// The checkout is back on main either way; it's just not up to date.
+		const pulled = await pullBranch(project.path, main).then(
+			() => 'pulled',
+			(err: unknown) => `couldn't pull origin/${main}: ${err instanceof Error ? err.message : String(err)}`,
+		);
+		updateThread(thread.id, { local: undefined });
+		return hook(project, 'leaveLocal', back, project.path, `${project.name} checkout is back on ${main}, ${pulled}`);
+	};
+
 	/** Into or out of Local, saying how it went on the message line. */
 	const moveLocal = (thread: Thread, entering: boolean) =>
 		run(async () => {
@@ -684,10 +709,25 @@ export function App() {
 			if (status.mergeable !== 'UNKNOWN') setMerge(m => ({ ...m, [thread.id]: status }));
 			return;
 		}
+		let left: string | undefined;
+		if (thread.local) {
+			// Its branch is in the project's checkout, so that has to go back to main first; the next poll tries again.
+			// Leaving Local carries uncommitted changes back to the worktree, but Done has none, so they'd be left on main.
+			const problem =
+				(await localProblem(thread, false)) ??
+				(!thread.cwd && (await isDirty(project.path)) ? `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first` : undefined);
+			if (problem) return setMessage(`⚠ #${thread.id}'s PR #${thread.pr.number} merged, but it stays in PR until it can leave Local: ${problem}`);
+			if (statuses[thread.id] === 'working') return;
+			try {
+				left = await leaveLocalForDone(thread);
+			} catch (err) {
+				return setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
 		setMerge(({ [thread.id]: _, ...rest }) => rest);
 		setColumn(thread.id, 'done');
-		setMessage(`#${thread.id}'s PR #${thread.pr.number} merged → Done`);
-		await syncWorktree({ ...thread, column: 'done' }).catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
+		setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left].filter(Boolean).join('; '));
+		await syncWorktree({ ...thread, local: undefined, column: 'done' }).catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
 	};
 	const checkPrRef = useRef(checkPr);
 	checkPrRef.current = checkPr;

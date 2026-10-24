@@ -107,6 +107,11 @@ export async function checkout(repo: string, ref: string): Promise<void> {
 	await git(repo, ['checkout', ref]);
 }
 
+/** Bring the checked-out branch up to origin's `branch`, refusing anything but a fast-forward. */
+export async function pullBranch(repo: string, branch: string): Promise<void> {
+	await git(repo, ['pull', '-q', '--ff-only', 'origin', branch]);
+}
+
 /** Whether the worktree has uncommitted changes (including untracked files, unless told not to). */
 export async function isDirty(cwd: string, { untracked = true } = {}): Promise<boolean> {
 	// No optional locks: the board polls this, and must not trip up a commit running alongside.
