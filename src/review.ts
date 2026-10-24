@@ -16,7 +16,7 @@ const APPROVE_STATUS = 65;
 const PANE_KEYS = '#command\na quit A\nr quit R\nt quit T\n';
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// What delta's --navigate labels files and hunks with.
+// What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
 const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 
 /**
