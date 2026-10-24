@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { branchName, carryChanges, currentRef, isDirty, rebaseInProgress, rebaseOnMain, renameBranch, restoreChanges } from './git.js';
+import { branchName, carryChanges, checkout, currentRef, isDirty, pullBranch, rebaseInProgress, rebaseOnMain, renameBranch, restoreChanges } from './git.js';
 import type { Thread } from './state.js';
 
 const thread = (t: Partial<Thread>): Thread => ({
@@ -124,4 +124,11 @@ test('carries nothing from a clean worktree', async () => {
 	const { worktree } = await repo('oo/do-the-thing');
 	assert.equal(await carryChanges(worktree), false);
 	assert.equal(await isDirty(worktree), false);
+});
+
+test('pulls origin/main into a checkout put back on main', async () => {
+	const clone = await behindMain('a\n', 'mine\n', 'theirs\n');
+	await checkout(clone, 'main');
+	await pullBranch(clone, 'main');
+	assert.equal(readFileSync(join(clone, 'f'), 'utf8'), 'theirs\n');
 });

@@ -186,7 +186,9 @@ cancels). A thread in Local opens its PR from the project's checkout and stays i
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
 running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's
 claude can open the PR when you ask it to. `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
-Windows' default browser). The board checks open PRs every minute and moves merged ones to Done.
+Windows' default browser). The board checks open PRs every minute and moves merged ones to Done. One in
+Local comes out of it on the way, with the checkout put back on the default branch and the merge pulled in;
+if the checkout has uncommitted changes, it stays in PR until they're dealt with.
 
 `u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
 branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread with a
