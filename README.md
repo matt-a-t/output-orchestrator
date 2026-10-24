@@ -234,5 +234,6 @@ types. After changing code, `rm -rf dist && npm run build` and restart the board
 the running board keeps the code it started with, while claude hooks pick up the new build
 straight away. [PLAN.md](PLAN.md) has the design and milestones.
 
-To release: `npm version patch` (or `minor`), `npm publish`, `git push --follow-tags`.
-`prepublishOnly` does a clean build first.
+To release: `npm version patch` (or `minor`), then `git push --follow-tags`. Pushing the tag runs
+the [publish workflow](.github/workflows/publish.yml), which tests the build and publishes it to npm
+with provenance through trusted publishing, so nothing is published from your machine.
