@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
-import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, type PrDetails } from './github.js';
+import { editReviewBody } from './editor.js';
+import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogin, type PrDetails, type ReviewEvent } from './github.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
@@ -21,10 +22,18 @@ const DELTA_STATUS = 83;
 const PANE_KEYS = `${APPROVE_KEYS}r quit R\nt quit T\n`;
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// The PR viewer's m merges ('M' is 77) and o opens the browser ('O' is 79); b and w stay less's page back.
-const PR_KEYS = `${DIFF_KEYS}m quit M\no quit O\n`;
+// The PR viewer's o opens the browser ('O' is 79; b and w stay less's page back). On your own PR m
+// merges ('M' is 77); on someone else's a approves, x requests changes ('X' is 88) and c comments ('C' is 67).
+const PR_KEYS = `${DIFF_KEYS}o quit O\n`;
+const OWN_PR_KEYS = `${PR_KEYS}m quit M\n`;
+const REVIEW_PR_KEYS = `${PR_KEYS}a quit A\nx quit X\nc quit C\n`;
 const MERGE_STATUS = 77;
 const BROWSER_STATUS = 79;
+const REVIEW_STATUSES: Record<number, [ReviewEvent, string]> = {
+	[APPROVE_STATUS]: ['approve', 'approving'],
+	88: ['request-changes', 'requesting changes on'],
+	67: ['comment', 'on'],
+};
 // `oo delta`, then a pause so its answer stays up until you're back in the diff.
 const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
 // What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
@@ -50,21 +59,26 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 	}
 }
 
+export type PrAction = { action: 'merge' } | { action: 'review'; event: ReviewEvent; body: string };
+
 /**
  * Show a PR as GitHub has it: its title, state, checks, reviews and description, then its diff, with
- * n/N jumping between files and hunks like `showDiff`. `m` merges (after a confirm), `o` opens it in
- * the browser and `S` sets up delta's styles.
+ * n/N jumping between files and hunks like `showDiff`. `o` opens it in the browser and `S` sets up
+ * delta's styles. Your own PR can be merged with `m`; someone else's approved (`a`), sent back with
+ * changes requested (`x`) or commented on (`c`), the last two with a comment written in $EDITOR.
  */
-export async function showPr(cwd: string, number: number): Promise<'closed' | 'merge'> {
-	const [details, diff] = await Promise.all([prDetails(cwd, number), prDiff(cwd, number)]);
+export async function showPr(cwd: string, number: number): Promise<'closed' | PrAction> {
+	const [details, diff, me] = await Promise.all([prDetails(cwd, number), prDiff(cwd, number), viewerLogin(cwd)]);
+	const own = details.author.login === me;
 	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
 	const header = join(dir, 'header');
 	const patch = join(dir, 'pr.diff');
 	writeFileSync(header, prHeader(details));
 	writeFileSync(patch, diff + '\n');
 	const stat = diff ? `git apply --stat --summary ${shellQuote(patch)}; echo; delta --paging=never --navigate < ${shellQuote(patch)}` : "echo 'No changes'";
-	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(lesskey('pr', PR_KEYS))}`;
-	const title = ` PR #${number} — n/N next/prev hunk  m merge  o browser  S styling  q close `;
+	const keys = own ? lesskey('own-pr', OWN_PR_KEYS) : lesskey('review-pr', REVIEW_PR_KEYS);
+	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(keys)}`;
+	const title = ` PR #${number} — n/N next/prev hunk  ${own ? 'm merge' : 'a approve  x request changes  c comment'}  o browser  S styling  q close `;
 	try {
 		for (;;) {
 			const status = await popup(command, { cwd, title });
@@ -76,11 +90,23 @@ export async function showPr(cwd: string, number: number): Promise<'closed' | 'm
 				await openPrInBrowser(details);
 				continue;
 			}
-			if (status !== MERGE_STATUS) return 'closed';
+			const review = own ? undefined : REVIEW_STATUSES[status];
+			if (review) {
+				const [event, verb] = review;
+				// Anything but y, or an empty comment, goes back to the PR.
+				if (event === 'approve') {
+					if (await confirmPopup(`Approve PR #${number}?`)) return { action: 'review', event, body: '' };
+					continue;
+				}
+				const body = await editReviewBody(number, verb);
+				if (body) return { action: 'review', event, body };
+				continue;
+			}
+			if (!own || status !== MERGE_STATUS) return 'closed';
 			// Say what's in the way, since GitHub may still let you merge past it.
 			const [label] = mergeLabel(details) ?? [];
 			const warning = label && label !== 'ready to merge' ? ` (${label})` : '';
-			if (await confirmPopup(`Merge PR #${number}${warning}?`)) return 'merge';
+			if (await confirmPopup(`Merge PR #${number}${warning}?`)) return { action: 'merge' };
 		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });

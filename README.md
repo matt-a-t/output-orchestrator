@@ -203,6 +203,12 @@ Windows' default browser). The board checks open PRs every minute and moves merg
 Local comes out of it on the way, with the checkout put back on the default branch and the merge pulled in;
 if the checkout has uncommitted changes, it stays in PR until they're dealt with.
 
+GitHub won't let you approve your own PR, so on someone else's the viewer has `a` approve,
+`x` request changes and `c` comment instead of `m` (the last two open your editor for the comment;
+leave it empty to go back). `R` lists the open PRs asking you, or a team you're on, for a review,
+across every project with a repo; `⏎` opens one in the viewer, and once you've reviewed it, it
+drops off the list.
+
 `u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
 branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread with a
 PR is then force-pushed (`--force-with-lease`), which clears a "conflicts with base" badge once

@@ -57,3 +57,9 @@ export function parsePr(text: string): PrDraft | null {
 	if (!title) return null;
 	return { title, body: lines.join('\n').trim() };
 }
+
+/** Write a review's comment in $EDITOR; '' (an empty one) means cancel. */
+export async function editReviewBody(number: number, verb: string): Promise<string> {
+	const lines = await editLines(['', '', `# Your comment ${verb} PR #${number}, in Markdown. Leave it empty to cancel.`, ''].join('\n'), ` review #${number} `);
+	return lines.join('\n').trim();
+}

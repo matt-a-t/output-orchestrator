@@ -175,6 +175,36 @@ export function checksLabel(checks: PrCheck[]): [string, string] | undefined {
 	return [`checks: ${counts}`, failing ? 'red' : pending ? 'yellow' : 'green'];
 }
 
+let login: Promise<string> | undefined;
+
+/** Who gh is logged in as, asked once; GitHub won't let them approve their own PRs. */
+export function viewerLogin(cwd: string): Promise<string> {
+	login ??= execa('gh', ['api', 'user', '-q', '.login'], { cwd }).then(r => r.stdout.trim());
+	// Logged out (or offline) now needn't mean for the rest of the run.
+	login.catch(() => (login = undefined));
+	return login;
+}
+
+export type ReviewRequest = { number: number; title: string; url: string; author: { login: string }; updatedAt: string; isDraft: boolean };
+
+/** Open PRs in the repo that ask you (or a team you're on) for a review, most recently updated first. */
+export async function reviewRequests(cwd: string): Promise<ReviewRequest[]> {
+	const { stdout } = await execa(
+		'gh',
+		['pr', 'list', '--search', 'review-requested:@me sort:updated-desc', '--json', 'number,title,url,author,updatedAt,isDraft'],
+		{ cwd },
+	);
+	return JSON.parse(stdout) as ReviewRequest[];
+}
+
+export const REVIEW_EVENTS = ['approve', 'request-changes', 'comment'] as const;
+export type ReviewEvent = (typeof REVIEW_EVENTS)[number];
+
+/** Submit a review of the PR; GitHub wants a body for all but an approval. */
+export async function submitReview(cwd: string, number: number, event: ReviewEvent, body: string): Promise<void> {
+	await execa('gh', ['pr', 'review', String(number), `--${event}`, '--body-file', '-'], { cwd, input: body });
+}
+
 /**
  * Merge the PR the first way the repo allows: a merge commit, else squash, else rebase. The branch
  * is left for the board to clean up when it sees the merge. Returns how it merged.
