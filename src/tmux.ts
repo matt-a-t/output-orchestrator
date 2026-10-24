@@ -244,6 +244,8 @@ export type ProgressPopup = {
 	status(text: string): void;
 	/** Show `text` while fn runs, which q, esc or ctrl-c cancel: then fn's signal aborts and this resolves with CLOSED. */
 	cancellable<T>(text: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T | typeof CLOSED>;
+	/** Whether a was pressed during cancellable, to take its result without editing it. */
+	accepted(): boolean;
 	/** Open `editor` on `text`; resolves with what was saved, or CLOSED if the popup closed first. */
 	edit(text: string): Promise<string | typeof CLOSED>;
 	/** Resolves once the popup has closed, whether by close() or by being cancelled. */
@@ -251,8 +253,8 @@ export type ProgressPopup = {
 	close(): Promise<void>;
 };
 
-// Talks to the board through files in $1: shows status (and "q cancel" while cancellable exists), runs the
-// editor on edit.md each time go appears, and exits once done appears. Cancelling exits with 3.
+// Talks to the board through files in $1: shows status (and "q cancel" while cancellable exists, where a
+// toggles accept), runs the editor on edit.md each time go appears, and exits once done appears. Cancelling exits with 3.
 const PROGRESS_SCRIPT = `
 dir=$1 editor=$2 frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) i=0
 cancel() { [ -e "$dir/cancellable" ] && exit 3; }
@@ -271,11 +273,14 @@ while [ ! -e "$dir/done" ]; do
 		continue
 	fi
 	hint=
-	[ -e "$dir/cancellable" ] && hint='   q cancel'
+	if [ -e "$dir/cancellable" ]; then
+		[ -e "$dir/accept" ] && hint="   ✓ using claude's (a to edit)  q cancel" || hint="   a use claude's  q cancel"
+	fi
 	printf '\\r\\033[K %s %s\\033[2m%s\\033[0m' "\${frames[i++ % 10]}" "$(cat "$dir/status" 2>/dev/null)" "$hint"
 	if read -rsn1 -t 0.15 key; then
 		case $key in
 		q) cancel ;;
+		a) [ -e "$dir/cancellable" ] && { [ -e "$dir/accept" ] && rm -f "$dir/accept" || touch "$dir/accept"; } ;;
 		# A lone esc cancels; one followed straight away by more is a key like an arrow, which is swallowed.
 		$'\\e') read -rsn1 -t 0.05 _ || cancel && read -rsn8 -t 0.01 _ ;;
 		esac
@@ -309,6 +314,9 @@ export function progressPopup(title: string, editor: string): ProgressPopup {
 			} finally {
 				rmSync(file('cancellable'), { force: true });
 			}
+		},
+		accepted() {
+			return existsSync(file('accept'));
 		},
 		async edit(text) {
 			rmSync(file('edited'), { force: true });

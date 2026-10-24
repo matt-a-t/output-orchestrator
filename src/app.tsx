@@ -680,6 +680,7 @@ export function App() {
 			describe: async (cwd, thread, base) => {
 				const written = await popup().cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal));
 				if (written === CLOSED) return null;
+				if (written && popup().accepted()) return withTicket(written, thread.ticket);
 				const edited = await popup().edit(
 					written
 						? prText(withTicket(written, thread.ticket), thread.branch!)
@@ -848,11 +849,14 @@ export function App() {
 		const progress = progressPopup(' commit ', COMMIT_FORM);
 		try {
 			const drafted = await progress.cancellable('claude is writing the commit message', signal => draftCommit(cwd, thread, signal));
-			const edited =
-				drafted === CLOSED
-					? CLOSED
-					: await progress.edit(drafted ? commitFormText(drafted) : commitFormText('', "claude couldn't write a commit message; write one."));
-			form = edited === CLOSED ? null : parseCommitForm(edited);
+			if (drafted && drafted !== CLOSED && progress.accepted()) form = { message: drafted.trim(), notes: '' };
+			else {
+				const edited =
+					drafted === CLOSED
+						? CLOSED
+						: await progress.edit(drafted ? commitFormText(drafted) : commitFormText('', "claude couldn't write a commit message; write one."));
+				form = edited === CLOSED ? null : parseCommitForm(edited);
+			}
 			if (!form) return setMessage('⚠ Commit cancelled (changes left staged)');
 			progress.status('committing');
 			await commit(cwd, `${form.message}\n`);

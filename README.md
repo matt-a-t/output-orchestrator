@@ -123,7 +123,8 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
   and **for claude** (comments to send along). Tab or ↑/↓ switches fields, ⏎ commits from either,
   esc cancels (leaving the changes staged), and ctrl-u / ctrl-w clear a field or delete a word.
-  If the thread's claude has stopped (✓), it's then told the step was committed, given your
+  Press `a` while claude is still writing to commit whatever it writes without opening the form
+  (`a` again goes back). If the thread's claude has stopped (✓), it's then told the step was committed, given your
   comments, and told to move on to the next checkpoint, or to stop if that was the last one.
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
@@ -189,7 +190,8 @@ alone. `OO_THREAD_ID`, `OO_THREAD_TITLE`, `OO_PROJECT` and `OO_BRANCH` are set f
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
 `gh pr create`, whatever branch the thread started from. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
-cancels). A thread in Local opens its PR from the project's checkout and stays in Local.
+cancels). Press `a` while claude is still writing to open the PR with what it writes, skipping vim.
+A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
 running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's
 claude can open the PR when you ask it to. `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
