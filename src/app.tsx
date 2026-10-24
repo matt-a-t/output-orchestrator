@@ -23,13 +23,13 @@ import {
 	stageAll,
 	worktreePath,
 } from './git.js';
-import { createPr, draftPr, findPr, mergeLabel, openPrInBrowser, prStatus, withTicket, type PrStatus } from './github.js';
+import { createPr, draftPr, findPr, mergeLabel, mergePr, openPrInBrowser, prStatus, withTicket, type PrStatus } from './github.js';
 import { editText, loop } from './input.js';
 import { KEY_SECTIONS } from './keys.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadForm, type NewThreadSubmit } from './newThreadForm.js';
 import { ProjectsView } from './projects.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from './requests.js';
-import { diffPaneCommand, openChanges, reviewDiff, showDiff, writeCommit } from './review.js';
+import { diffPaneCommand, openChanges, reviewDiff, showDiff, showPr, writeCommit } from './review.js';
 import { ThreadView } from './thread.js';
 import { approvedPrompt } from './threadCommand.js';
 import {
@@ -1188,6 +1188,18 @@ export function App() {
 				await openPrInBrowser(pr);
 				setMessage(`Opened PR #${pr.number} in the browser`);
 			}, 'opening PR in the browser');
+		}
+		if (input === 'v') {
+			const { pr } = selected;
+			if (!pr) return setMessage(`#${selected.id} has no PR`);
+			return inWorktree(selected, async cwd => {
+				if ((await showPr(cwd, pr.number)) !== 'merge') return;
+				setBusy(`merging PR #${pr.number}`);
+				const method = await mergePr(cwd, pr.number);
+				setMessage(`Merged PR #${pr.number} (${method})`);
+				// Straight to Done rather than on the next poll.
+				await checkPr(selected);
+			}, { git: true, label: `loading PR #${pr.number}` });
 		}
 		if (input === 'o') {
 			return inWorktree(selected, async cwd => {

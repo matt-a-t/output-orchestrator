@@ -123,6 +123,72 @@ export function mergeLabel(status: PrStatus): [string, string] | undefined {
 	}
 }
 
+/** A check on the PR's head: a CheckRun (Actions and other apps) or a StatusContext (the older status API). */
+export type PrCheck =
+	| { __typename: 'CheckRun'; name: string; status: string; conclusion: string }
+	| { __typename: 'StatusContext'; context: string; state: string };
+
+export type PrDetails = PrStatus & {
+	number: number;
+	title: string;
+	body: string;
+	url: string;
+	author: { login: string };
+	isDraft: boolean;
+	// APPROVED, CHANGES_REQUESTED or REVIEW_REQUIRED; empty when the repo doesn't require reviews.
+	reviewDecision: string;
+	reviews: { author: { login: string }; state: string; body: string }[];
+	statusCheckRollup: PrCheck[];
+	headRefName: string;
+	baseRefName: string;
+	additions: number;
+	deletions: number;
+};
+
+const DETAIL_FIELDS = 'number,title,body,url,author,isDraft,state,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup,headRefName,baseRefName,additions,deletions';
+
+/** What the PR viewer shows above the diff. */
+export async function prDetails(cwd: string, number: number): Promise<PrDetails> {
+	const { stdout } = await execa('gh', ['pr', 'view', String(number), '--json', DETAIL_FIELDS], { cwd });
+	return JSON.parse(stdout) as PrDetails;
+}
+
+/** The PR's diff as GitHub has it: what's pushed, not what's in the worktree. */
+export async function prDiff(cwd: string, number: number): Promise<string> {
+	return (await execa('gh', ['pr', 'diff', String(number), '--color=never'], { cwd })).stdout;
+}
+
+/** How the PR's checks stand, in words (and a color), or undefined if it has none. */
+export function checksLabel(checks: PrCheck[]): [string, string] | undefined {
+	let failing = 0;
+	let pending = 0;
+	let passing = 0;
+	for (const check of checks) {
+		const result = check.__typename === 'CheckRun' ? (check.status === 'COMPLETED' ? check.conclusion : 'PENDING') : check.state;
+		if (['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'].includes(result)) failing++;
+		else if (['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS', 'WAITING', ''].includes(result)) pending++;
+		// SUCCESS, NEUTRAL, SKIPPED and STALE don't hold anything up.
+		else passing++;
+	}
+	if (checks.length === 0) return;
+	const counts = [failing && `${failing} failing`, pending && `${pending} pending`, passing && `${passing} passing`].filter(Boolean).join(', ');
+	return [`checks: ${counts}`, failing ? 'red' : pending ? 'yellow' : 'green'];
+}
+
+/**
+ * Merge the PR the first way the repo allows: a merge commit, else squash, else rebase. The branch
+ * is left for the board to clean up when it sees the merge. Returns how it merged.
+ */
+export async function mergePr(cwd: string, number: number): Promise<string> {
+	const { stdout } = await execa('gh', ['repo', 'view', '--json', 'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed'], { cwd });
+	const allowed = JSON.parse(stdout) as Record<string, boolean>;
+	const fields = { merge: 'mergeCommitAllowed', squash: 'squashMergeAllowed', rebase: 'rebaseMergeAllowed' } as const;
+	const method = (['merge', 'squash', 'rebase'] as const).find(m => allowed[fields[m]]);
+	if (!method) throw new Error("the repo doesn't allow merging");
+	await execa('gh', ['pr', 'merge', String(number), `--${method}`], { cwd });
+	return method;
+}
+
 /**
  * Open the PR in the browser: $BROWSER if set, else the OS's opener. Under WSL that's Windows'
  * explorer.exe, since xdg-open usually has no browser there (explorer exits 1 even when it works).

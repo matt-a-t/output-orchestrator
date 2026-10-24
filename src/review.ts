@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
+import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, type PrDetails } from './github.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
-import { CLOSED, popup, shellQuote, type ProgressPopup } from './tmux.js';
+import { CLOSED, confirmPopup, popup, shellQuote, type ProgressPopup } from './tmux.js';
 
 // less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
 // 83) sets up delta's styles (`oo delta`) and comes back to the diff.
@@ -20,6 +21,10 @@ const DELTA_STATUS = 83;
 const PANE_KEYS = `${APPROVE_KEYS}r quit R\nt quit T\n`;
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
+// The PR viewer's m merges ('M' is 77) and o opens the browser ('O' is 79); b and w stay less's page back.
+const PR_KEYS = `${DIFF_KEYS}m quit M\no quit O\n`;
+const MERGE_STATUS = 77;
+const BROWSER_STATUS = 79;
 // `oo delta`, then a pause so its answer stays up until you're back in the diff.
 const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
 // What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
@@ -43,6 +48,87 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 		// Back to the diff, restyled if you added them.
 		await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
 	}
+}
+
+/**
+ * Show a PR as GitHub has it: its title, state, checks, reviews and description, then its diff, with
+ * n/N jumping between files and hunks like `showDiff`. `m` merges (after a confirm), `o` opens it in
+ * the browser and `S` sets up delta's styles.
+ */
+export async function showPr(cwd: string, number: number): Promise<'closed' | 'merge'> {
+	const [details, diff] = await Promise.all([prDetails(cwd, number), prDiff(cwd, number)]);
+	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
+	const header = join(dir, 'header');
+	const patch = join(dir, 'pr.diff');
+	writeFileSync(header, prHeader(details));
+	writeFileSync(patch, diff + '\n');
+	const stat = diff ? `git apply --stat --summary ${shellQuote(patch)}; echo; delta --paging=never --navigate < ${shellQuote(patch)}` : "echo 'No changes'";
+	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(lesskey('pr', PR_KEYS))}`;
+	const title = ` PR #${number} — n/N next/prev hunk  m merge  o browser  S styling  q close `;
+	try {
+		for (;;) {
+			const status = await popup(command, { cwd, title });
+			if (status === DELTA_STATUS) {
+				await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+				continue;
+			}
+			if (status === BROWSER_STATUS) {
+				await openPrInBrowser(details);
+				continue;
+			}
+			if (status !== MERGE_STATUS) return 'closed';
+			// Say what's in the way, since GitHub may still let you merge past it.
+			const [label] = mergeLabel(details) ?? [];
+			const warning = label && label !== 'ready to merge' ? ` (${label})` : '';
+			if (await confirmPopup(`Merge PR #${number}${warning}?`)) return 'merge';
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+const ANSI: Record<string, string> = { red: '31', green: '32', yellow: '33', magenta: '35', bold: '1', dim: '2' };
+const paint = (color: string, text: string) => `\x1b[${ANSI[color]}m${text}\x1b[0m`;
+
+const REVIEW_WORDS: Record<string, [string, string]> = {
+	APPROVED: ['approved', 'green'],
+	CHANGES_REQUESTED: ['requested changes', 'red'],
+	COMMENTED: ['commented', 'dim'],
+	DISMISSED: ['dismissed', 'dim'],
+};
+
+/** The top of the PR viewer: who wants to merge what, where it stands, the reviews so far and the description. */
+export function prHeader(pr: PrDetails): string {
+	const state = pr.state === 'OPEN' ? (pr.isDraft ? ['draft', 'dim'] : undefined) : [pr.state.toLowerCase(), 'magenta'];
+	const decision = REVIEW_WORDS[pr.reviewDecision] ?? (pr.reviewDecision === 'REVIEW_REQUIRED' ? ['review required', 'yellow'] : undefined);
+	const status = [state, pr.state === 'OPEN' ? mergeLabel(pr) : undefined, checksLabel(pr.statusCheckRollup), decision]
+		.filter((s): s is [string, string] => !!s)
+		.map(([text, color]) => paint(color, text));
+	// Each reviewer's latest say, skipping bare comments once they've approved or asked for changes.
+	const latest = new Map<string, string>();
+	for (const review of pr.reviews) {
+		if (review.state === 'PENDING') continue;
+		if (review.state === 'COMMENTED' && latest.has(review.author.login)) continue;
+		latest.set(review.author.login, review.state);
+	}
+	const reviews = [...latest].map(([login, state]) => {
+		const [word, color] = REVIEW_WORDS[state] ?? [state.toLowerCase(), 'dim'];
+		return `${login} ${paint(color, word)}`;
+	});
+	return [
+		paint('bold', `#${pr.number} ${pr.title}`),
+		`${pr.author.login} wants to merge ${pr.headRefName} into ${pr.baseRefName}  ${paint('green', `+${pr.additions}`)} ${paint('red', `−${pr.deletions}`)}`,
+		status.join(' · '),
+		reviews.length ? `reviews: ${reviews.join(', ')}` : '',
+		'',
+		// GitHub keeps bodies written in the browser with CRLFs, which less would show as ^M.
+		pr.body.replaceAll('\r', '').trim() || paint('dim', 'No description.'),
+		'',
+		paint('dim', '─'.repeat(40)),
+		'',
+	]
+		.filter((line, i) => line || i > 3)
+		.join('\n');
 }
 
 /**
