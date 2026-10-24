@@ -93,6 +93,8 @@ export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 /** The open tmux windows; badges only mean something while the thread's window is open. */
 export function useLiveWindows() {
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
+	const liveWindowsRef = useRef(liveWindows);
+	liveWindowsRef.current = liveWindows;
 	const refreshWindows = () =>
 		windowNames()
 			.then(names => setLiveWindows(new Set(names)))
@@ -102,7 +104,7 @@ export function useLiveWindows() {
 		const timer = setInterval(refreshWindows, 2000);
 		return () => clearInterval(timer);
 	}, []);
-	return { liveWindows, refreshWindows };
+	return { liveWindows, liveWindowsRef, refreshWindows };
 }
 
 /** Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved. */
