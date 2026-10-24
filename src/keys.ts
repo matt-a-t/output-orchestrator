@@ -41,6 +41,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['a', 'approve the step (d) / commit (beside claude)'],
 			['t', 'uncommitted / whole thread (beside claude)'],
 			['r', 'refresh (beside claude)'],
+			['S', "delta's header styles (oo delta)"],
 			['q', 'close'],
 			['>> note', 'in c: a comment on the line above'],
 			[':cq', 'in c: send nothing'],

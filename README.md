@@ -109,7 +109,8 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   the changed files and how much each changed, and `n` / `N` jump between files and hunks.
   delta's styles come from your git config. With its defaults, file headers and hunk headers
   look much alike, so this `~/.gitconfig` section is recommended: it makes file headers a solid
-  bar and hunk headers dim. Leave `navigate`, `file-modified-label` and `hunk-label` at their
+  bar and hunk headers dim. `S` in any diff (or `oo delta`) adds it for you: it shows your
+  current `[delta]` keys and a preview first, and only adds keys you haven't set. Leave `navigate`, `file-modified-label` and `hunk-label` at their
   defaults, because `n` / `N` look for them.
 
   ```ini

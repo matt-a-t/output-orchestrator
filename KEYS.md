@@ -43,6 +43,7 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 | `a` | in `d`: approve the step. Beside claude: commit everything uncommitted (claude drafts the message, you edit it and add comments for claude in the commit form; esc cancels) |
 | `t` | beside claude: switch between the uncommitted and whole-thread diffs |
 | `r` | beside claude: refresh |
+| `S` | set up delta's header styles (`oo delta` from the shell), then back to the diff |
 | `q` | close |
 | `>> note` | in `c`: a comment on the diff line above it |
 | `:cq` | in `c`: send nothing |
