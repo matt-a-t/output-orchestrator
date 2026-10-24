@@ -181,7 +181,10 @@ alone. `OO_THREAD_ID`, `OO_PROJECT` and `OO_BRANCH` are set for them.
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
 `gh pr create`, whatever branch the thread started from. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
-cancels). `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
+cancels). A thread in Local opens its PR from the project's checkout and stays in Local.
+`oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
+running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's
+claude can open the PR when you ask it to. `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
 Windows' default browser). The board checks open PRs every minute and moves merged ones to Done.
 
 Moving a thread to Done or archiving it (`x`) removes the worktree and closes its claude window.
@@ -209,7 +212,7 @@ finished.
 
 ### From the command line
 
-`oo thread add|list|show|move|plan` reads and changes the board from a shell, and from inside a
+`oo thread add|list|show|move|local|pr|plan|todo` reads and changes the board from a shell, and from inside a
 thread's claude, where the thread id defaults to that thread. Run `oo help` to see them all.
 claude learns these commands from an `oo` skill that the board installs (see below), so you can
 ask a thread's claude to file follow-up work as a new thread.

@@ -96,7 +96,7 @@ test('moves that need the board are refused and leave state.json alone', async t
 	const { dir, project } = fixture([{ cwd: '/work/one' }]);
 	const output = capture(t);
 	assert.equal(await threadCommand(['move', '1', 'pr'], context(dir, project)), 1);
-	assert.match(output.err(), /from the board/);
+	assert.match(output.err(), /use oo thread pr/);
 	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.column, 'planned');
 });
 
@@ -180,6 +180,36 @@ test('local sends the direction to the board, toggling without one, and needs th
 	assert.equal(output.out(), 'local #1 true\nlocal #1 false\nlocal #2 toggle\nlocal #2 true');
 	assert.equal(await threadCommand(['local', '2', 'sideways'], ctx), 1);
 	assert.match(output.err(), /Unknown direction "sideways"[^]*usage:[^]*oo thread local \[id\] \[in\|out\]/);
+});
+
+test('pr sends the title and description to the board, and needs the board running', async t => {
+	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const output = capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['pr'], ctx), 1);
+	assert.match(output.err(), /needs the board running/);
+
+	// Stand in for the board, answering with what it was asked.
+	claimBoard(dir);
+	const reader = new RequestReader(dir);
+	const timer = setInterval(() => {
+		for (const r of reader.read()) {
+			const { thread, title, body } = r as Extract<Request, { op: 'pr' }>;
+			respond({ id: r.id, ok: true, message: `${r.op} #${thread} ${title ?? '-'} ${body ?? '-'}` }, dir);
+		}
+	}, 20);
+	t.after(() => {
+		clearInterval(timer);
+		releaseBoard(dir);
+	});
+	assert.equal(await threadCommand(['pr'], ctx), 0);
+	assert.equal(await threadCommand(['pr', '--body-file', '-'], ctx), 0);
+	assert.equal(await threadCommand(['pr', '#2', '--title', 'Fix it', '--body-file', '-'], ctx), 0);
+	assert.equal(output.out(), 'pr #1 - -\npr #1 - plan from stdin\npr #2 Fix it plan from stdin');
+	assert.equal(await threadCommand(['pr', '1', '2'], ctx), 1);
+	assert.match(output.err(), /Unexpected 2[^]*usage:/);
+	assert.equal(await threadCommand(['pr', '--draft'], ctx), 1);
+	assert.match(output.err(), /Unknown option --draft/);
 });
 
 test('plan replaces the thread\'s plan', async t => {

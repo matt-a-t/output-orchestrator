@@ -13,7 +13,11 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread show [id] [--json]
   oo thread move [id] <column>
                               columns: ${[...COLUMNS, 'archived'].join(', ')}
-                              Moving to pr is done on the board; a thread in Local can't move until it's back.
+                              Moving to pr is oo thread pr; a thread in Local can't move until it's back.
+  oo thread pr [id] [--title <title>] [--body-file <path>|-]
+                              push the thread's branch, open its PR (unless it has one) and move it to PR, from Local too.
+                              Without --body-file, claude drafts the description, and the title unless --title is given;
+                              with it and no --title, the title is the thread's. Needs the board running.
   oo thread local [id] [in|out]
                               put the thread in Local, checking its branch out in the project's own checkout,
                               or bring it back (no direction: toggle, like t on the board). Needs the board running.
@@ -216,6 +220,18 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (!boardRunning(ctx.dir)) return fail('Moving into or out of Local needs the board running');
 		return report(await sendRequest({ op: 'local', thread, local: direction ? direction === 'in' : 'toggle' }, { dir: ctx.dir }));
 	}
+	if (sub === 'pr') {
+		const { positional, flag } = parseArgs(rest, ['title', 'body-file'], []);
+		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
+		const bodyFile = flag('body-file');
+		const body = bodyFile === undefined ? undefined : (bodyFile === '-' ? ctx.stdin() : readFileSync(bodyFile, 'utf8')).trim();
+		const title = flag('title')?.trim() || undefined;
+		const thread = resolveThreadId(state, positional[0], ctx.env, ctx.cwd);
+		// It pushes, opens the PR, moves the thread and runs hooks, which only the board can do.
+		if (!boardRunning(ctx.dir)) return fail('Opening a PR needs the board running');
+		// claude drafting the description and the push can take a few minutes.
+		return report(await sendRequest({ op: 'pr', thread, title, body }, { dir: ctx.dir, timeoutMs: 5 * 60_000 }));
+	}
 	if (sub === 'plan') {
 		const { positional, flag } = parseArgs(rest, ['plan-file'], []);
 		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
@@ -317,7 +333,7 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: str
 	const then =
 		next !== -1
 			? `Move on to the next checkpoint: ${next + 1}. ${todos[next]!.subject}. Mark it active with \`oo thread todo ${next + 1} active\`.`
-			: "That was the last step, so don't start anything else: stop and wait for the user. Moving the thread to PR happens on the board.";
+			: "That was the last step, so don't start anything else: stop and wait for the user. Open its PR (`oo thread pr`) only when the user asks.";
 	const comments = notes && `The user's comments, to handle before ${next === -1 ? 'you stop' : 'moving on'}: "${notes}".`;
 	return [`${done} (commit: ${commitSubject}).`, comments, then].filter(Boolean).join(' ');
 }
