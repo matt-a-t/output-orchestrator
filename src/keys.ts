@@ -59,6 +59,19 @@ export const KEY_SECTIONS: KeySection[] = [
 		],
 	},
 	{
+		title: 'In a form (e, P, commit)',
+		keys: [
+			['j/k ↑/↓ tab', 'move between fields'],
+			['i / ⏎', 'edit, cursor at the end'],
+			['I', 'edit, cursor at the start'],
+			['dd', 'clear the field and edit'],
+			['←/→ C-a/C-e', 'editing: move / start, end'],
+			['C-u / C-w', 'editing: delete line / word'],
+			['esc', 'stop editing; again: cancel'],
+			['⏎ (editing)', 'save (on a choice too)'],
+		],
+	},
+	{
 		title: "In a thread's window",
 		keys: [
 			['M-h / M-l', 'claude / the pane beside it'],

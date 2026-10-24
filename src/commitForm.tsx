@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { useState } from 'react';
 import { Box, render, Text, useApp, useInput, type Key } from 'ink';
-import { editText } from './input.js';
+import { EDITING_HELP, FIELD_HELP, FieldText } from './fieldText.js';
+import { fieldKey, type Edit } from './input.js';
 import { OO_COMMAND } from './status.js';
 
 /**
@@ -28,18 +29,21 @@ export function parseCommitForm(text: string): CommitForm | null {
 	}
 }
 
-export type FormState = { values: [string, string]; field: 0 | 1 };
+/** `edit` is the focused field's (see fieldKey). */
+export type FormState = { values: [string, string]; field: 0 | 1; edit: Edit };
 
 /** Apply a keypress to the form: the new state, or what it ends with (null if cancelled). */
 export function formKey(state: FormState, input: string, key: Key): FormState | { done: CommitForm | null } {
+	const next = fieldKey(state.values[state.field], state.edit, input, key);
+	if (next) {
+		const values: [string, string] = [...state.values];
+		values[state.field] = next.value;
+		return { ...state, values, edit: next.edit };
+	}
 	if (key.escape) return { done: null };
 	if (key.return) return { done: { message: state.values[0], notes: state.values[1] } };
-	if (key.tab || key.upArrow || key.downArrow) return { ...state, field: state.field === 0 ? 1 : 0 };
-	const value = editText(state.values[state.field], input, key);
-	if (value === undefined) return state;
-	const values: [string, string] = [...state.values];
-	values[state.field] = value;
-	return { ...state, values };
+	if (key.tab || key.upArrow || key.downArrow || input === 'j' || input === 'k') return { ...state, field: state.field === 0 ? 1 : 0, edit: null };
+	return { ...state, edit: null };
 }
 
 const LABELS = ['commit:', 'for claude:'];
@@ -47,7 +51,7 @@ const LABEL_WIDTH = Math.max(...LABELS.map(l => l.length)) + 1;
 
 function Form({ initial, note, onDone }: { initial: string; note?: string; onDone: (result: CommitForm | null) => void }) {
 	const { exit } = useApp();
-	const [state, setState] = useState<FormState>({ values: [initial, ''], field: 0 });
+	const [state, setState] = useState<FormState>({ values: [initial, ''], field: 0, edit: null });
 	useInput((input, key) => {
 		const next = formKey(state, input, key);
 		if ('done' in next) {
@@ -61,13 +65,14 @@ function Form({ initial, note, onDone }: { initial: string; note?: string; onDon
 			{LABELS.map((label, i) => (
 				<Text key={label}>
 					<Text dimColor={i !== state.field}>{label.padEnd(LABEL_WIDTH)}</Text>
-					{state.values[i]}
-					{i === state.field ? <Text inverse> </Text> : null}
+					<FieldText value={state.values[i]!} edit={i === state.field ? state.edit : null} />
 				</Text>
 			))}
 			{note ? <Text color="yellow">{note}</Text> : null}
 			<Box flexGrow={1} />
-			<Text dimColor>tab or ↑/↓ field  ⏎ commit  esc cancel  ctrl-u clear  ctrl-w delete word</Text>
+			<Text dimColor>
+				{typeof state.edit === 'number' ? EDITING_HELP.replace('⏎ save', '⏎ commit') : `${FIELD_HELP}  j/k tab or ↑/↓ field  esc cancel`}
+			</Text>
 		</Box>
 	);
 }

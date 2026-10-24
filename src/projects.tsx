@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
-import { editText, loop } from './input.js';
+import { EDITING_HELP, FIELD_HELP, FieldText } from './fieldText.js';
+import { fieldKey, loop, type Edit } from './input.js';
 import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
 const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
@@ -50,8 +51,8 @@ const fieldValue = (project: Project, field: Exclude<Field, Choice>) => (isHook(
 const withField = (project: Project, field: Exclude<Field, Choice>, value: string): Project =>
 	isHook(field) ? { ...project, hooks: { ...project.hooks, [field]: value } } : { ...project, [field]: value };
 
-/** `original` is the name of the project being edited; undefined when adding one. */
-type Form = { original?: string; project: Project; field: number };
+/** `original` is the name of the project being edited; undefined when adding one. `edit` is the focused text field's (see fieldKey). */
+type Form = { original?: string; project: Project; field: number; edit: Edit };
 
 type Props = {
 	state: State;
@@ -112,19 +113,23 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		setMessage('');
 		if (form) {
 			const field = FIELDS[form.field]!;
+			if (!isChoice(field)) {
+				const next = fieldKey(fieldValue(form.project, field), form.edit, input, key);
+				if (next) return setForm({ ...form, project: withField(form.project, field, next.value), edit: next.edit });
+			}
 			if (key.escape) return setForm(null);
 			if (key.return) return save(form);
-			if (key.upArrow || (key.tab && key.shift)) return setForm({ ...form, field: (form.field + FIELDS.length - 1) % FIELDS.length });
-			if (key.downArrow || key.tab) return setForm({ ...form, field: (form.field + 1) % FIELDS.length });
+			const moved = { ...form, edit: null };
+			if (key.upArrow || (key.tab && key.shift) || input === 'k') return setForm({ ...moved, field: (form.field + FIELDS.length - 1) % FIELDS.length });
+			if (key.downArrow || key.tab || input === 'j') return setForm({ ...moved, field: (form.field + 1) % FIELDS.length });
 			if (isChoice(field)) {
 				const delta = key.leftArrow ? -1 : key.rightArrow || input === ' ' ? 1 : 0;
 				if (!delta) return;
 				const choices = CHOICES[field] as readonly Project[Choice][];
 				const value = choices[(choices.indexOf(form.project[field]) + delta + choices.length) % choices.length];
-				return setForm({ ...form, project: { ...form.project, [field]: value } });
+				return setForm({ ...moved, project: { ...form.project, [field]: value } });
 			}
-			const value = editText(fieldValue(form.project, field), input, key);
-			if (value !== undefined) setForm({ ...form, project: withField(form.project, field, value) });
+			if (form.edit !== null) setForm(moved);
 			return;
 		}
 		if (confirmRemove) {
@@ -138,10 +143,10 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0 });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0, edit: null });
 		}
 		if (!current) return;
-		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0 });
+		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0, edit: null });
 		if (input === 'x') {
 			if (isHome(current)) return setMessage(`✗ ${current.name} is the built-in home project and can't be removed`);
 			if (state.threads.some(t => t.project === current.name && t.column !== 'archived')) {
@@ -192,8 +197,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 									</Text>
 								) : (
 									<Text>
-										{fieldValue(form.project, field)}
-										{active ? <Text inverse> </Text> : null}
+										<FieldText value={fieldValue(form.project, field)} edit={active ? form.edit : null} />
 										{field === 'wakePrompt' && !form.project.wakePrompt ? <Text dimColor>{DEFAULT_WAKE_PROMPT}</Text> : null}
 									</Text>
 								)}
@@ -206,7 +210,9 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			<Text color={message.startsWith('✗') ? 'red' : confirmRemove ? 'yellow' : 'green'}>{message}</Text>
 			<Text dimColor>
 				{form
-					? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}↑/↓ or tab field  ${isChoice(FIELDS[form.field]!) ? '←/→ change  ' : ''}⏎ save  esc cancel`
+					? typeof form.edit === 'number'
+						? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${EDITING_HELP}`
+						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? '←/→ change  ⏎ save' : FIELD_HELP}  j/k ↑/↓ or tab field  esc cancel`
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>
