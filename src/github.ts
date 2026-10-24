@@ -200,9 +200,23 @@ export async function reviewRequests(cwd: string): Promise<ReviewRequest[]> {
 export const REVIEW_EVENTS = ['approve', 'request-changes', 'comment'] as const;
 export type ReviewEvent = (typeof REVIEW_EVENTS)[number];
 
-/** Submit a review of the PR; GitHub wants a body for all but an approval. */
-export async function submitReview(cwd: string, number: number, event: ReviewEvent, body: string): Promise<void> {
-	await execa('gh', ['pr', 'review', String(number), `--${event}`, '--body-file', '-'], { cwd, input: body });
+/** A review comment on one line of the PR's diff; LEFT is the old side, RIGHT the new. */
+export type ReviewComment = { path: string; line: number; side: 'LEFT' | 'RIGHT'; body: string };
+
+const API_EVENTS: Record<ReviewEvent, string> = { approve: 'APPROVE', 'request-changes': 'REQUEST_CHANGES', comment: 'COMMENT' };
+
+/**
+ * Submit a review of the PR, with `comments` on lines of its diff. GitHub wants a body when
+ * requesting changes. gh pr review can't add line comments, so those go through the API.
+ */
+export async function submitReview(cwd: string, number: number, event: ReviewEvent, body: string, comments: ReviewComment[] = []): Promise<void> {
+	if (comments.length === 0) {
+		await execa('gh', ['pr', 'review', String(number), `--${event}`, '--body-file', '-'], { cwd, input: body });
+		return;
+	}
+	// gh fills in {owner}/{repo} from the checkout's remote.
+	const review = { event: API_EVENTS[event], body, comments };
+	await execa('gh', ['api', `repos/{owner}/{repo}/pulls/${number}/reviews`, '--input', '-'], { cwd, input: JSON.stringify(review) });
 }
 
 /**

@@ -204,8 +204,9 @@ Local comes out of it on the way, with the checkout put back on the default bran
 if the checkout has uncommitted changes, it stays in PR until they're dealt with.
 
 GitHub won't let you approve your own PR, so on someone else's the viewer has `a` approve,
-`x` request changes and `c` comment instead of `m` (the last two open your editor for the comment;
-leave it empty to go back). `R` lists the open PRs asking you, or a team you're on, for a review,
+`x` request changes and `c` comment instead of `m`. The last two open the PR's diff in vim, like
+`c` on the board: write the main comment above the diff and `>>` notes under the lines they're
+about, which go on the PR as comments on those lines. Leave it untouched, or `:cq`, to go back. `R` lists the open PRs asking you, or a team you're on, for a review,
 across every project with a repo; `⏎` opens one in the viewer, and once you've reviewed it, it
 drops off the list.
 

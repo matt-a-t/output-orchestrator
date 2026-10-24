@@ -59,7 +59,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['o', 'open the PR in your browser (v)'],
 			['S', "delta's header styles (oo delta)"],
 			['q', 'close'],
-			['>> note', 'in c: a comment on the line above'],
+			['>> note', 'in c (and x/c in v): a comment on the line above'],
 			[':cq', 'in c: send nothing'],
 		],
 	},

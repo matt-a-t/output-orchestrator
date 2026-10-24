@@ -714,8 +714,9 @@ export function App() {
 		if (picked === 'closed') return false;
 		if (picked.action === 'review') {
 			setBusy(`reviewing PR #${number}`);
-			await submitReview(cwd, number, picked.event, picked.body);
-			setMessage(`${REVIEW_DONE[picked.event]} PR #${number}`);
+			await submitReview(cwd, number, picked.event, picked.body, picked.comments);
+			const lines = picked.comments.length;
+			setMessage(`${REVIEW_DONE[picked.event]} PR #${number}${lines ? ` with ${lines} line comment${lines === 1 ? '' : 's'}` : ''}`);
 			return true;
 		}
 		setBusy(`merging PR #${number}`);
