@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, type Store } from './threads.js';
+import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, undelivered, type Store } from './threads.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
@@ -27,6 +27,11 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               replace the thread's checkpoints, one per line (items already on it keep their status)
   oo thread todo [id] <n> <${TODO_STATUSES.join('|')}>
                               set checkpoint n's status (numbered as \`oo thread show\` lists them)
+  oo thread send <id> [--wake] (<message> | --file <path>|-)
+                              tell a related thread's claude something, from this thread (or from you, outside one).
+                              It's put to that claude when its turn ends, or when it next starts if it's closed;
+                              --wake resumes a closed one to hear it now (needs the board running).
+  oo thread inbox [id]        the messages other threads have sent this one
   Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
 
 /** What the command runs against; tests swap these out. */
@@ -123,8 +128,8 @@ export function resolveThreadId(state: State, arg: string | undefined, env: Node
 }
 
 /** Through the board if it's running (it owns state.json then), else straight to state.json. */
-async function change(request: DistributiveOmit<Request, 'id'>, ctx: Context): Promise<Response> {
-	if (boardRunning(ctx.dir)) return sendRequest(request, { dir: ctx.dir });
+async function change(request: DistributiveOmit<Request, 'id'>, ctx: Context & { timeoutMs?: number }): Promise<Response> {
+	if (boardRunning(ctx.dir)) return sendRequest(request, { dir: ctx.dir, timeoutMs: ctx.timeoutMs });
 	const file = join(ctx.dir, 'state.json');
 	let state = loadState(file);
 	const store: Store = { get: () => state, update: fn => void (state = fn(state)) };
@@ -150,6 +155,8 @@ function details(state: State, t: Thread): string {
 	if (dir) lines.push(`dir:     ${dir}`);
 	if (t.pr) lines.push(`PR:      #${t.pr.number} ${t.pr.url}`);
 	if (t.sessionId) lines.push(`session: ${t.sessionId}`);
+	const unread = undelivered(t.inbox).length;
+	if (unread) lines.push(`inbox:   ${unread} not yet delivered (oo thread inbox)`);
 	if (t.todos?.length) lines.push(`todos:   ${todoProgress(t.todos)} done`, ...t.todos.map(todo => `  ${TODO_MARKS[todo.status]} ${todo.subject}`));
 	if (t.plan) lines.push('', t.plan);
 	return lines.join('\n');
@@ -260,7 +267,41 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const thread = resolveThreadId(state, positional.length === 3 ? positional[0] : undefined, ctx.env, ctx.cwd);
 		return report(await change({ op: 'todo', thread, item: Number(item), status: status as TodoStatus }, ctx));
 	}
+	if (sub === 'send') {
+		const { positional, flag, has } = parseArgs(rest, ['file'], ['wake']);
+		const [to, ...words] = positional;
+		const file = flag('file');
+		if (!to || (file === undefined) === !words.length) throw new UsageError('oo thread send <id> [--wake] (<message> | --file <path>|-)');
+		const text = (file === undefined ? words.join(' ') : file === '-' ? ctx.stdin() : readFileSync(file, 'utf8')).trim();
+		if (!text) throw new UsageError('The message is empty');
+		const thread = resolveThreadId(state, to, ctx.env, ctx.cwd);
+		const from = senderId(state, ctx);
+		// Resuming a claude is something only the board can do.
+		if (has('wake') && !boardRunning(ctx.dir)) return fail('--wake needs the board running');
+		return report(await change({ op: 'send', thread, from, text, wake: has('wake') || undefined }, has('wake') ? { ...ctx, timeoutMs: 60_000 } : ctx));
+	}
+	if (sub === 'inbox') {
+		const { positional } = parseArgs(rest, [], []);
+		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
+		const thread = state.threads.find(t => t.id === resolveThreadId(state, positional[0], ctx.env, ctx.cwd))!;
+		const inbox = thread.inbox ?? [];
+		if (!inbox.length) console.log(`#${thread.id} has no messages`);
+		for (const m of inbox) {
+			const from = m.from === 'user' ? 'you' : `#${m.from}`;
+			console.log(`${m.ts.slice(0, 16).replace('T', ' ')}  from ${from}${m.delivered ? '' : ' (not yet delivered)'}\n  ${m.text.replace(/\n/g, '\n  ')}`);
+		}
+		return 0;
+	}
 	throw new UsageError('');
+}
+
+/** The thread sending from here, if this is a thread's claude (or its directory), else 'user'. */
+function senderId(state: State, ctx: Context): string {
+	try {
+		return resolveThreadId(state, undefined, ctx.env, ctx.cwd);
+	} catch {
+		return threadAt(state, ctx.cwd)?.id ?? 'user';
+	}
 }
 
 /** One checkpoint per line, without list markers or checkboxes. */

@@ -19,7 +19,11 @@ export type Request =
 	| { id: string; op: 'plan'; thread: string; plan: string }
 	| { id: string; op: 'todos'; thread: string; subjects: string[] }
 	// `item` counts from 1, as `oo thread show` lists them.
-	| { id: string; op: 'todo'; thread: string; item: number; status: TodoStatus };
+	| { id: string; op: 'todo'; thread: string; item: number; status: TodoStatus }
+	// `from` is the sending thread's id, or 'user'; `wake` (board-only) resumes a closed claude to hear it.
+	| { id: string; op: 'send'; thread: string; from: string; text: string; wake?: boolean }
+	// The thread's first `count` undelivered messages have been put to its claude.
+	| { id: string; op: 'delivered'; thread: string; count: number };
 export type Response = { id: string; ok: boolean; message: string; thread?: string };
 
 export const requestsFile = (dir = DATA_DIR) => join(dir, 'requests.jsonl');
@@ -59,7 +63,7 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'pr', 'plan', 'todos', 'todo'].includes(r.op);
+const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'pr', 'plan', 'todos', 'todo', 'send', 'delivered'].includes(r.op);
 const isResponse = (r: any) => typeof r.id === 'string' && typeof r.ok === 'boolean';
 
 /** The board's side: new requests since the last read. */

@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { addThread, approvedTodo, conflictPrompt, inDir, todosDone, todoWindow } from './threads.js';
+import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todosDone, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -371,4 +371,53 @@ test('the conflict prompt names the files, and says to push only with a PR', () 
 	assert.match(conflictPrompt('main', ['a.ts', 'b.ts'], false), /origin\/main stopped on conflicts in: a\.ts, b\.ts\./);
 	assert.doesNotMatch(conflictPrompt('main', ['a.ts'], false), /push/);
 	assert.match(conflictPrompt('main', ['a.ts'], true), /git push --force-with-lease/);
+});
+
+test('send puts a message in another thread\'s inbox, from the thread it\'s sent from or from the user', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const output = capture(t);
+	assert.equal(await threadCommand(['send', '2', 'the', 'API', 'changed'], context(dir, '/work/one', { OO_THREAD_ID: '1' })), 0);
+	assert.equal(await threadCommand(['send', '#2', '--file', '-'], context(dir, project)), 0);
+	const inbox = loadState(join(dir, 'state.json')).threads[1]!.inbox!;
+	assert.deepEqual(
+		inbox.map(m => [m.from, m.text, m.delivered]),
+		[['1', 'the API changed', false], ['user', 'plan from stdin', false]],
+	);
+	await threadCommand(['show', '2'], context(dir, project));
+	assert.match(output.out(), /inbox: {3}2 not yet delivered/);
+	await threadCommand(['inbox'], context(dir, '/work/two', { OO_THREAD_ID: '2' }));
+	assert.match(output.out(), /from #1 \(not yet delivered\)\n {2}the API changed/);
+	assert.match(output.out(), /from you \(not yet delivered\)\n {2}plan from stdin/);
+});
+
+test('send refuses yourself, finished threads, an empty message and --wake without the board', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two', column: 'done' }]);
+	const output = capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['send', '1', 'hi'], ctx), 1);
+	assert.match(output.err(), /That's #1 itself/);
+	assert.equal(await threadCommand(['send', '2', 'hi'], ctx), 1);
+	assert.match(output.err(), /#2 is in DONE/);
+	assert.equal(await threadCommand(['send', '1'], context(dir, project)), 1);
+	assert.match(output.err(), /usage:/);
+	assert.equal(await threadCommand(['send', '1', '--wake', 'hi'], context(dir, project)), 1);
+	assert.match(output.err(), /--wake needs the board running/);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.inbox, undefined);
+});
+
+test('markDelivered marks only the messages that were put to claude', () => {
+	const m = (text: string, delivered = false) => ({ from: '1', text, ts: '', delivered });
+	assert.deepEqual(
+		markDelivered([m('old', true), m('a'), m('b'), m('c')], 2).map(x => [x.text, x.delivered]),
+		[['old', true], ['a', true], ['b', true], ['c', false]],
+	);
+});
+
+test('the messages prompt names each sender and how to reply', () => {
+	const { state } = fixture([{ title: 'api' }, { title: 'ui' }]);
+	const prompt = messagesPrompt(state, [{ from: '1', text: 'renamed foo', ts: '', delivered: false }]);
+	assert.match(prompt, /^A message from related work on the board:\nFrom thread #1 "api": renamed foo\n/);
+	assert.match(prompt, /oo thread send 1 …/);
+	const fromUser = messagesPrompt(state, [{ from: 'user', text: 'hi', ts: '', delivered: false }]);
+	assert.doesNotMatch(fromUser, /Reply with/);
 });
