@@ -49,6 +49,22 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 | `>> note` | in `c`: a comment on the diff line above it |
 | `:cq` | in `c`: send nothing |
 
+## In a form
+
+The thread (`e`), project (`P`) and commit forms. Text fields are only typed into once you start
+editing one, vim-style; the board's one-line prompts (a new thread's title, a ticket key) are typed into straight away.
+
+| Key | |
+|---|---|
+| `j`/`k` `↑`/`↓` `tab` | move between fields |
+| `i` / `⏎` | edit a text field, cursor at the end |
+| `I` | edit it, cursor at the start |
+| `dd` | clear it and edit |
+| `←`/`→` `ctrl-a`/`ctrl-e` | while editing: move the cursor / to the start or end |
+| `ctrl-u` / `ctrl-w` | while editing: delete back to the start / back over a word |
+| `esc` | stop editing, keeping the text; again to cancel the form |
+| `⏎` | while editing, or on a choice field (project, colour, …): save (commit, in the commit form) |
+
 ## In a thread's window
 
 tmux keys with no prefix. They only apply in thread windows, so elsewhere the key still
