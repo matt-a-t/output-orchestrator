@@ -198,6 +198,15 @@ started in rather than a worktree, so diffs, comments and approve work there but
 open a PR. If the thread looks like it's still open somewhere else, Enter warns first, and `y`
 resumes anyway.
 
+### Projects without a repo
+
+A project doesn't have to be a git repo: `oo project add ~ home` or `oo project add ~/.claude`
+gives you somewhere to start threads that work on your machine or your claude settings. A path
+that isn't a repo gets **worktrees** turned off (also in the projects screen, `P`), and then
+every thread runs in the project directory itself, several at once. There's no branch, so
+diffs, comments, approve, Local and PR are off for them; `F` moves one to Done when you're
+finished.
+
 ### From the command line
 
 `oo thread add|list|show|move|plan` reads and changes the board from a shell, and from inside a

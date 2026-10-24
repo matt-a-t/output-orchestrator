@@ -75,12 +75,16 @@ function parseColumn(name: string): Column {
 	return column;
 }
 
-/** The thread whose directory `cwd` is in, picking the innermost if they nest. */
+/**
+ * The thread whose directory `cwd` is in, picking the innermost if they nest. None if a project
+ * checkout inside it is nearer, e.g. ~/app under a thread in a project at ~ without worktrees.
+ */
 function threadAt(state: State, cwd: string): Thread | undefined {
-	return state.threads
+	const found = state.threads
 		.map(t => ({ t, dir: threadDir(state, t) }))
 		.filter(({ dir }) => dir && inDir(cwd, dir))
-		.sort((a, b) => b.dir!.length - a.dir!.length)[0]?.t;
+		.sort((a, b) => b.dir!.length - a.dir!.length)[0];
+	if (found && !state.projects.some(p => inDir(cwd, p.path) && p.path.length > found.dir!.length)) return found.t;
 }
 
 /** `--project`, else the project of the thread `cwd` is in (worktrees aren't inside the project), else the project containing `cwd`. */
@@ -189,8 +193,10 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.length < 1 || positional.length > 2) throw new UsageError('oo thread move [id] <column>');
 		const column = parseColumn(positional.at(-1)!);
 		const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
-		// That removes the directory and closes the thread's claude, which is likely the one asking.
-		if ((column === 'done' || column === 'archived') && threadAt(state, ctx.cwd)?.id === thread) {
+		// That removes the worktree and closes the thread's claude, which is likely the one asking. A thread
+		// with its own directory (imported, or in a project without worktrees) keeps both.
+		const ownDir = state.threads.find(t => t.id === thread)?.cwd;
+		if ((column === 'done' || column === 'archived') && !ownDir && threadAt(state, ctx.cwd)?.id === thread) {
 			return fail(`Moving #${thread} to ${COLUMN_LABELS[column]} from its own directory would close its claude — do it from the board`);
 		}
 		const response = await change({ op: 'move', thread, column }, ctx);

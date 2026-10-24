@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { approvedTodo, inDir, todoWindow } from './threads.js';
+import { addThread, approvedTodo, inDir, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -122,15 +122,21 @@ test('threads from the old UI testing column load as in Local, back in Polish', 
 	assert.equal('restoreRef' in thread!, false);
 });
 
-test('a thread can\'t be moved to done or archived from its own directory', async t => {
-	const { dir } = fixture([{ cwd: '/work/one', column: 'polish' }]);
+test('a thread can\'t be moved to done or archived from its own worktree', async t => {
+	const { dir, project } = fixture([{ column: 'polish' }, { cwd: '/work/two', column: 'polish' }]);
+	const file = join(dir, 'state.json');
+	// Any existing directory passes for its worktree.
+	const state = loadState(file);
+	saveState({ ...state, threads: state.threads.map(t => (t.id === '1' ? { ...t, worktree: join(project, 'sub') } : t)) }, file);
 	const output = capture(t);
-	const ctx = context(dir, '/work/one/src', { OO_THREAD_ID: '1' });
+	const ctx = context(dir, join(project, 'sub'), { OO_THREAD_ID: '1' });
 	assert.equal(await threadCommand(['move', 'done'], ctx), 1);
 	assert.equal(await threadCommand(['move', '1', 'archived'], ctx), 1);
 	assert.match(output.err(), /would close its claude/);
 	// Other columns are fine.
 	assert.equal(await threadCommand(['move', 'active'], ctx), 0);
+	// A thread with its own directory keeps it and its claude on the way to Done.
+	assert.equal(await threadCommand(['move', 'done'], context(dir, '/work/two', { OO_THREAD_ID: '2' })), 0);
 });
 
 test('usage: shown for mistakes in the command line, not for failed lookups', async t => {
@@ -289,4 +295,33 @@ test('a stopped claude is told which step was committed and what comes next, or 
 		/\(commit: Add a\)\. The user's comments, to handle before moving on: "rename x"\. Move on to the next checkpoint: 2\./,
 	);
 	assert.match(approvedPrompt([todo('a', 'done')], 0, 'Add a', 'rename x'), /to handle before you stop: "rename x"\. That was the last step/);
+});
+
+test('a project with worktrees off runs its threads in its directory, with no PR', async t => {
+	const { dir, project, state } = fixture();
+	const file = join(dir, 'state.json');
+	saveState({ ...state, projects: state.projects.map(p => ({ ...p, worktrees: false })) }, file);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	assert.equal(await threadCommand(['add', 'tidy', 'settings'], ctx), 0);
+	assert.equal(await threadCommand(['add', 'and', 'another'], ctx), 0);
+	assert.deepEqual(loadState(file).threads.map(t => t.cwd), [project, project]);
+	// Several active at once, without the one-per-project warning.
+	assert.equal(await threadCommand(['move', '1', 'active'], ctx), 0);
+	assert.equal(await threadCommand(['move', '2', 'active'], ctx), 0);
+	assert.doesNotMatch(output.out() + output.err(), /already has an active thread/);
+	assert.equal(await threadCommand(['move', '1', 'pr'], ctx), 1);
+	assert.match(output.err(), /#1 is in p, which has worktrees off — there's no PR to open, so move it to Done instead/);
+	// No git anywhere: the project dir isn't a repo, so any git call would fail the move.
+	assert.equal(await threadCommand(['move', '1', 'done'], ctx), 0);
+	assert.equal(loadState(file).threads.find(t => t.id === '1')?.column, 'done');
+});
+
+test('a project inside a thread\'s directory is nearer than the thread', () => {
+	// A thread in a project at the parent dir without worktrees, as ~ would be.
+	const { dir, project, state } = fixture();
+	const home = { ...state.projects[0]!, name: 'home', path: dir, worktrees: false };
+	const s = addThread({ ...state, projects: [...state.projects, home] }, { project: 'home', title: 'x' }).state;
+	assert.equal(resolveProject(s, join(project, 'sub'), undefined), 'p');
+	assert.equal(resolveProject(s, dir, undefined), 'home');
 });

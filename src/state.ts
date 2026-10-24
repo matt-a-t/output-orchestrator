@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { execaSync } from 'execa';
 import { z } from 'zod';
 
 export const COLUMNS = ['planned', 'active', 'polish', 'pr', 'done'] as const;
@@ -36,6 +37,9 @@ const ProjectSchema = z.object({
 	// Shown on board cards in place of the name, when set.
 	abbrev: z.string().default(''),
 	path: z.string(),
+	// Off for a directory that isn't a repo (e.g. ~ or ~/.claude): threads run in the project
+	// directory itself, several at once, with no branch, diffs or PR.
+	worktrees: z.boolean().default(true),
 	color: z.enum(COLORS),
 	// What w / W paste into a woken claude; empty means DEFAULT_WAKE_PROMPT.
 	wakePrompt: z.string().default(''),
@@ -122,11 +126,17 @@ export function saveState(state: State, file = STATE_FILE): string {
 	return json;
 }
 
+/** Whether `path` is in a git repo. */
+export function isRepo(path: string): boolean {
+	return execaSync('git', ['-C', path, 'rev-parse', '--git-dir'], { reject: false }).exitCode === 0;
+}
+
 /** Why `project` can't be saved over the project currently named `original` (undefined for a new one), if it can't. */
 export function projectProblem(state: State, project: Project, original?: string): string | undefined {
 	if (!project.name) return 'Name is empty';
 	if (project.name !== original && state.projects.some(p => p.name === project.name)) return `Project "${project.name}" already exists`;
 	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
+	if (project.worktrees && !isRepo(project.path)) return `${project.path} isn't a git repo — turn worktrees off for a project without one`;
 	if (project.tracker === 'jira' && !project.jiraSite) return 'Jira tickets need a jira site';
 }
 

@@ -4,7 +4,7 @@ import { execa } from 'execa';
 import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
-import { COLORS, loadState, projectProblem, saveState } from './state.js';
+import { COLORS, isRepo, loadState, projectProblem, saveState } from './state.js';
 import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { commitFormCommand } from './commitForm.js';
@@ -12,7 +12,7 @@ import { editCommitForm } from './editor.js';
 import { commit, stageAll } from './git.js';
 import { diffPaneCommand, draftCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
-import { approvedTodo, setTodoStatus, threadDir } from './threads.js';
+import { approvedTodo, noRepo, setTodoStatus, threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
 	BOARD_WINDOW,
@@ -47,6 +47,7 @@ function projectCommand(args: string[]): number {
 			name: rest[1] ?? basename(path),
 			abbrev: '',
 			path,
+			worktrees: isRepo(path),
 			color: COLORS[state.projects.length % COLORS.length]!,
 			wakePrompt: '',
 			hooks: {},
@@ -60,11 +61,11 @@ function projectCommand(args: string[]): number {
 			return 1;
 		}
 		saveState({ ...state, projects: [...state.projects, project] });
-		console.log(`Added ${project.name} → ${path}`);
+		console.log(`Added ${project.name} → ${path}${project.worktrees ? '' : ' (not a git repo: threads run there directly)'}`);
 		return 0;
 	}
 	if (sub === 'list') {
-		for (const p of state.projects) console.log(`${p.name}\t${p.path}`);
+		for (const p of state.projects) console.log(`${p.name}\t${p.path}${p.worktrees ? '' : '\t(no worktrees)'}`);
 		return 0;
 	}
 	if (sub === 'rm' && rest[0]) {
@@ -129,6 +130,11 @@ async function splitCommand([role, id]: string[]): Promise<number> {
 		console.error(thread ? `#${id} has no worktree` : `usage: oo split <shell|diff> <id>`);
 		return 1;
 	}
+	const reason = role === 'diff' && noRepo(state, thread);
+	if (reason) {
+		console.error(`${reason} — there are no changes to diff`);
+		return 1;
+	}
 	const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
 	await openSplit(threadWindowName(id), cwd, role, command, { OO_THREAD_ID: id });
 	return 0;
@@ -145,6 +151,11 @@ async function commitCommand([id]: string[]): Promise<number> {
 	const cwd = thread && threadDir(state, thread);
 	if (!thread || !cwd) {
 		console.error(thread ? `#${id} has no worktree` : 'usage: oo commit <id>');
+		return 1;
+	}
+	const reason = noRepo(state, thread);
+	if (reason) {
+		console.error(`${reason} — there's no branch to commit to`);
 		return 1;
 	}
 	if (!(await stageAll(cwd))) {

@@ -6,13 +6,14 @@ import { hasWorktree, worktreePath } from './git.js';
 import { editText, loop } from './input.js';
 import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path', 'wakePrompt', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
+const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
 type Field = (typeof FIELDS)[number];
 const FIELD_LABELS: Record<Field, string> = {
 	name: 'name',
 	abbrev: 'abbrev',
 	color: 'colour',
 	path: 'path',
+	worktrees: 'worktrees',
 	wakePrompt: 'wake prompt',
 	tracker: 'tickets',
 	jiraSite: 'jira site',
@@ -20,11 +21,13 @@ const FIELD_LABELS: Record<Field, string> = {
 	...HOOK_LABELS,
 };
 // Changed with ←/→ through a fixed list rather than typed.
-type Choice = 'color' | 'tracker';
-const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, tracker: TRACKERS };
+type Choice = 'color' | 'worktrees' | 'tracker';
+const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, worktrees: [true, false], tracker: TRACKERS };
+const choiceLabel = (value: Project[Choice]) => (value === true ? 'on' : value === false ? 'off' : value);
 const isChoice = (field: Field): field is Choice => field in CHOICES;
 // Shown at the bottom while the field is selected.
 const FIELD_HINTS: Partial<Record<Field, string>> = {
+	worktrees: 'off: threads run in the project directory itself, several at once, with no branch, diffs or PR; changing it affects new threads only  ',
 	wakePrompt: 'pasted into claude by w / W on the board; empty uses the default  ',
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
@@ -107,7 +110,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			if (isChoice(field)) {
 				const delta = key.leftArrow ? -1 : key.rightArrow || input === ' ' ? 1 : 0;
 				if (!delta) return;
-				const choices = CHOICES[field] as readonly string[];
+				const choices = CHOICES[field] as readonly Project[Choice][];
 				const value = choices[(choices.indexOf(form.project[field]) + delta + choices.length) % choices.length];
 				return setForm({ ...form, project: { ...form.project, [field]: value } });
 			}
@@ -126,7 +129,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0 });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0 });
 		}
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0 });
@@ -160,6 +163,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 					{pad(p.abbrev, abbrevWidth)}
 					<Text color={p.color}>{pad(p.color, 9)}</Text>
 					{p.path}
+					{p.worktrees ? null : <Text dimColor>  (no worktrees)</Text>}
 				</Text>
 			))}
 			{form ? (
@@ -175,7 +179,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 								</Text>
 								{isChoice(field) ? (
 									<Text color={field === 'color' ? form.project.color : undefined}>
-										{active ? `‹ ${form.project[field]} ›` : form.project[field]}
+										{active ? `‹ ${choiceLabel(form.project[field])} ›` : choiceLabel(form.project[field])}
 									</Text>
 								) : (
 									<Text>
