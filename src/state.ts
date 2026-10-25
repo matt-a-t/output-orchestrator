@@ -158,6 +158,10 @@ export function isRepo(path: string): boolean {
 	return execaSync('git', ['-C', path, 'rev-parse', '--git-dir'], { reject: false }).exitCode === 0;
 }
 
+/** Whether `host` is a Jira Cloud site, the only kind JIRA_EMAIL and JIRA_API_TOKEN are sent to. */
+export const isJiraCloudHost = (host: string) => /^[a-z0-9-]+\.atlassian\.net$/i.test(host);
+export const JIRA_CLOUD_ONLY = 'The jira site must be yourco.atlassian.net (JIRA_EMAIL and JIRA_API_TOKEN are only sent to Jira Cloud)';
+
 /** Why `project` can't be saved over the project currently named `original` (undefined for a new one), if it can't. */
 export function projectProblem(state: State, project: Project, original?: string): string | undefined {
 	if (!project.name) return 'Name is empty';
@@ -168,6 +172,7 @@ export function projectProblem(state: State, project: Project, original?: string
 	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
 	if (project.worktrees && !isRepo(project.path)) return `${project.path} isn't a git repo — turn worktrees off for a project without one`;
 	if (project.tracker === 'jira' && !project.jiraSite) return 'Jira tickets need a jira site';
+	if (project.jiraSite && !isJiraCloudHost(project.jiraSite)) return JIRA_CLOUD_ONLY;
 }
 
 export function newThreadId(state: State): string {

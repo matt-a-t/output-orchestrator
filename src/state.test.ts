@@ -22,3 +22,11 @@ test('there is always a home project, without worktrees', () => {
 	const taken = { ...state, projects: [{ ...state.projects[0]!, name: 'home' }] };
 	assert.equal(withHome(taken, dir).projects[1]!.name, '~');
 });
+
+test('the jira site has to be on atlassian.net, so the API token goes nowhere else', () => {
+	const { state } = fixture();
+	const p = { ...state.projects[0]!, worktrees: false, tracker: 'jira' as const };
+	for (const site of ['example.com', 'yourco.atlassian.net.evil.com', 'yourco.atlassian.net@evil.com', 'evil.com/yourco.atlassian.net', 'yourco.atlassian.net:8443'])
+		assert.match(projectProblem(state, { ...p, jiraSite: site }, 'p') ?? '', /must be yourco\.atlassian\.net/, site);
+	assert.equal(projectProblem(state, { ...p, jiraSite: 'YourCo.atlassian.net' }, 'p'), undefined);
+});
