@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { useState } from 'react';
 import { Box, render, Text, useApp, useInput, type Key } from 'ink';
-import { EDITING_HELP, FIELD_HELP, FieldText } from './fieldText.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
 import { fieldKey, fieldStep, isBack, isSubmit, nextField, type Edit } from './input.js';
 import { OO_COMMAND } from './status.js';
 
@@ -75,7 +75,7 @@ function Form({ initial, note, onDone }: { initial: string; note?: string; onDon
 			{note ? <Text color="yellow">{note}</Text> : null}
 			<Box flexGrow={1} />
 			<Text dimColor>
-				{typeof state.edit === 'number' ? EDITING_HELP : `${FIELD_HELP}  j/k field  a commit  q/esc cancel`}
+				{typeof state.edit === 'number' ? EDITING_HELP : `${FIELD_HELP}  ${formHelp('commit')}`}
 			</Text>
 		</Box>
 	);

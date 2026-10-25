@@ -40,7 +40,8 @@ oo                               # open the board
 ```
 
 On the board, `n` opens the new thread form: a project, a ticket if the project has a tracker, a
-title and an initial prompt. The thread starts in Planned, and `e` adds a plan if you want one.
+title and an initial prompt. Its fields are edited vim-style: `i` to type into one, ⏎ on to the
+next, `a` to create it and `q` or esc to cancel. The thread starts in Planned, and `e` adds a plan if you want one.
 With an initial prompt, its claude starts straight away in the background, in plan mode, on that
 prompt; without one, Enter opens its claude when you're ready. `Ctrl-b b` (or `Alt-b`) brings you back to the
 board. `?` on the board lists every key, and so does [KEYS.md](KEYS.md).
@@ -90,8 +91,8 @@ project's tickets come from with **tickets** in the projects screen (`P`):
   [API token](https://id.atlassian.com/manage-profile/security/api-tokens): export
   `JIRA_EMAIL` and `JIRA_API_TOKEN` in the shell you start `oo` from.
 
-The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`), or use
-←/→ to pick from your five most recently updated open tickets. The ticket's summary becomes
+The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`) after `i`, or use
+`h`/`l` to pick from your five most recently updated open tickets. The ticket's summary becomes
 the title unless you type your own, and its description becomes the plan. Leave it empty for no
 ticket.
 
@@ -121,8 +122,9 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   ```
 - In a step diff, `a` approves the step. Approving commits everything with
   a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
-  and **for claude** (comments to send along). Tab or ↑/↓ switches fields, ⏎ commits from either,
-  esc cancels (leaving the changes staged), and ctrl-u / ctrl-w clear a field or delete a word.
+  and **for claude** (comments to send along). It takes the same keys as every form (see
+  [KEYS.md](KEYS.md#in-a-form)): `i` edits a field, ⏎ goes on to the next, `a` commits, and `q` or
+  esc cancels (leaving the changes staged).
   Press `a` while claude is still writing to commit whatever it writes without opening the form
   (`a` again goes back). If the thread's claude has stopped (✓), it's then told the step was committed, given your
   comments, and told to move on to the next checkpoint, or to stop if that was the last one.

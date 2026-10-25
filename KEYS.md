@@ -26,16 +26,6 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 
 The mouse works too: click a card to select it, double-click to open it, scroll to move.
 
-## New thread form
-
-| Key | |
-|---|---|
-| `tab` / `↑`/`↓` | next / previous field (`shift-tab` back too) |
-| `←`/`→` | on project: change it. On ticket: pick one of your recent tickets |
-| `⏎` | create the thread, and start its claude on the initial prompt if there is one |
-| `esc` | cancel |
-| `ctrl-u` / `ctrl-w` | clear the field / delete a word |
-
 ## Reviewing
 
 | Key | |
@@ -66,19 +56,20 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 
 ## In a form
 
-The thread (`e`), project (`P`) and commit forms. Text fields are only typed into once you start
-editing one, vim-style; the board's one-line prompts (a new thread's title, a ticket key) are typed into straight away.
+The new thread (`n`), thread (`e`), project (`P`) and commit forms. Text fields are only typed into
+once you start editing one, vim-style, so letters are keys until then.
 
 | Key | |
 |---|---|
-| `j`/`k` `↑`/`↓` `tab` | move between fields |
-| `i` / `⏎` | edit a text field, cursor at the end |
-| `I` | edit it, cursor at the start |
+| `j`/`k` `↑`/`↓` `tab` | move between fields (`shift-tab` back too) |
+| `h`/`l` `←`/`→` | on a choice field: change it (project, colour, …). On the new thread's ticket: pick one of your recent tickets |
+| `i` / `I` | edit a text field, cursor at the end / at the start |
 | `dd` | clear it and edit |
+| `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). On the thread's plan: open `$EDITOR` |
+| `a` / `shift-⏎` | submit: create the thread (starting its claude on the initial prompt if there is one), save, or commit. `a` only while not editing; `shift-⏎` only where the terminal sends it apart from `⏎` |
+| `q` / `esc` | cancel the form. While editing, `esc` stops editing, keeping the text, and `q` is just typed |
 | `←`/`→` `ctrl-a`/`ctrl-e` | while editing: move the cursor / to the start or end |
 | `ctrl-u` / `ctrl-w` | while editing: delete back to the start / back over a word |
-| `esc` | stop editing, keeping the text; again to cancel the form |
-| `⏎` | while editing, or on a choice field (project, colour, …): save (commit, in the commit form) |
 
 ## In a thread's window
 

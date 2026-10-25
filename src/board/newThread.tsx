@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { EDITING_HELP, FIELD_HELP, FieldText } from '../fieldText.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from '../fieldText.js';
 import { runNewThreadHook } from '../hooks.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadSubmit } from '../newThreadForm.js';
 import type { Project, Thread } from '../state.js';
@@ -84,8 +84,8 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
 	};
 	const help =
 		typeof form.edit === 'number'
-			? EDITING_HELP.replace('⏎ save', '⏎ next  shift-⏎ create')
-			: `${form.field === 'project' ? 'h/l change' : form.field === 'ticket' ? `${FIELD_HELP}  h/l recent` : FIELD_HELP}  j/k field  a create  q/esc cancel`;
+			? EDITING_HELP
+			: `${form.field === 'project' ? 'h/l change' : form.field === 'ticket' ? `${FIELD_HELP}  h/l recent` : FIELD_HELP}  ${formHelp('create')}`;
 	return (
 		<Box flexDirection="column" borderStyle="round" borderColor={project?.color} paddingX={1}>
 			<Text bold>New thread</Text>

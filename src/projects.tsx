@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
-import { EDITING_HELP, FIELD_HELP, FieldText } from './fieldText.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
@@ -219,7 +219,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				{form
 					? typeof form.edit === 'number'
 						? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${EDITING_HELP}`
-						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? 'h/l change' : FIELD_HELP}  j/k field  a save  q/esc cancel`
+						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? 'h/l change' : FIELD_HELP}  ${formHelp('save')}`
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>

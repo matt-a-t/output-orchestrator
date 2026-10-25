@@ -15,6 +15,8 @@ export function FieldText({ value, edit }: { value: string; edit: Edit }) {
 }
 
 /** A form's help line while a text field is being edited (`edit` is a cursor position). */
-export const EDITING_HELP = '←/→ move  ctrl-u/ctrl-w delete  esc done  ⏎ save';
+export const EDITING_HELP = '←/→ move  ctrl-u/ctrl-w delete  ⏎ next  esc done';
 /** The text field keys for a form's help line when it isn't being edited. */
 export const FIELD_HELP = 'i/⏎ edit  I edit from start  dd clear';
+/** The end of a form's help line when nothing is being edited: moving, submitting (`verb`, e.g. save) and closing. */
+export const formHelp = (verb: string) => `j/k field  a ${verb}  q/esc cancel`;

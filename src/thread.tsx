@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
 import { hasWorktree, renameBranch, worktreePath } from './git.js';
-import { FieldText, EDITING_HELP, FIELD_HELP } from './fieldText.js';
+import { FieldText, EDITING_HELP, FIELD_HELP, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { COLORS, COLUMN_LABELS, LOCAL_LABEL, type State, type Thread } from './state.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
@@ -200,7 +200,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			<Text dimColor>
 				{typeof edit === 'number'
 					? EDITING_HELP
-					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' ? 'h/l change' : FIELDS[field] === 'plan' ? '⏎/l opens $EDITOR' : FIELD_HELP}  j/k field  a save  q/esc cancel`}
+					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' ? 'h/l change' : FIELDS[field] === 'plan' ? '⏎/l opens $EDITOR' : FIELD_HELP}  ${formHelp('save')}`}
 			</Text>
 		</Box>
 	);
