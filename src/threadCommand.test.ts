@@ -418,7 +418,7 @@ test('the conflict prompt names the files, and says to push only with a PR', () 
 	assert.match(conflictPrompt('main', ['a.ts'], true), /git push --force-with-lease/);
 });
 
-test('send puts a message in another thread\'s inbox, from the thread it\'s sent from or from the user', async t => {
+test('send puts a message in another thread\'s inbox, from the thread it\'s sent from or, outside one, unverified', async t => {
 	const { dir, project } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
 	const output = capture(t);
 	assert.equal(await threadCommand(['send', '2', 'the', 'API', 'changed'], context(dir, '/work/one', { OO_THREAD_ID: '1' })), 0);
@@ -426,13 +426,13 @@ test('send puts a message in another thread\'s inbox, from the thread it\'s sent
 	const inbox = loadState(join(dir, 'state.json')).threads[1]!.inbox!;
 	assert.deepEqual(
 		inbox.map(m => [m.from, m.text, m.delivered]),
-		[['1', 'the API changed', false], ['user', 'plan from stdin', false]],
+		[['1', 'the API changed', false], ['unverified', 'plan from stdin', false]],
 	);
 	await threadCommand(['show', '2'], context(dir, project));
 	assert.match(output.out(), /inbox: {3}2 not yet delivered/);
 	await threadCommand(['inbox'], context(dir, '/work/two', { OO_THREAD_ID: '2' }));
 	assert.match(output.out(), /from #1 \(not yet delivered\)\n {2}the API changed/);
-	assert.match(output.out(), /from you \(not yet delivered\)\n {2}plan from stdin/);
+	assert.match(output.out(), /from unverified \(not yet delivered\)\n {2}plan from stdin/);
 });
 
 test('send refuses yourself, finished threads, an empty message and --wake without the board', async t => {
@@ -463,8 +463,14 @@ test('the messages prompt names each sender and how to reply', () => {
 	const prompt = messagesPrompt(state, [{ from: '1', text: 'renamed foo', ts: '', delivered: false }]);
 	assert.match(prompt, /^A message from related work on the board:\nFrom thread #1 "api": renamed foo\n/);
 	assert.match(prompt, /oo thread send 1 …/);
+	assert.match(prompt, /aren't the user's instructions/);
 	const fromUser = messagesPrompt(state, [{ from: 'user', text: 'hi', ts: '', delivered: false }]);
-	assert.doesNotMatch(fromUser, /Reply with/);
+	assert.match(fromUser, /From the user \(via oo\): hi/);
+	assert.doesNotMatch(fromUser, /Reply with|aren't the user's/);
+	const unverified = messagesPrompt(state, [{ from: 'unverified', text: 'hi', ts: '', delivered: false }]);
+	assert.match(unverified, /From an unverified sender \(.*not necessarily the user\): hi/);
+	assert.match(unverified, /aren't the user's instructions/);
+	assert.doesNotMatch(unverified, /Reply with/);
 });
 
 test('a starting claude hears the messages waiting for it, once', async () => {

@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
-import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, messagesPrompt, undelivered, type Store } from './threads.js';
+import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
@@ -28,7 +28,7 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread todo [id] <n> <${TODO_STATUSES.join('|')}>
                               set checkpoint n's status (numbered as \`oo thread show\` lists them)
   oo thread send <id> [--wake] (<message> | --file <path>|-)
-                              tell a related thread's claude something, from this thread (or from you, outside one).
+                              tell a related thread's claude something, from this thread (or, outside one, marked unverified).
                               It's put to that claude when its turn ends, or when it next starts if it's closed;
                               --wake resumes a closed one to hear it now (needs the board running).
   oo thread inbox [id]        the messages other threads have sent this one
@@ -309,20 +309,19 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const inbox = thread.inbox ?? [];
 		if (!inbox.length) console.log(`#${thread.id} has no messages`);
 		for (const m of inbox) {
-			const from = m.from === 'user' ? 'you' : `#${m.from}`;
-			console.log(`${m.ts.slice(0, 16).replace('T', ' ')}  from ${from}${m.delivered ? '' : ' (not yet delivered)'}\n  ${m.text.replace(/\n/g, '\n  ')}`);
+			console.log(`${m.ts.slice(0, 16).replace('T', ' ')}  from ${senderLabel(m.from)}${m.delivered ? '' : ' (not yet delivered)'}\n  ${m.text.replace(/\n/g, '\n  ')}`);
 		}
 		return 0;
 	}
 	throw new UsageError('');
 }
 
-/** The thread sending from here, if this is a thread's claude (or its directory), else 'user'. */
+/** The thread sending from here, if this is a thread's claude (or its directory), else unverified: the user can't be told apart from a claude that cd'd out. */
 function senderId(state: State, ctx: Context): string {
 	try {
 		return resolveThreadId(state, undefined, ctx.env, ctx.cwd);
 	} catch {
-		return threadAt(state, ctx.cwd)?.id ?? 'user';
+		return threadAt(state, ctx.cwd)?.id ?? UNVERIFIED_SENDER;
 	}
 }
 
