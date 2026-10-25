@@ -22,7 +22,8 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `i` | import a thread started outside oo |
 | `P` | projects (their hooks and wake prompt) |
 | `?` | all keys |
-| `q` | quit |
+| `q` | quit, leaving thread windows open |
+| `Q` | quit and close every thread window (claude resumes next time) |
 
 The mouse works too: click a card to select it, double-click to open it, scroll to move.
 

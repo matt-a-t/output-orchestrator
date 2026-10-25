@@ -22,7 +22,8 @@ export const KEY_SECTIONS: KeySection[] = [
 			['i', 'import a thread started outside oo'],
 			['P', 'projects (their hooks and wake prompt)'],
 			['?', 'these keys'],
-			['q', 'quit'],
+			['q', 'quit, leaving thread windows open'],
+			['Q', 'quit and close every thread window'],
 		],
 	},
 	{
