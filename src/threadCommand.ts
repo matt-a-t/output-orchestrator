@@ -32,6 +32,10 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               It's put to that claude when its turn ends, or when it next starts if it's closed;
                               --wake resumes a closed one to hear it now (needs the board running).
   oo thread inbox [id]        the messages other threads have sent this one
+  oo thread draft [id] commit --message <message>
+  oo thread draft [id] pr [--title <title>] --body-file <path>|-
+                              save the commit message (or PR title and description) the board's form opens with,
+                              instead of claude drafting one then; it's cleared once used. No --title: the thread's
   Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
 
 /** What the command runs against; tests swap these out. */
@@ -250,6 +254,24 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (!response.ok) return fail(response.message);
 		console.log(response.message);
 		return 0;
+	}
+	if (sub === 'draft') {
+		const { positional, flag } = parseArgs(rest, ['message', 'title', 'body-file'], []);
+		const kind = positional.at(-1);
+		if (positional.length < 1 || positional.length > 2 || (kind !== 'commit' && kind !== 'pr')) {
+			throw new UsageError('oo thread draft [id] commit --message <message> | pr [--title <title>] --body-file <path>|-');
+		}
+		const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
+		if (kind === 'commit') {
+			const message = flag('message')?.trim();
+			if (!message) throw new UsageError('oo thread draft [id] commit --message <message>');
+			return report(await change({ op: 'draft', thread, commit: message }, ctx));
+		}
+		const bodyFile = flag('body-file');
+		if (bodyFile === undefined) throw new UsageError('oo thread draft [id] pr [--title <title>] --body-file <path>|-');
+		const body = (bodyFile === '-' ? ctx.stdin() : readFileSync(bodyFile, 'utf8')).trim();
+		const title = flag('title')?.trim() || state.threads.find(t => t.id === thread)!.title;
+		return report(await change({ op: 'draft', thread, pr: { title, body } }, ctx));
 	}
 	if (sub === 'todo') {
 		const { positional, flag } = parseArgs(rest, ['file'], []);
