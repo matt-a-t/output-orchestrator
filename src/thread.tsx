@@ -3,7 +3,7 @@ import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
 import { hasWorktree, renameBranch, worktreePath } from './git.js';
 import { FieldText, EDITING_HELP, FIELD_HELP } from './fieldText.js';
-import { fieldKey, type Edit } from './input.js';
+import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { COLORS, COLUMN_LABELS, LOCAL_LABEL, type State, type Thread } from './state.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
@@ -87,26 +87,32 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			}
 		}
 		setEdit(null);
-		if (key.escape) return onClose('Cancelled');
-		if (key.return) return save(thread, draft);
-		if (key.upArrow || (key.tab && key.shift) || input === 'k') return setField((field + FIELDS.length - 1) % FIELDS.length);
-		if (key.downArrow || key.tab || input === 'j') return setField((field + 1) % FIELDS.length);
-		if (name === 'project' || name === 'color') {
-			const delta = key.leftArrow ? -1 : key.rightArrow || input === ' ' ? 1 : 0;
-			if (!delta) return;
-			const step = <T,>(choices: readonly T[], current: T) =>
-				choices[(choices.indexOf(current) + delta + choices.length) % choices.length]!;
-			if (name === 'color') return setDraft({ ...draft, color: step(COLOR_CHOICES, draft.color) });
-			return setDraft({ ...draft, project: step(state.projects.map(p => p.name), draft.project) });
-		}
+		if (isBack(input, key, edit)) return onClose('Cancelled');
+		if (isSubmit(input, key, edit)) return save(thread, draft);
+		const move = fieldStep(input, key);
+		if (move) return setField(loop(field, move, FIELDS.length));
+		const delta = choiceStep(input, key);
 		if (name === 'plan') {
-			if (input !== ' ' && !key.rightArrow) return;
+			if (!key.return && delta !== 1) return;
 			setEditing(true);
 			editPlan(draft.plan, `#${thread.id} ${draft.title}`)
 				.then(plan => setDraft(d => d && { ...d, plan }))
 				.catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`))
 				.finally(() => setEditing(false));
+			return;
 		}
+		if (key.return) {
+			const next = nextField(field, FIELDS.length, i => {
+				const f = FIELDS[i]!;
+				return f === 'title' || f === 'ticket' || f === 'base' ? draft[f].length : undefined;
+			});
+			setField(next.field);
+			return setEdit(next.edit);
+		}
+		if (!delta || (name !== 'project' && name !== 'color')) return;
+		const step = <T,>(choices: readonly T[], current: T) => choices[loop(choices.indexOf(current), delta, choices.length)]!;
+		if (name === 'color') return setDraft({ ...draft, color: step(COLOR_CHOICES, draft.color) });
+		return setDraft({ ...draft, project: step(state.projects.map(p => p.name), draft.project) });
 	});
 
 	if (!thread || !draft) {
@@ -125,8 +131,8 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		if (name === 'project') return choice(draft.project, project?.color);
 		if (name === 'color') return draft.color ? choice(draft.color, draft.color) : choice(`project's (${project?.color ?? '?'})`, project?.color);
 		if (name === 'plan') {
-			if (!draft.plan) return <Text dimColor>{active ? 'space to write one' : 'none'}</Text>;
-			return <Text dimColor={!active}>{active ? 'space to edit' : `${planLines.length} lines`}</Text>;
+			if (!draft.plan) return <Text dimColor>{active ? '⏎/l to write one' : 'none'}</Text>;
+			return <Text dimColor={!active}>{active ? '⏎/l to edit' : `${planLines.length} lines`}</Text>;
 		}
 		return <FieldText value={draft[name]} edit={active ? edit : null} />;
 	};
@@ -177,7 +183,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			{hiddenPlan ? (
 				<Text wrap="truncate" dimColor>
 					{'  '}
-					{' '.repeat(LABEL_WIDTH)}… {hiddenPlan} more lines — space on plan opens $EDITOR
+					{' '.repeat(LABEL_WIDTH)}… {hiddenPlan} more lines — ⏎ on plan opens $EDITOR
 				</Text>
 			) : null}
 			<Box flexDirection="column" marginTop={1}>
@@ -194,7 +200,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			<Text dimColor>
 				{typeof edit === 'number'
 					? EDITING_HELP
-					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' ? '←/→ or space change  ⏎ save' : FIELDS[field] === 'plan' ? 'space opens $EDITOR  ⏎ save' : FIELD_HELP}  j/k ↑/↓ or tab field  esc cancel`}
+					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' ? 'h/l change' : FIELDS[field] === 'plan' ? '⏎/l opens $EDITOR' : FIELD_HELP}  j/k field  a save  q/esc cancel`}
 			</Text>
 		</Box>
 	);
