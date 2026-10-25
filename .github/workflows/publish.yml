@@ -2,26 +2,25 @@ name: Publish
 
 # Pushing a v* tag (`npm version patch && git push --follow-tags`) publishes that version to npm.
 # Uses npm trusted publishing (OIDC): no npm token is stored, and provenance is added automatically.
+# The publish job waits for approval on the npm-publish environment, and only it can mint the OIDC
+# token. It installs with --ignore-scripts so no dependency's lifecycle scripts run while it can.
 on:
   push:
     tags: ['v*']
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
-  publish:
+  test:
     runs-on: ubuntu-latest
-    # Waits for a reviewer to approve the run, and only v* tags may deploy to it (both set in the repo's settings).
-    environment: npm-publish
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Trusted publishing needs npm >= 11.5.1, which Node 24 ships.
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
       - name: Check tag matches package.json version
         run: |
           version="v$(node -p "require('./package.json').version")"
@@ -32,5 +31,27 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # prepublishOnly does a clean build first.
-      - run: npm publish
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    # Waits for a reviewer to approve the run, and only v* tags may deploy to it (both set in the repo's settings).
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Trusted publishing needs npm >= 11.5.1, which Node 24 ships.
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          # Never restore a cache another run could have written.
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      # --ignore-scripts skips prepublishOnly, which would only rebuild what was just built.
+      - run: npm publish --ignore-scripts

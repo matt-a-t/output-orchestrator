@@ -1,0 +1,12 @@
+# Weekly update PRs for npm dependencies and for the SHA-pinned GitHub Actions
+# (Dependabot moves the pin and its # vX.Y.Z comment together).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
