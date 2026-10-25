@@ -1,7 +1,9 @@
 name: Publish
 
-# Pushing a v* tag (`npm version patch && git push --follow-tags`) publishes that version to npm.
+# Pushing a v* tag (`npm version patch && git push --follow-tags`) stages that version on npm.
 # Uses npm trusted publishing (OIDC): no npm token is stored, and provenance is added automatically.
+# The trusted publisher is stage-only, so it goes public only once a maintainer approves it on npm
+# with 2FA, which the OIDC token can't do.
 # The publish job waits for approval on the npm-publish environment, and only it can mint the OIDC
 # token. It installs with --ignore-scripts so no dependency's lifecycle scripts run while it can.
 on:
@@ -51,7 +53,9 @@ jobs:
           registry-url: https://registry.npmjs.org
           # Never restore a cache another run could have written.
           package-manager-cache: false
+      # npm stage publish needs npm >= 11.15.0, newer than Node 24 may ship.
+      - run: npm install -g npm@11.21.1 --ignore-scripts
       - run: npm ci --ignore-scripts
       - run: npm run build
       # --ignore-scripts skips prepublishOnly, which would only rebuild what was just built.
-      - run: npm publish --ignore-scripts
+      - run: npm stage publish --ignore-scripts
