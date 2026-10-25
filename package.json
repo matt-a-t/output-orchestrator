@@ -25,7 +25,8 @@
     "oo": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "dev": "tsx src/cli.tsx",
