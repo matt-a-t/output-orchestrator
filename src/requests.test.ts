@@ -66,6 +66,14 @@ test('requests round trip through the board, which leaves state.json alone', asy
 	assert.match(refused.message, /from the board/);
 });
 
+test('messages reach the board, which marks them delivered once claude has them', async () => {
+	const { dir, state } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const running = board(dir, state);
+	for (const text of ['a', 'b']) assert.equal((await sendRequest({ op: 'send', thread: '2', from: '1', text }, { dir })).ok, true);
+	assert.equal((await sendRequest({ op: 'delivered', thread: '2', count: 1 }, { dir })).ok, true);
+	assert.deepEqual(running.state().threads[1]!.inbox!.map(m => [m.text, m.delivered]), [['a', true], ['b', false]]);
+});
+
 test('local requests reach the board, which handles them itself', async () => {
 	const { dir, state } = fixture([{ cwd: '/work/one' }]);
 	board(dir, state);

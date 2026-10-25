@@ -19,6 +19,8 @@ Leaving Local puts the checkout back on main, so rebuild and restart again to ge
   outside the board (`OutsideThread`, imported with `i`).
 - **Session**: only claude's own session ID (`sessionId`, `claude --resume`, the `SessionStart`
   hook) or the `oo` tmux session.
+- **Message**: what one thread's claude sends another with `oo thread send`. It waits in the receiving
+  thread's `inbox` until the board pastes it in or the SessionStart briefing carries it, then counts as delivered.
 - **Card**: how a thread is drawn on the board, not a name for the thread itself.
 - **Hook**: on its own, a project's shell command for something on the board (`enterLocal`, set in
   the projects screen, see `hooks.ts`). Claude's hooks (`hook.ts`, `status.ts`) are "claude hooks".

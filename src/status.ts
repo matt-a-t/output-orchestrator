@@ -45,7 +45,7 @@ export const SKILL_FILE = join(homedir(), '.claude', 'skills', 'oo', 'SKILL.md')
 
 export const SKILL = `---
 name: oo
-description: Read and change the output-orchestrator (oo) board of threads with the \`oo thread\` CLI. Use when OO_THREAD_ID is set (this claude was launched from the board), when the user mentions the board, a thread by number (#12) or oo, or when follow-up work turns up that belongs in its own thread.
+description: Read and change the output-orchestrator (oo) board of threads with the \`oo thread\` CLI. Use when OO_THREAD_ID is set (this claude was launched from the board), when the user mentions the board, a thread by number (#12) or oo, when follow-up work turns up that belongs in its own thread, or when your work affects another thread (send it a message).
 ---
 
 # The oo board
@@ -54,7 +54,8 @@ The user tracks work as threads on a kanban board (Planned → Active → Polish
 A thread can also be put in Local (it stays in its column, outlined in yellow), which checks its branch out in the project's own checkout
 (one per project) so the user can try it in their own dev setup; claude then works there until it comes back to its worktree.
 Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
-claude, and \`oo thread show\` describes your thread, including its plan.
+claude, and \`oo thread show\` describes your thread, including its plan. Threads' claudes can pass each other
+context with \`oo thread send\`.
 
 ## Commands
 
@@ -77,6 +78,14 @@ ${THREAD_USAGE}
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
   and why, then tell the user its id. Keep the title short; put the detail in the plan. If it's for a Jira
   ticket or GitHub issue, pass \`--ticket <key>\`: the thread's branch and PR are named after it.
+- **Tell related threads what they need to know.** Other threads' claudes can't see your work. When it changes
+  something another thread in \`oo thread list\` depends on (an API, a shared file, a decision you both rely on), or
+  you find something that matters to its plan, send it a message: \`oo thread send <id> --file - <<'EOF'\`. Make it
+  self-contained: what changed, where (branch, files) and what they may need to do. It reaches that claude when
+  its turn ends, or when it next starts if it's closed. Messages sent to you arrive the same way, starting
+  "from related work on the board"; \`oo thread inbox\` lists them. Reply only when there's something to say,
+  never just to acknowledge, and if it turns into real back-and-forth, hand the coordination to the user.
+  Don't use \`--wake\` (it resumes a closed claude) unless the user asks, and still don't do the other thread's work here.
 - **Threads' ids are local to this board.** \`#12\` means nothing on another machine, so don't put a thread
   id in commits, branches or PRs. Refer to the thread's ticket (\`oo thread show\` lists it) instead.
 - **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is

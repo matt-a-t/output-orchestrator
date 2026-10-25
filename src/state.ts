@@ -60,6 +60,10 @@ export const TODO_STATUSES = ['pending', 'active', 'review', 'done'] as const;
 export type TodoStatus = (typeof TODO_STATUSES)[number];
 const TodoSchema = z.object({ subject: z.string(), status: z.enum(TODO_STATUSES) });
 export type Todo = z.infer<typeof TodoSchema>;
+/** A message from another thread's claude (or `user`, from outside one), held until it's put to this thread's claude. */
+const MessageSchema = z.object({ from: z.string(), text: z.string(), ts: z.string(), delivered: z.boolean() });
+export type Message = z.infer<typeof MessageSchema>;
+
 export const TODO_MARKS: Record<TodoStatus, string> = { pending: '○', active: '▸', review: '●', done: '✓' };
 
 const ThreadSchema = z.preprocess(
@@ -92,6 +96,8 @@ const ThreadSchema = z.preprocess(
 		pr: z.object({ number: z.number(), url: z.string() }).optional(),
 		// Checkpoints to review and commit, kept across claude runs (see `oo thread todo`).
 		todos: z.array(TodoSchema).optional(),
+		// Messages from related threads (see `oo thread send`), kept once delivered so `oo thread inbox` can list them.
+		inbox: z.array(MessageSchema).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

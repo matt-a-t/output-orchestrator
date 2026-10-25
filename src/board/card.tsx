@@ -2,7 +2,7 @@ import { Box, Text } from 'ink';
 import type { PrStatus } from '../github.js';
 import type { Column, Project, Thread } from '../state.js';
 import type { Status } from '../status.js';
-import { todosDone } from '../threads.js';
+import { todosDone, undelivered } from '../threads.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
@@ -19,6 +19,7 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['↻', 'red', 'closed mid-work, w wakes it'],
 	['±', 'magenta', 'changes to review'],
 	['⚡', 'red', 'PR has conflicts'],
+	['✉', 'cyan', 'messages from other threads, told when claude stops'],
 ];
 
 // The columns and the import list start below the title bar, a header and a rule.
@@ -71,6 +72,12 @@ export function Card({ thread: t, selected, project, live, status, resumable, st
 				{merge?.mergeable === 'CONFLICTING' ? (
 					<Text color="red" bold>
 						{' '}⚡
+					</Text>
+				) : null}
+				{/* Messages from other threads its claude hasn't heard yet. */}
+				{undelivered(t.inbox).length ? (
+					<Text color="cyan" bold>
+						{' '}✉{undelivered(t.inbox).length}
 					</Text>
 				) : null}
 				{/* Every step approved: ready to move on to Polish and a PR. */}

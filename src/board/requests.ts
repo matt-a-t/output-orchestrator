@@ -5,6 +5,7 @@ import { draftPr, withTicket } from '../github.js';
 import { applyRequest, moveProblem } from '../threads.js';
 import type { Board, Outcome } from './board.js';
 import { enterLocal, leaveLocal, localProblem } from './local.js';
+import { messageRequest } from './messages.js';
 import { openPr } from './pr.js';
 
 /** Like t, except that it waits for the thread's claude instead of refusing: it's often the one asking. */
@@ -65,7 +66,13 @@ export function useRequests(board: Board) {
 			for (const request of reader.read()) {
 				queue = queue.then(async () => {
 					const handled =
-						request.op === 'local' ? localRequest(board, request) : request.op === 'pr' ? prRequest(board, request) : applyRequest(board.store, request);
+						request.op === 'local'
+							? localRequest(board, request)
+							: request.op === 'pr'
+								? prRequest(board, request)
+								: request.op === 'send'
+									? messageRequest(board, request)
+									: applyRequest(board.store, request);
 					const response = await handled.catch(err => ({
 						id: request.id,
 						ok: false,

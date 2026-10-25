@@ -4,7 +4,7 @@ import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } fr
 import { prState } from './github.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
-import { COLUMN_LABELS, newThreadId, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { COLUMN_LABELS, newThreadId, type Column, type Message, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
 /** Where the thread's work happens, if it has anywhere yet. */
@@ -33,6 +33,29 @@ export function todosDone(todos: Todo[] = []): boolean {
 /** The new list, keeping the status of items that were already on it. */
 export function replaceTodos(todos: Todo[], subjects: string[]): Todo[] {
 	return subjects.map(subject => ({ subject, status: todos.find(t => t.subject === subject)?.status ?? 'pending' }));
+}
+
+/** The messages not yet put to the thread's claude. */
+export function undelivered(inbox: Message[] = []): Message[] {
+	return inbox.filter(m => !m.delivered);
+}
+
+/** The inbox with its first `count` undelivered messages marked delivered; ones sent since stay waiting. */
+export function markDelivered(inbox: Message[], count: number): Message[] {
+	let left = count;
+	return inbox.map(m => (!m.delivered && left-- > 0 ? { ...m, delivered: true } : m));
+}
+
+/** What a thread's claude is told about its messages; one prompt for several. */
+export function messagesPrompt(state: State, messages: Message[]): string {
+	const lines = messages.map(m => {
+		if (m.from === 'user') return `From the user (via oo): ${m.text}`;
+		const from = state.threads.find(t => t.id === m.from);
+		return `From thread #${m.from}${from ? ` "${from.title}"` : ''}: ${m.text}`;
+	});
+	const senders = [...new Set(messages.map(m => m.from).filter(f => f !== 'user'))];
+	const reply = senders.length ? ` Reply with \`oo thread send ${senders[0]} …\` only if it needs an answer; don't just acknowledge.` : '';
+	return `${messages.length === 1 ? 'A message' : `${messages.length} messages`} from related work on the board:\n${lines.join('\n')}\n${reply.trim()}`.trim();
 }
 
 /** Which item approving a step ticks off: the first waiting for review, else the first being worked on. */
@@ -197,6 +220,17 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, todos, updatedAt: now } : t)) }));
 		const what = request.op === 'todos' ? 'todos' : `todo ${request.item} (${request.status})`;
 		return done(`Updated #${thread.id}'s ${what}: ${todoProgress(todos)} done`);
+	}
+	if (request.op === 'send') {
+		if (thread.column === 'done' || thread.column === 'archived') return { id, ok: false, message: `#${thread.id} is in ${COLUMN_LABELS[thread.column]}; nothing would read it` };
+		if (request.from === thread.id) return { id, ok: false, message: `That's #${thread.id} itself` };
+		const message: Message = { from: request.from, text: request.text, ts: new Date().toISOString(), delivered: false };
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, inbox: [...(t.inbox ?? []), message] } : t)) }));
+		return done(`Sent to #${thread.id}; its claude hears it when its turn ends or it next starts`);
+	}
+	if (request.op === 'delivered') {
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, inbox: markDelivered(t.inbox ?? [], request.count) } : t)) }));
+		return done(`Delivered ${request.count} message${request.count === 1 ? '' : 's'} to #${thread.id}`);
 	}
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem =

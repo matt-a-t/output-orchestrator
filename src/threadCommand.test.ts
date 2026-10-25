@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { addThread, approvedTodo, conflictPrompt, inDir, todosDone, todoWindow } from './threads.js';
+import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todosDone, todoWindow } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -264,23 +264,23 @@ test('todo <n> <status> sets one checkpoint\'s status, with or without a thread 
 	assert.match(output.err(), /Unknown status "finished"/);
 });
 
-test('a starting claude is told where the checkpoints stand, until they\'re all done', () => {
+test('a starting claude is told where the checkpoints stand, until they\'re all done', async () => {
 	const todos = [{ subject: 'a', status: 'done' as const }, { subject: 'b', status: 'active' as const }];
 	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
-	const briefing = sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	const briefing = (await sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' })))!;
 	assert.match(briefing, /\(1\/2 done\)/);
 	assert.match(briefing, /2\. \[active\] b/);
-	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
-	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
+	assert.doesNotMatch((await sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' }))) ?? '', /checkpoints/);
+	assert.equal(await sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '1' })), undefined);
 });
 
-test('a claude starting in Local is told so, with or without checkpoints', () => {
+test('a claude starting in Local is told so, with or without checkpoints', async () => {
 	const { dir, project } = fixture([{ column: 'active', local: true, branch: 'oo/1-x' }, { cwd: '/work/two', column: 'active', local: true }]);
-	const briefing = sessionStarted({ cwd: project }, context(dir, '/', { OO_THREAD_ID: '1' }))!;
+	const briefing = (await sessionStarted({ cwd: project }, context(dir, '/', { OO_THREAD_ID: '1' })))!;
 	assert.match(briefing, new RegExp(`You're in Local: working in the project's own checkout at ${project} on oo/1-x`));
 	assert.match(briefing, /oo thread local out/);
 	// Imported threads stay in their own directory, so there's nothing to say.
-	assert.equal(sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })), undefined);
+	assert.doesNotMatch((await sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' }))) ?? '', /You're in Local/);
 });
 
 test('approving a step ticks off the checkpoint in review, else the active one', () => {
@@ -371,4 +371,82 @@ test('the conflict prompt names the files, and says to push only with a PR', () 
 	assert.match(conflictPrompt('main', ['a.ts', 'b.ts'], false), /origin\/main stopped on conflicts in: a\.ts, b\.ts\./);
 	assert.doesNotMatch(conflictPrompt('main', ['a.ts'], false), /push/);
 	assert.match(conflictPrompt('main', ['a.ts'], true), /git push --force-with-lease/);
+});
+
+test('send puts a message in another thread\'s inbox, from the thread it\'s sent from or from the user', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const output = capture(t);
+	assert.equal(await threadCommand(['send', '2', 'the', 'API', 'changed'], context(dir, '/work/one', { OO_THREAD_ID: '1' })), 0);
+	assert.equal(await threadCommand(['send', '#2', '--file', '-'], context(dir, project)), 0);
+	const inbox = loadState(join(dir, 'state.json')).threads[1]!.inbox!;
+	assert.deepEqual(
+		inbox.map(m => [m.from, m.text, m.delivered]),
+		[['1', 'the API changed', false], ['user', 'plan from stdin', false]],
+	);
+	await threadCommand(['show', '2'], context(dir, project));
+	assert.match(output.out(), /inbox: {3}2 not yet delivered/);
+	await threadCommand(['inbox'], context(dir, '/work/two', { OO_THREAD_ID: '2' }));
+	assert.match(output.out(), /from #1 \(not yet delivered\)\n {2}the API changed/);
+	assert.match(output.out(), /from you \(not yet delivered\)\n {2}plan from stdin/);
+});
+
+test('send refuses yourself, finished threads, an empty message and --wake without the board', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two', column: 'done' }]);
+	const output = capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['send', '1', 'hi'], ctx), 1);
+	assert.match(output.err(), /That's #1 itself/);
+	assert.equal(await threadCommand(['send', '2', 'hi'], ctx), 1);
+	assert.match(output.err(), /#2 is in DONE/);
+	assert.equal(await threadCommand(['send', '1'], context(dir, project)), 1);
+	assert.match(output.err(), /usage:/);
+	assert.equal(await threadCommand(['send', '1', '--wake', 'hi'], context(dir, project)), 1);
+	assert.match(output.err(), /--wake needs the board running/);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.inbox, undefined);
+});
+
+test('markDelivered marks only the messages that were put to claude', () => {
+	const m = (text: string, delivered = false) => ({ from: '1', text, ts: '', delivered });
+	assert.deepEqual(
+		markDelivered([m('old', true), m('a'), m('b'), m('c')], 2).map(x => [x.text, x.delivered]),
+		[['old', true], ['a', true], ['b', true], ['c', false]],
+	);
+});
+
+test('the messages prompt names each sender and how to reply', () => {
+	const { state } = fixture([{ title: 'api' }, { title: 'ui' }]);
+	const prompt = messagesPrompt(state, [{ from: '1', text: 'renamed foo', ts: '', delivered: false }]);
+	assert.match(prompt, /^A message from related work on the board:\nFrom thread #1 "api": renamed foo\n/);
+	assert.match(prompt, /oo thread send 1 …/);
+	const fromUser = messagesPrompt(state, [{ from: 'user', text: 'hi', ts: '', delivered: false }]);
+	assert.doesNotMatch(fromUser, /Reply with/);
+});
+
+test('a starting claude hears the messages waiting for it, once', async () => {
+	const inbox = [
+		{ from: '2', text: 'already seen', ts: '', delivered: true },
+		{ from: '2', text: 'foo is now bar', ts: '', delivered: false },
+	];
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', inbox }, { cwd: '/work/two', title: 'rename' }]);
+	const ctx = context(dir, '/', { OO_THREAD_ID: '1' });
+	const briefing = (await sessionStarted({ cwd: '/work/one' }, ctx))!;
+	assert.match(briefing, /From thread #2 "rename": foo is now bar/);
+	assert.doesNotMatch(briefing, /already seen/);
+	assert.ok(loadState(join(dir, 'state.json')).threads[0]!.inbox!.every(m => m.delivered));
+	assert.doesNotMatch((await sessionStarted({ cwd: '/work/one' }, ctx)) ?? '', /From thread/);
+});
+
+test('a starting claude is told the project\'s other open threads it could message', async () => {
+	const { dir } = fixture([
+		{ cwd: '/work/one', column: 'active' },
+		{ cwd: '/work/two', title: 'api', column: 'polish' },
+		{ cwd: '/work/three', column: 'done' },
+		{ cwd: '/work/four', project: 'other' },
+	]);
+	const briefing = (await sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' })))!;
+	assert.match(briefing, /Other open threads in p: #2 api \(POLISH\)\. If your work changes something.*oo thread send <id>/);
+	assert.doesNotMatch(briefing, /#3|#4/);
+	// Alone in its project, there's nothing to say.
+	const alone = fixture([{ cwd: '/work/one', column: 'active' }]);
+	assert.equal(await sessionStarted({ cwd: '/work/one' }, context(alone.dir, '/', { OO_THREAD_ID: '1' })), undefined);
 });
