@@ -1,14 +1,15 @@
 import { Box, Text } from 'ink';
 import { TODO_MARKS, type Todo, type TodoStatus } from '../state.js';
-import { todoProgress, todoWindow } from '../threads.js';
+import { todoProgress, todoRows } from '../threads.js';
 
-// The highlighted thread's todos shown below the board; the rest are summed up as "N more".
-const MAX_TODO_LINES = 5;
 const TODO_COLORS: Record<TodoStatus, string> = { pending: 'gray', active: 'yellow', review: 'magenta', done: 'green' };
 
-/** The highlighted thread's progress through claude's task list, with the current step in view. */
-export function TodoList({ todos }: { todos: Todo[] }) {
-	const { start, end } = todoWindow(todos, MAX_TODO_LINES);
+/**
+ * The highlighted thread's progress through claude's task list, with the current step in view, in
+ * `lines` rows below its header; the rest are summed up as "N more".
+ */
+export function TodoList({ todos, lines }: { todos: Todo[]; lines: number }) {
+	const { start, end } = todoRows(todos, lines);
 	// Step numbers are right-aligned so the subjects line up past step 9.
 	const width = String(todos.length).length;
 	const indent = ' '.repeat(width + 4);
