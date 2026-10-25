@@ -7,7 +7,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | Key | |
 |---|---|
 | `h`/`l` `j`/`k` | move (arrows too) |
-| `H`/`L` | move the thread a column |
+| `H`/`L` | move the thread a column (`H` brings an archived one back to Done) |
 | `J`/`K` | reorder within its column |
 | `⏎` | open (or resume) its claude |
 | `w` / `W` | wake it / every thread closed mid-work ("keep going") |
@@ -18,7 +18,10 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `F` | straight to Done |
 | `x` | archive |
 | `C` | cycle its colour |
-| `p` / `esc` | filter by project / clear it |
+| `p` | filter by project |
+| `/` | search the id, title, plan, ticket, branch and PR as you type; `⏎` keeps it, `esc` drops it |
+| `esc` | clear the search, then the project filter |
+| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K` and `C`) |
 | `i` | import a thread started outside oo |
 | `P` | projects (their hooks and wake prompt) |
 | `?` | all keys |
