@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isOoWindow, tmuxVersionOk } from './tmux.js';
+import { isOoWindow, pasteSafe, tmuxVersionOk } from './tmux.js';
 
 test('accepts tmux 3.2 and later', () => {
 	assert.ok(tmuxVersionOk('tmux 3.2'));
@@ -26,4 +26,10 @@ test('closes thread and hook windows, not the board or the user\'s', () => {
 	assert.ok(!isOoWindow('oo-board'));
 	assert.ok(!isOoWindow('vim'));
 	assert.ok(!isOoWindow('foo-1'));
+});
+
+test('pastes lose control characters that could end the paste early, not newlines or tabs', () => {
+	assert.equal(pasteSafe('a\x1b[201~rm -rf\x1b[Z'), 'a[201~rm -rf[Z');
+	assert.equal(pasteSafe('a\x9b201~b\x07\x7f'), 'a201~b');
+	assert.equal(pasteSafe('one\r\ntwo\rthree\n\tfour · é ✓'), 'one\ntwo\nthree\n\tfour · é ✓');
 });

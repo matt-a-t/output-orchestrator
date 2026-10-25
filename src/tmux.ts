@@ -164,13 +164,21 @@ async function panes(window: string): Promise<string[][]> {
 }
 
 /**
+ * `text` without control characters but newlines and tabs. tmux pastes them as they are, so an
+ * ESC[201~ in a message would end the bracketed paste early and the rest would arrive as keystrokes.
+ */
+export function pasteSafe(text: string): string {
+	return text.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
+}
+
+/**
  * Type `text` into a thread window's claude as a bracketed paste, then press Enter to submit it.
  * Aimed at claude's pane, not the window's active one, which may be the split beside it.
  */
 export async function pasteInto(name: string, text: string): Promise<void> {
 	const pane = (await panes(name)).find(([, role]) => !role)?.[0] ?? `:${name}`;
 	const buffer = `oo-${randomUUID()}`;
-	await execa('tmux', ['load-buffer', '-b', buffer, '-'], { input: text });
+	await execa('tmux', ['load-buffer', '-b', buffer, '-'], { input: pasteSafe(text) });
 	await execa('tmux', ['paste-buffer', '-p', '-d', '-b', buffer, '-t', pane]);
 	// An Enter arriving with the paste can be swallowed by it rather than submitting.
 	await setTimeout(200);
