@@ -126,8 +126,10 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   [KEYS.md](KEYS.md#in-a-form)): `i` edits a field, ⏎ goes on to the next, `a` commits, and `q` or
   esc cancels (leaving the changes staged).
   Press `a` while claude is still writing to commit whatever it writes without opening the form
-  (`a` again goes back). If the thread's claude has stopped (✓), it's then told the step was committed, given your
-  comments, and told to move on to the next checkpoint, or to stop if that was the last one.
+  (`a` again goes back). The thread's claude is then told the step was committed, given your
+  comments, and told to move on to the next checkpoint, or to stop if that was the last one: right
+  away if it's at its prompt (stopped ✓, or just reopened), otherwise as a message in its inbox,
+  put to it when its turn ends or when it next starts.
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels).
@@ -142,8 +144,8 @@ claude if it isn't running) and jumps there. The diff is the step's, or the thre
 step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
 closes it. `a` commits everything uncommitted, like approving from `d`:
 claude drafts the message (`a` again while it writes takes it as it is) and it opens in the same
-commit form (esc or an empty message cancels, leaving the changes staged), and a stopped claude is
-given your comments and told to move on. Pressing the
+commit form (esc or an empty message cancels, leaving the changes staged), and claude is
+given your comments and told to move on, as from `d`. Pressing the
 other key swaps what's on the right, and either key jumps back to it later. From inside a
 thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
 scroll and go back to the board (see [KEYS.md](KEYS.md)).
