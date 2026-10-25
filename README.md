@@ -93,8 +93,10 @@ project's tickets come from with **tickets** in the projects screen (`P`):
 
 The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`) after `i`, or use
 `h`/`l` to pick from your five most recently updated open tickets. The ticket's summary becomes
-the title unless you type your own, and its description becomes the plan. Leave it empty for no
-ticket.
+the title unless you type your own. Its description is kept with the ticket, not made the plan:
+anyone can file an issue on a public repo, so `oo thread show` quotes it to claude as the ticket's
+content, not instructions, and the board warns when a GitHub issue's author isn't a collaborator.
+Leave the field empty for no ticket.
 
 The ticket names the branch (`av-123-<title>` for Jira, `45-<title>` for issue #45; threads
 without one get `oo/<title>`) and the PR: its title starts with `AV-123: ` or `#45: `, and its

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
+import { parseUntrusted } from './sanitize.js';
 import type { Thread } from './state.js';
 import { isGithubKey, type TicketRef } from './tickets.js';
 
@@ -11,7 +12,7 @@ export type PrState = 'OPEN' | 'CLOSED' | 'MERGED';
 export async function findPr(cwd: string, branch: string): Promise<Pr | undefined> {
 	const result = await execa('gh', ['pr', 'view', branch, '--json', 'number,url'], { cwd, reject: false });
 	if (result.exitCode !== 0) return;
-	const { number, url } = JSON.parse(result.stdout) as Pr;
+	const { number, url } = parseUntrusted<Pr>(result.stdout);
 	return { number, url };
 }
 
@@ -98,7 +99,7 @@ export type PrStatus = { state: PrState; mergeable: 'MERGEABLE' | 'CONFLICTING' 
 
 export async function prStatus(cwd: string, pr: Pr): Promise<PrStatus> {
 	const { stdout } = await execa('gh', ['pr', 'view', String(pr.number), '--json', 'state,mergeable,mergeStateStatus'], { cwd });
-	return JSON.parse(stdout) as PrStatus;
+	return parseUntrusted<PrStatus>(stdout);
 }
 
 export async function prState(cwd: string, pr: Pr): Promise<PrState> {
@@ -150,7 +151,7 @@ const DETAIL_FIELDS = 'number,title,body,url,author,isDraft,state,mergeable,merg
 /** What the PR viewer shows above the diff. */
 export async function prDetails(cwd: string, number: number): Promise<PrDetails> {
 	const { stdout } = await execa('gh', ['pr', 'view', String(number), '--json', DETAIL_FIELDS], { cwd });
-	return JSON.parse(stdout) as PrDetails;
+	return parseUntrusted<PrDetails>(stdout);
 }
 
 /** The PR's diff as GitHub has it: what's pushed, not what's in the worktree. */
@@ -194,7 +195,7 @@ export async function reviewRequests(cwd: string): Promise<ReviewRequest[]> {
 		['pr', 'list', '--search', 'review-requested:@me sort:updated-desc', '--json', 'number,title,url,author,updatedAt,isDraft'],
 		{ cwd },
 	);
-	return JSON.parse(stdout) as ReviewRequest[];
+	return parseUntrusted<ReviewRequest[]>(stdout);
 }
 
 export const REVIEW_EVENTS = ['approve', 'request-changes', 'comment'] as const;

@@ -109,7 +109,7 @@ export function todoRows(todos: Todo[], rows: number): { start: number; end: num
 export function matchesSearch(thread: Thread, query: string): boolean {
 	const q = query.trim().toLowerCase();
 	if (!q) return true;
-	const fields = [`#${thread.id}`, thread.title, thread.plan, thread.ticket?.key, thread.branch, thread.pr && `#${thread.pr.number}`];
+	const fields = [`#${thread.id}`, thread.title, thread.plan, thread.ticket?.key, thread.ticket?.summary, thread.ticket?.description, thread.branch, thread.pr && `#${thread.pr.number}`];
 	return fields.some(f => f && f.toLowerCase().includes(q));
 }
 

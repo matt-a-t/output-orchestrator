@@ -41,6 +41,8 @@ const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 // the worktree's diffs: a heavy border, a banner on top, a prompt at the bottom and magenta file headers.
 const PR_FRAME: PopupOptions = { border: 'heavy', borderStyle: 'fg=magenta' };
 const PR_DELTA = "--file-style='bold magenta' --file-decoration-style='magenta ul ol' --hunk-header-decoration-style='magenta box'";
+// vim for files holding other people's text (diffs, PRs), with modelines off so none of it can set options.
+const VIM = "vim --cmd 'set nomodeline'";
 
 /**
  * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
@@ -141,7 +143,7 @@ async function writeReview(cwd: string, number: number, diff: string, event: Rev
 	try {
 		for (;;) {
 			// :cq deletes the file, which means cancel.
-			await popup(`vim ${shellQuote(file)} || rm -f ${shellQuote(file)}`, { cwd, title: ` review PR #${number} — ${COMMENT} note `, ...PR_FRAME });
+			await popup(`${VIM} ${shellQuote(file)} || rm -f ${shellQuote(file)}`, { cwd, title: ` review PR #${number} — ${COMMENT} note `, ...PR_FRAME });
 			if (!existsSync(file)) return null;
 			const text = readFileSync(file, 'utf8');
 			const review = parsePrReview(text);
@@ -213,8 +215,8 @@ export function prHeader(pr: PrDetails, width = 80): string {
 		status.join(' · '),
 		reviews.length ? `reviews: ${reviews.join(', ')}` : '',
 		'',
-		// GitHub keeps bodies written in the browser with CRLFs, which less would show as ^M.
-		pr.body.replaceAll('\r', '').trim() || paint('dim', 'No description.'),
+		// Sanitized by prDetails, CRLFs from the browser and escapes (OSC 8 links among them) alike.
+		pr.body.trim() || paint('dim', 'No description.'),
 		'',
 		paint('magenta', '─'.repeat(width)),
 		'',
@@ -318,7 +320,7 @@ export async function openChanges(cwd: string, thread: Thread): Promise<boolean>
 	const file = join(dir, 'changes.qf');
 	writeFileSync(file, locations.join('\n') + '\n');
 	try {
-		await popup(`vim -q ${shellQuote(file)}`, { cwd, title: ' changes — :cn/:cp next/prev  :copen list ' });
+		await popup(`${VIM} -q ${shellQuote(file)}`, { cwd, title: ' changes — :cn/:cp next/prev  :copen list ' });
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -350,7 +352,7 @@ export async function reviewDiff(cwd: string, thread: Thread): Promise<string | 
 	);
 	try {
 		// :cq deletes the file, which means cancel.
-		await popup(`vim ${shellQuote(file)} || rm -f ${shellQuote(file)}`, { cwd, title: ` review — ${COMMENT} note ` });
+		await popup(`${VIM} ${shellQuote(file)} || rm -f ${shellQuote(file)}`, { cwd, title: ` review — ${COMMENT} note ` });
 		if (!existsSync(file)) return '';
 		return formatComments(parseComments(readFileSync(file, 'utf8')));
 	} finally {

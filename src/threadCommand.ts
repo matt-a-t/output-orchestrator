@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
-import { normalizeKey, ticketUrl } from './tickets.js';
+import { sanitize } from './sanitize.js';
+import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -174,19 +175,27 @@ function details(state: State, t: Thread): string {
 	const unread = undelivered(t.inbox).length;
 	if (unread) lines.push(`inbox:   ${unread} not yet delivered (oo thread inbox)`);
 	if (t.todos?.length) lines.push(`todos:   ${todoProgress(t.todos)} done`, ...t.todos.map(todo => `  ${TODO_MARKS[todo.status]} ${todo.subject}`));
+	const content = t.ticket && ticketContent(t.ticket);
+	if (content) lines.push('', content);
 	if (t.plan) lines.push('', t.plan);
 	return lines.join('\n');
 }
 
+/** Text from a file, or stdin for `-`, sanitized like the command line. */
+function readInput(ctx: Context, file: string): string {
+	return sanitize(file === '-' ? ctx.stdin() : readFileSync(file, 'utf8'));
+}
+
 async function run(args: string[], ctx: Context): Promise<number> {
-	const [sub, ...rest] = args;
+	// Titles, messages and the rest are kept and shown to people and claudes, so no terminal escapes in them.
+	const [sub, ...rest] = args.map(sanitize);
 	const state = loadState(join(ctx.dir, 'state.json'));
 	if (sub === 'add') {
 		const { positional, flag } = parseArgs(rest, ['project', 'plan-file', 'ticket'], []);
 		const title = positional.join(' ').trim();
 		if (!title) throw new UsageError('Give the thread a title');
 		const planFile = flag('plan-file');
-		const plan = planFile === undefined ? '' : (planFile === '-' ? ctx.stdin() : readFileSync(planFile, 'utf8')).trim();
+		const plan = planFile === undefined ? '' : readInput(ctx, planFile).trim();
 		const project = resolveProject(state, ctx.cwd, flag('project'));
 		const ticket = await resolveTicket(state.projects.find(p => p.name === project)!, flag('ticket'));
 		const response = await change({ op: 'add', project, title, plan, ticket }, ctx);
@@ -247,7 +256,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const { positional, flag } = parseArgs(rest, ['title', 'body-file'], []);
 		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
 		const bodyFile = flag('body-file');
-		const body = bodyFile === undefined ? undefined : (bodyFile === '-' ? ctx.stdin() : readFileSync(bodyFile, 'utf8')).trim();
+		const body = bodyFile === undefined ? undefined : readInput(ctx, bodyFile).trim();
 		const title = flag('title')?.trim() || undefined;
 		const thread = ownThreadOnly(state, resolveThreadId(state, positional[0], ctx.env, ctx.cwd), ctx);
 		// It pushes, opens the PR, moves the thread and runs hooks, which only the board can do.
@@ -260,7 +269,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
 		const planFile = flag('plan-file');
 		if (planFile === undefined) throw new UsageError('oo thread plan [id] --plan-file <path>|-');
-		const plan = (planFile === '-' ? ctx.stdin() : readFileSync(planFile, 'utf8')).trim();
+		const plan = readInput(ctx, planFile).trim();
 		const thread = ownThreadOnly(state, resolveThreadId(state, positional[0], ctx.env, ctx.cwd), ctx);
 		const response = await change({ op: 'plan', thread, plan }, ctx);
 		if (!response.ok) return fail(response.message);
@@ -281,7 +290,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		}
 		const bodyFile = flag('body-file');
 		if (bodyFile === undefined) throw new UsageError('oo thread draft [id] pr [--title <title>] --body-file <path>|-');
-		const body = (bodyFile === '-' ? ctx.stdin() : readFileSync(bodyFile, 'utf8')).trim();
+		const body = readInput(ctx, bodyFile).trim();
 		const title = flag('title')?.trim() || state.threads.find(t => t.id === thread)!.title;
 		return report(await change({ op: 'draft', thread, pr: { title, body } }, ctx));
 	}
@@ -290,7 +299,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.at(-1) === 'set') {
 			const file = flag('file');
 			if (positional.length > 2 || file === undefined) throw new UsageError('oo thread todo [id] set --file <path>|-');
-			const subjects = todoLines(file === '-' ? ctx.stdin() : readFileSync(file, 'utf8'));
+			const subjects = todoLines(readInput(ctx, file));
 			const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
 			return report(await change({ op: 'todos', thread, subjects }, ctx));
 		}
@@ -306,7 +315,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const [to, ...words] = positional;
 		const file = flag('file');
 		if (!to || (file === undefined) === !words.length) throw new UsageError('oo thread send <id> [--wake] (<message> | --file <path>|-)');
-		const text = (file === undefined ? words.join(' ') : file === '-' ? ctx.stdin() : readFileSync(file, 'utf8')).trim();
+		const text = (file === undefined ? words.join(' ') : readInput(ctx, file)).trim();
 		if (!text) throw new UsageError('The message is empty');
 		const thread = resolveThreadId(state, to, ctx.env, ctx.cwd);
 		const from = senderId(state, ctx);
@@ -355,11 +364,11 @@ function report(response: Response): number {
 /** The plan claude had approved, from ExitPlanMode's PostToolUse input: inline, or in the file it was written to. */
 function approvedPlan(input: any): string | undefined {
 	const inline = input?.tool_input?.plan ?? input?.tool_response?.plan;
-	if (typeof inline === 'string' && inline.trim()) return inline.trim();
+	if (typeof inline === 'string' && inline.trim()) return sanitize(inline).trim();
 	const file = input?.tool_input?.planFilePath ?? input?.tool_response?.filePath;
 	if (typeof file !== 'string') return;
 	try {
-		return readFileSync(file, 'utf8').trim() || undefined;
+		return sanitize(readFileSync(file, 'utf8')).trim() || undefined;
 	} catch {}
 }
 
