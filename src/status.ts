@@ -74,6 +74,13 @@ ${THREAD_USAGE}
   Mark one \`active\` as you start it and \`review\` when it's ready, then stop for the user to review it;
   approving the step on the board commits it, marks it \`done\` and tells you to move on, passing on any comments the user adds; after the last one you only hear back if they left comments. The list stays on the thread across claude
   runs and shows on its card, so keep it current.
+- **Write the commit message before handing a step over.** Just before marking a checkpoint \`review\`, save
+  its commit message with \`oo thread draft commit --message <message>\`: one short imperative subject under
+  60 characters, in the style of \`git log\`'s recent subjects, no body or trailing period. The board's commit
+  form opens with it, so the user doesn't wait for one to be written. When it's the last checkpoint, also save
+  the PR's title and description with \`oo thread draft pr --title <title> --body-file - <<'EOF'\`: what changed
+  and why, for a reviewer to skim. Either way the ticket prefix and link are added for you, and no thread ids.
+  Save them again if the step changes before it's approved.
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
   and why, then tell the user its id. Keep the title short; put the detail in the plan. If it's for a Jira
@@ -95,7 +102,7 @@ ${THREAD_USAGE}
 - **Open the PR only when the user asks**, with \`oo thread pr\`: it pushes the branch, opens the PR and moves
   the thread to PR, from Local too. Commit everything first. You know the change best, so write the description
   yourself and pass it with \`--body-file - <<'EOF'\` (and \`--title\` if the thread's title won't do); leave both out
-  to have claude draft them from the diff. The ticket prefix and link are added for you, and no thread ids, as with commits.
+  to use the PR draft you saved, or without one, to have claude draft them from the diff. The ticket prefix and link are added for you, and no thread ids, as with commits.
 - **Offer Local when the user wants to try the change.** If they want to test or try it themselves, offer to
   put the thread in Local and run \`oo thread local in\` once they agree; \`oo thread local out\` brings it back.
   Uncommitted changes move with the thread, so there's no need to commit first. This claude is closed and resumed
