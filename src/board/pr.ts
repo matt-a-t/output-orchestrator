@@ -7,6 +7,7 @@ import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitRe
 import { runColumnHook } from '../hooks.js';
 import { showPr } from '../review.js';
 import type { Thread } from '../state.js';
+import { withDrafts } from '../threads.js';
 import { CLOSED, progressPopup, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
@@ -66,7 +67,9 @@ export async function openPr(board: Board, thread: Thread, steps: PrSteps): Prom
 	} finally {
 		await steps.close();
 	}
-	const patch = { pr, branch, base: thread.base };
+	// The saved PR draft is used up, whether it went into this PR or there already was one.
+	const drafts = withDrafts(board.state().threads.find(t => t.id === thread.id)?.drafts, { pr: null });
+	const patch = { pr, branch, base: thread.base, drafts };
 	board.setColumn(thread.id, 'pr', patch);
 	board.showAtEnd('pr');
 	const opened = `${existing ? 'Pushed' : 'Opened'} PR #${pr.number}: ${pr.url}`;
@@ -84,9 +87,10 @@ export async function openPrFromBoard(board: Board, thread: Thread) {
 	const { ok, message } = await openPr(board, thread, {
 		status: text => popup().status(text),
 		describe: async (cwd, thread, base) => {
-			const written = await popup().cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal));
+			const saved = board.state().threads.find(t => t.id === thread.id)?.drafts?.pr;
+			const written = saved ?? (await popup().cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal)));
 			if (written === CLOSED) return null;
-			if (written && popup().accepted()) return withTicket(written, thread.ticket);
+			if (written && !saved && popup().accepted()) return withTicket(written, thread.ticket);
 			const edited = await popup().edit(
 				written
 					? prText(withTicket(written, thread.ticket), thread.branch!)

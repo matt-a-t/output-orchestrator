@@ -16,7 +16,7 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               Moving to pr is oo thread pr; a thread in Local can't move until it's back.
   oo thread pr [id] [--title <title>] [--body-file <path>|-]
                               push the thread's branch, open its PR (unless it has one) and move it to PR, from Local too.
-                              Without --body-file, claude drafts the description, and the title unless --title is given;
+                              Without --body-file, it's the saved PR draft (oo thread draft pr), else claude drafts the description, and the title unless --title is given;
                               with it and no --title, the title is the thread's. Needs the board running.
   oo thread local [id] [in|out]
                               put the thread in Local, checking its branch out in the project's own checkout,
@@ -32,6 +32,10 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               It's put to that claude when its turn ends, or when it next starts if it's closed;
                               --wake resumes a closed one to hear it now (needs the board running).
   oo thread inbox [id]        the messages other threads have sent this one
+  oo thread draft [id] commit --message <message>
+  oo thread draft [id] pr [--title <title>] --body-file <path>|-
+                              save the commit message (or PR title and description) the board's form opens with,
+                              instead of claude drafting one then; it's cleared once used. No --title: the thread's
   Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
 
 /** What the command runs against; tests swap these out. */
@@ -251,6 +255,24 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		console.log(response.message);
 		return 0;
 	}
+	if (sub === 'draft') {
+		const { positional, flag } = parseArgs(rest, ['message', 'title', 'body-file'], []);
+		const kind = positional.at(-1);
+		if (positional.length < 1 || positional.length > 2 || (kind !== 'commit' && kind !== 'pr')) {
+			throw new UsageError('oo thread draft [id] commit --message <message> | pr [--title <title>] --body-file <path>|-');
+		}
+		const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
+		if (kind === 'commit') {
+			const message = flag('message')?.trim();
+			if (!message) throw new UsageError('oo thread draft [id] commit --message <message>');
+			return report(await change({ op: 'draft', thread, commit: message }, ctx));
+		}
+		const bodyFile = flag('body-file');
+		if (bodyFile === undefined) throw new UsageError('oo thread draft [id] pr [--title <title>] --body-file <path>|-');
+		const body = (bodyFile === '-' ? ctx.stdin() : readFileSync(bodyFile, 'utf8')).trim();
+		const title = flag('title')?.trim() || state.threads.find(t => t.id === thread)!.title;
+		return report(await change({ op: 'draft', thread, pr: { title, body } }, ctx));
+	}
 	if (sub === 'todo') {
 		const { positional, flag } = parseArgs(rest, ['file'], []);
 		if (positional.at(-1) === 'set') {
@@ -354,7 +376,8 @@ export async function planApproved(input: any, ctx: Context): Promise<string | u
 
 // The checkpoints carry across claude runs, so the work can stop for review at each one.
 const TODOS_PROMPT = `Before starting, save the plan's checkpoints with \`oo thread todo set --file - <<'EOF'\` (one per line, each a step the user can review and commit on its own).
-Mark one active (\`oo thread todo <n> active\`) when you start it and review when it's ready, then stop and let the user review it; approving the step on the board commits it and marks it done.`;
+Mark one active (\`oo thread todo <n> active\`) when you start it and review when it's ready, then stop and let the user review it; approving the step on the board commits it and marks it done.
+Just before marking one review, save its commit message with \`oo thread draft commit --message <message>\` (and, for the last one, the PR's with \`oo thread draft pr --title <title> --body-file - <<'EOF'\`), so the board's forms open with them.`;
 
 /** What a thread's claude is told as it starts: where the thread's checkpoints stand. */
 export function todoBriefing(todos: Todo[]): string | undefined {
@@ -381,9 +404,14 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: str
 	return [`${done} (commit: ${commitSubject}).`, comments, then].filter(Boolean).join(' ');
 }
 
-/** After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint, as approving it on the board does. */
+/**
+ * After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint and
+ * drop the commit draft it used, as approving it on the board does.
+ */
 export async function approveTodo(thread: string, ctx: Context = defaultContext()): Promise<string | undefined> {
-	const todos = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread)?.todos ?? [];
+	const stored = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread);
+	if (stored?.drafts?.commit) await change({ op: 'draft', thread, commit: null }, ctx);
+	const todos = stored?.todos ?? [];
 	const item = approvedTodo(todos);
 	if (item === -1) return;
 	const response = await change({ op: 'todo', thread, item: item + 1, status: 'done' }, ctx);

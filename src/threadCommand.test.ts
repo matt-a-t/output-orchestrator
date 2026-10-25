@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todosDone, todoWindow } from './threads.js';
+import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todosDone, todoWindow, withDrafts } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -264,6 +264,31 @@ test('todo <n> <status> sets one checkpoint\'s status, with or without a thread 
 	assert.match(output.err(), /Unknown status "finished"/);
 });
 
+test('draft saves the commit message and PR description, keeping the other', async t => {
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active' }]);
+	const output = capture(t);
+	const ctx = { ...context(dir, '/work/one', { OO_THREAD_ID: '1' }), stdin: () => 'What changed\n' };
+	assert.equal(await threadCommand(['draft', 'commit', '--message', ' Add drafts '], ctx), 0);
+	assert.match(output.out(), /Saved #1's commit message for review/);
+	assert.equal(await threadCommand(['draft', 'pr', '--body-file', '-'], ctx), 0);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.drafts, {
+		commit: 'Add drafts',
+		pr: { title: 'thread 1', body: 'What changed' },
+	});
+	assert.equal(await threadCommand(['draft', '1', 'pr', '--title', 'Drafts', '--body-file', '-'], ctx), 0);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.drafts?.pr?.title, 'Drafts');
+	assert.equal(await threadCommand(['draft', 'commit'], ctx), 1);
+	assert.equal(await threadCommand(['draft', 'pr'], ctx), 1);
+	assert.equal(await threadCommand(['draft', 'message'], ctx), 1);
+});
+
+test('withDrafts: a value saves, null clears, left out keeps', () => {
+	const pr = { title: 't', body: 'b' };
+	assert.deepEqual(withDrafts({ commit: 'c', pr }, { commit: null }), { pr });
+	assert.deepEqual(withDrafts(undefined, { commit: 'c' }), { commit: 'c' });
+	assert.equal(withDrafts({ commit: 'c' }, { commit: null }), undefined);
+});
+
 test('a starting claude is told where the checkpoints stand, until they\'re all done', async () => {
 	const todos = [{ subject: 'a', status: 'done' as const }, { subject: 'b', status: 'active' as const }];
 	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
@@ -317,6 +342,13 @@ test('committing outside the board ticks off the checkpoint in review', async ()
 	// Nothing in review or active: nothing to tick off.
 	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
 	assert.equal(await approveTodo('2', context(dir, '/')), undefined);
+});
+
+test('committing outside the board drops the commit draft it used, keeping the PR one', async () => {
+	const pr = { title: 't', body: 'b' };
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', drafts: { commit: 'Add a', pr } }]);
+	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.drafts, { pr });
 });
 
 test('a stopped claude is told which step was committed and what comes next, and nothing after the last', () => {

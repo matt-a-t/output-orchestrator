@@ -17,6 +17,8 @@ export type Request =
 	// Board-only too (it pushes, opens the PR and runs hooks); without a body, claude drafts the PR, and the title too unless given.
 	| { id: string; op: 'pr'; thread: string; title?: string; body?: string }
 	| { id: string; op: 'plan'; thread: string; plan: string }
+	// Save (or with null, clear) the messages the commit and PR forms open with; one left out stays as it is.
+	| { id: string; op: 'draft'; thread: string; commit?: string | null; pr?: { title: string; body: string } | null }
 	| { id: string; op: 'todos'; thread: string; subjects: string[] }
 	// `item` counts from 1, as `oo thread show` lists them.
 	| { id: string; op: 'todo'; thread: string; item: number; status: TodoStatus }

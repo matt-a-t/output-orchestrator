@@ -444,9 +444,15 @@ export async function draftCommit(cwd: string, thread: Thread, signal?: AbortSig
 
 /**
  * In `progress`, have claude draft the commit message (q cancels), then edit it in the commit form,
- * or take it as it is if a was pressed while claude wrote it. null if cancelled.
+ * or take it as it is if a was pressed while claude wrote it. The thread's saved draft (`oo thread draft
+ * commit`) skips the wait and goes straight to the form. null if cancelled.
  */
 export async function writeCommit(progress: ProgressPopup, cwd: string, thread: Thread): Promise<CommitForm | null> {
+	const saved = thread.drafts?.commit;
+	if (saved) {
+		const edited = await progress.edit(commitFormText(saved));
+		return edited === CLOSED ? null : parseCommitForm(edited);
+	}
 	const drafted = await progress.cancellable('claude is writing the commit message', signal => draftCommit(cwd, thread, signal));
 	if (drafted === CLOSED) return null;
 	if (drafted && progress.accepted()) return { message: drafted, notes: '' };

@@ -68,6 +68,13 @@ export function setTodoStatus(todos: Todo[], index: number, status: TodoStatus):
 	return todos.map((t, i) => (i === index ? { ...t, status } : t));
 }
 
+/** The thread's drafts with `change` applied: a value saves it, null clears it, left out keeps it. Undefined once both are gone. */
+export function withDrafts(drafts: Thread['drafts'], change: { commit?: string | null; pr?: { title: string; body: string } | null }): Thread['drafts'] {
+	const commit = change.commit === undefined ? drafts?.commit : change.commit || undefined;
+	const pr = change.pr === undefined ? drafts?.pr : change.pr || undefined;
+	return commit || pr ? { ...(commit && { commit }), ...(pr && { pr }) } : undefined;
+}
+
 /**
  * Which `max` todos to show: from just before the first unfinished one, so the current step stays in
  * view with the one finished before it, pulled back if that would leave space at the end.
@@ -208,6 +215,13 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		const now = new Date().toISOString();
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));
 		return done(`Saved #${thread.id}'s plan`);
+	}
+	if (request.op === 'draft') {
+		const drafts = withDrafts(thread.drafts, request);
+		const now = new Date().toISOString();
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, drafts, updatedAt: now } : t)) }));
+		const saved = [request.commit && 'commit message', request.pr && 'PR description'].filter(Boolean).join(' and ');
+		return done(saved ? `Saved #${thread.id}'s ${saved} for review` : `Cleared #${thread.id}'s drafts`);
 	}
 	if (request.op === 'todos' || request.op === 'todo') {
 		const current = thread.todos ?? [];

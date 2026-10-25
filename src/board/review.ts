@@ -5,7 +5,7 @@ import { commit, currentRef, defaultBranch, forcePushBranch, rebaseInProgress, r
 import { openChanges, reviewDiff, showDiff, writeCommit } from '../review.js';
 import type { Thread } from '../state.js';
 import { approvedPrompt } from '../threadCommand.js';
-import { applyRequest, approvedTodo, conflictPrompt, setTodoStatus } from '../threads.js';
+import { applyRequest, approvedTodo, conflictPrompt, setTodoStatus, withDrafts } from '../threads.js';
 import { pasteInto, progressPopup, threadWindowName, windowNames } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -27,7 +27,8 @@ export async function approveStep(board: Board, cwd: string, thread: Thread) {
 	let form: CommitForm | null;
 	const progress = progressPopup(' commit ', COMMIT_FORM);
 	try {
-		form = await writeCommit(progress, cwd, thread);
+		// The stored thread, for a draft claude saved after this copy was taken.
+		form = await writeCommit(progress, cwd, board.state().threads.find(t => t.id === thread.id) ?? thread);
 		if (!form) return board.setMessage('⚠ Commit cancelled (changes left staged)');
 		progress.status('committing');
 		await commit(cwd, `${form.message}\n`);
@@ -35,10 +36,12 @@ export async function approveStep(board: Board, cwd: string, thread: Thread) {
 		await progress.close();
 	}
 	// Approving the step is what ticks off the checkpoint claude handed over.
-	const todos = board.state().threads.find(t => t.id === thread.id)?.todos ?? [];
+	const stored = board.state().threads.find(t => t.id === thread.id);
+	const todos = stored?.todos ?? [];
 	const item = approvedTodo(todos);
 	const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
-	if (item !== -1) board.updateThread(thread.id, { todos: ticked });
+	// The draft was for this step, so the next one can't reuse it.
+	board.updateThread(thread.id, { todos: ticked, drafts: withDrafts(stored?.drafts, { commit: null }) });
 	const prompt = approvedPrompt(ticked, item, form.message, form.notes);
 	const open = (await windowNames()).includes(window);
 	const told = !!prompt && waiting && open;

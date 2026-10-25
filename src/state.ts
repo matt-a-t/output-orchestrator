@@ -98,6 +98,9 @@ const ThreadSchema = z.preprocess(
 		todos: z.array(TodoSchema).optional(),
 		// Messages from related threads (see `oo thread send`), kept once delivered so `oo thread inbox` can list them.
 		inbox: z.array(MessageSchema).optional(),
+		// Messages the thread's claude wrote ahead of review (see `oo thread draft`), so the commit and PR
+		// forms open filled in instead of waiting on a fresh draft. Each is cleared once used.
+		drafts: z.object({ commit: z.string().optional(), pr: z.object({ title: z.string(), body: z.string() }).optional() }).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

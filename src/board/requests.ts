@@ -43,10 +43,13 @@ async function prRequest(board: Board, { id, thread: threadId, title, body }: Ex
 			await openPr(board, thread, {
 				status: text => board.setBusy(text),
 				describe: async (cwd, thread, base) => {
+					const saved = board.state().threads.find(t => t.id === thread.id)?.drafts?.pr;
 					const draft =
 						body !== undefined
 							? { title: title ?? thread.title, body }
-							: await draftPr(cwd, thread, base).then(written => written && { ...written, ...(title !== undefined && { title }) });
+							: await Promise.resolve(saved ?? draftPr(cwd, thread, base)).then(
+									written => written && { ...written, ...(title !== undefined && { title }) },
+								);
 					return withTicket(draft ?? { title: title ?? thread.title, body: thread.plan }, thread.ticket);
 				},
 				close: async () => {},
