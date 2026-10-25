@@ -311,3 +311,4 @@ straight away. [PLAN.md](PLAN.md) has the design and milestones.
 To release: `npm version patch` (or `minor`), then `git push --follow-tags`. Pushing the tag runs
 the [publish workflow](.github/workflows/publish.yml), which tests the build and publishes it to npm
 with provenance through trusted publishing, so nothing is published from your machine.
+It waits in the `npm-publish` environment until you approve the run in the Actions tab.
