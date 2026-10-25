@@ -321,6 +321,7 @@ the [publish workflow](.github/workflows/publish.yml), which tests the build and
 with provenance through trusted publishing, so nothing is published from your machine.
 It waits in the `npm-publish` environment until you approve the run in the Actions tab. Only that
 approved job can publish, and it installs dependencies with `--ignore-scripts` so none of their
-install scripts run while it can.
+install scripts run while it can. It stages the release rather than publishing it: approve it with
+2FA under Staged Packages on npmjs.com (or from the npm CLI) to make it public.
 
 To report a security problem, see [SECURITY.md](SECURITY.md).
