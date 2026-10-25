@@ -6,7 +6,7 @@ import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
-import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todosDone, todoWindow, withDrafts } from './threads.js';
+import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todoRows, todosDone, todoWindow, withDrafts } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
 	cwd,
@@ -325,6 +325,19 @@ test('todoWindow keeps the current step in view', () => {
 	// Near the end, or all done, the last few.
 	assert.deepEqual(todoWindow(todos(8, 10), 5), { start: 5, end: 10 });
 	assert.deepEqual(todoWindow(todos(10, 10), 5), { start: 5, end: 10 });
+});
+
+test('todoRows fits the "N more" rows in with the steps', () => {
+	const todos = (done: number, total: number) =>
+		Array.from({ length: total }, (_, i) => ({ subject: String(i), status: i < done ? ('done' as const) : ('pending' as const) }));
+	// Short enough for every step, so no arrows.
+	assert.deepEqual(todoRows(todos(0, 4), 4), { start: 0, end: 4 });
+	// Only "↓ N more".
+	assert.deepEqual(todoRows(todos(0, 8), 4), { start: 0, end: 3 });
+	// Both arrows, still with the current step and the one before it.
+	assert.deepEqual(todoRows(todos(4, 10), 4), { start: 3, end: 5 });
+	// Only "↑ N more" once near the end, or all done.
+	assert.deepEqual(todoRows(todos(10, 10), 4), { start: 7, end: 10 });
 });
 
 test('todosDone needs a list with every item done', () => {
