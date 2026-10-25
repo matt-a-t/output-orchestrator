@@ -95,6 +95,14 @@ export function todoRows(todos: Todo[], rows: number): { start: number; end: num
 	}
 }
 
+/** Whether the board's `/` search matches the thread, ignoring case; an empty search matches every thread. */
+export function matchesSearch(thread: Thread, query: string): boolean {
+	const q = query.trim().toLowerCase();
+	if (!q) return true;
+	const fields = [`#${thread.id}`, thread.title, thread.plan, thread.ticket?.key, thread.branch, thread.pr && `#${thread.pr.number}`];
+	return fields.some(f => f && f.toLowerCase().includes(q));
+}
+
 /** Add a thread to the bottom of Planned. */
 export function addThread(
 	state: State,
