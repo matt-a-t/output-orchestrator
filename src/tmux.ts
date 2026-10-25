@@ -62,6 +62,22 @@ export async function killWindow(name: string): Promise<void> {
 	if ((await windowNames()).includes(name)) await execa('tmux', ['kill-window', '-t', `:${name}`]);
 }
 
+/** Whether a window is one the board opened (a thread's or a project hook's), so not the board's own or the user's. */
+export function isOoWindow(name: string): boolean {
+	return name.startsWith('oo-') && name !== BOARD_WINDOW;
+}
+
+/** The board's thread and hook windows open in this session. */
+export async function ooWindows(): Promise<string[]> {
+	return (await windowNames()).filter(isOoWindow);
+}
+
+/** Close every thread and hook window, splits and all. */
+export async function closeOoWindows(): Promise<void> {
+	// One may close by itself (its claude exiting) while the others go.
+	for (const name of await ooWindows()) await execa('tmux', ['kill-window', '-t', `:${name}`], { reject: false });
+}
+
 /**
  * Jump to the thread's window, creating it (running `command` in `cwd`) if needed; `background`
  * creates it without jumping. Either way it's shown in the status bar as `label`.

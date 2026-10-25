@@ -20,6 +20,7 @@ import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses
 import { COLORS, COLUMNS, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
 import { setColumn as moveTo } from './threads.js';
+import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
 
 export function App() {
 	const { exit } = useApp();
@@ -100,6 +101,23 @@ export function App() {
 		} finally {
 			setBusy(null);
 		}
+	};
+
+	/** Q: quit and close every thread and hook window, warning about claudes still working in them. */
+	const quitClosingWindows = async () => {
+		const windows = await ooWindows();
+		if (windows.length === 0) return ask('Quit?', exit);
+		const working = stateRef.current.threads
+			.filter(t => statusesRef.current[t.id] === 'working' && windows.includes(threadWindowName(t.id)))
+			.map(t => `#${t.id}`);
+		const warning = working.length ? ` ⚠ ${working.join(', ')} ${working.length === 1 ? 'is' : 'are'} still working` : '';
+		const count = `${windows.length} window${windows.length === 1 ? '' : 's'}`;
+		ask(`Close ${count} and quit?${warning}`, () =>
+			void run(async () => {
+				await closeOoWindows();
+				exit();
+			}, 'closing windows'),
+		);
 	};
 
 	const board: Board = {
@@ -193,6 +211,7 @@ export function App() {
 			return input === 'y' ? confirm() : setMessage('Cancelled');
 		}
 		if (input === 'q') return ask('Quit?', exit);
+		if (input === 'Q') return void run(quitClosingWindows, 'listing windows');
 		if (key.escape && filter) {
 			setFilter(null);
 			// Stay on the same thread now that the rest of its column is back.
