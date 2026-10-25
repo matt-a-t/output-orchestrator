@@ -8,7 +8,7 @@ import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogi
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
-import { CLOSED, confirmPopup, popup, shellQuote, type ProgressPopup } from './tmux.js';
+import { clientWidth, CLOSED, confirmPopup, popup, shellQuote, type PopupOptions, type ProgressPopup } from './tmux.js';
 
 // less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
 // 83) sets up delta's styles (`oo delta`) and comes back to the diff.
@@ -37,6 +37,10 @@ const REVIEW_STATUSES: Record<number, [ReviewEvent, string]> = {
 const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
 // What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
 const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
+// The PR viewer and the popups it opens are framed and coloured magenta so they can't be mistaken for
+// the worktree's diffs: a heavy border, a banner on top, a prompt at the bottom and magenta file headers.
+const PR_FRAME: PopupOptions = { border: 'heavy', borderStyle: 'fg=magenta' };
+const PR_DELTA = "--file-style='bold magenta' --file-decoration-style='magenta ul ol' --hunk-header-decoration-style='magenta box'";
 
 /**
  * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
@@ -72,17 +76,19 @@ export async function showPr(cwd: string, number: number): Promise<'closed' | Pr
 	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
 	const header = join(dir, 'header');
 	const patch = join(dir, 'pr.diff');
-	writeFileSync(header, prHeader(details));
+	// The popup is 90% of the client, less its border.
+	writeFileSync(header, prHeader(details, Math.floor((await clientWidth()) * 0.9) - 2));
 	writeFileSync(patch, diff + '\n');
-	const stat = diff ? `git apply --stat --summary ${shellQuote(patch)}; echo; delta --paging=never --navigate < ${shellQuote(patch)}` : "echo 'No changes'";
+	const stat = diff ? `git apply --stat --summary ${shellQuote(patch)}; echo; delta --paging=never --navigate ${PR_DELTA} < ${shellQuote(patch)}` : "echo 'No changes'";
 	const keys = own ? lesskey('own-pr', OWN_PR_KEYS) : lesskey('review-pr', REVIEW_PR_KEYS);
-	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(keys)}`;
-	const title = ` PR #${number} — n/N next/prev hunk  ${own ? 'm merge' : 'a approve  x request changes  c comment'}  o browser  S styling  q close `;
+	const hints = `n/N hunk  ${own ? 'm merge' : 'a approve  x request changes  c comment'}  o browser  S styling  q close`;
+	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(keys, [lessPrompt(`PR #${number} — ${hints}`), '--use-color', '--color=PWm'])}`;
+	const title = ` PR #${number} — ${hints} `;
 	try {
 		for (;;) {
-			const status = await popup(command, { cwd, title });
+			const status = await popup(command, { cwd, title, ...PR_FRAME });
 			if (status === DELTA_STATUS) {
-				await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+				await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ', ...PR_FRAME });
 				continue;
 			}
 			if (status === BROWSER_STATUS) {
@@ -135,7 +141,7 @@ async function writeReview(cwd: string, number: number, diff: string, event: Rev
 	try {
 		for (;;) {
 			// :cq deletes the file, which means cancel.
-			await popup(`vim ${shellQuote(file)} || rm -f ${shellQuote(file)}`, { cwd, title: ` review #${number} — ${COMMENT} note ` });
+			await popup(`vim ${shellQuote(file)} || rm -f ${shellQuote(file)}`, { cwd, title: ` review PR #${number} — ${COMMENT} note `, ...PR_FRAME });
 			if (!existsSync(file)) return null;
 			const text = readFileSync(file, 'utf8');
 			const review = parsePrReview(text);
@@ -169,7 +175,7 @@ export function parsePrReview(text: string): { body: string; comments: ReviewCom
 	};
 }
 
-const ANSI: Record<string, string> = { red: '31', green: '32', yellow: '33', magenta: '35', bold: '1', dim: '2' };
+const ANSI: Record<string, string> = { red: '31', green: '32', yellow: '33', magenta: '35', bold: '1', dim: '2', banner: '1;97;45' };
 const paint = (color: string, text: string) => `\x1b[${ANSI[color]}m${text}\x1b[0m`;
 
 const REVIEW_WORDS: Record<string, [string, string]> = {
@@ -179,8 +185,11 @@ const REVIEW_WORDS: Record<string, [string, string]> = {
 	DISMISSED: ['dismissed', 'dim'],
 };
 
-/** The top of the PR viewer: who wants to merge what, where it stands, the reviews so far and the description. */
-export function prHeader(pr: PrDetails): string {
+/**
+ * The top of the PR viewer: a banner `width` columns wide with its number and title, then who wants to
+ * merge what, where it stands, the reviews so far and the description.
+ */
+export function prHeader(pr: PrDetails, width = 80): string {
 	const state = pr.state === 'OPEN' ? (pr.isDraft ? ['draft', 'dim'] : undefined) : [pr.state.toLowerCase(), 'magenta'];
 	const decision = REVIEW_WORDS[pr.reviewDecision] ?? (pr.reviewDecision === 'REVIEW_REQUIRED' ? ['review required', 'yellow'] : undefined);
 	const status = [state, pr.state === 'OPEN' ? mergeLabel(pr) : undefined, checksLabel(pr.statusCheckRollup), decision]
@@ -197,8 +206,9 @@ export function prHeader(pr: PrDetails): string {
 		const [word, color] = REVIEW_WORDS[state] ?? [state.toLowerCase(), 'dim'];
 		return `${login} ${paint(color, word)}`;
 	});
+	const banner = ` PULL REQUEST #${pr.number} · ${pr.title} `;
 	return [
-		paint('bold', `#${pr.number} ${pr.title}`),
+		paint('banner', banner.length > width ? `${banner.slice(0, width - 1)}…` : banner.padEnd(width)),
 		`${pr.author.login} wants to merge ${pr.headRefName} into ${pr.baseRefName}  ${paint('green', `+${pr.additions}`)} ${paint('red', `−${pr.deletions}`)}`,
 		status.join(' · '),
 		reviews.length ? `reviews: ${reviews.join(', ')}` : '',
@@ -206,7 +216,7 @@ export function prHeader(pr: PrDetails): string {
 		// GitHub keeps bodies written in the browser with CRLFs, which less would show as ^M.
 		pr.body.replaceAll('\r', '').trim() || paint('dim', 'No description.'),
 		'',
-		paint('dim', '─'.repeat(40)),
+		paint('magenta', '─'.repeat(width)),
 		'',
 	]
 		.filter((line, i) => line || i > 3)
@@ -223,10 +233,8 @@ export async function diffPaneCommand(cwd: string, thread: Thread): Promise<stri
 	const whole = ['diff', ...(await diffRevs(cwd, 'thread', thread))];
 	const keys = lesskey('pane', PANE_KEYS);
 	const keysHint = (other: string) => `t ${other}  a commit  r refresh  S styling  q close`;
-	// The label goes in less's (short, the s) prompt so it stays in view; these characters are special there.
-	const prompt = (label: string, other: string) => `--prompt=s${`${label} — n/N hunk  ${keysHint(other)}`.replace(/[?:.%\\]/g, '\\$&')}`;
 	const show = (fn: string, label: string, other: string) =>
-		`${statThenDiff(fn)} | ${lessCommand(keys)} ${shellQuote(prompt(label, other))}`;
+		`${statThenDiff(fn)} | ${lessCommand(keys, [lessPrompt(`${label} — n/N hunk  ${keysHint(other)}`)])}`;
 	const ooCommit = [...OO_COMMAND, 'commit', thread.id].map(shellQuote).join(' ');
 	const script = [
 		`step() { ${gitCommand(step)} "$@"; }`,
@@ -269,8 +277,8 @@ function gitCommand(args: string[]): string {
 	return `git ${args.map(shellQuote).join(' ')}`;
 }
 
-/** less over delta's output, with n/N jumping between files and hunks. */
-function lessCommand(keys?: string): string {
+/** less over delta's output, with n/N jumping between files and hunks, and any `extra` options. */
+function lessCommand(keys?: string, extra: string[] = []): string {
 	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
 	// Matches aren't highlighted (-G) so delta's header styles show through, and -j4 lands a jump on
 	// the 4th row so the end of the hunk before shows above it.
@@ -282,8 +290,14 @@ function lessCommand(keys?: string): string {
 		`--pattern=${NAVIGATE_PATTERN}`,
 		'+g',
 		...(keys ? [`--lesskey-src=${keys}`] : []),
+		...extra,
 	];
 	return less.map(shellQuote).join(' ');
+}
+
+/** A label for less's (short, the s) prompt, so it stays in view; these characters are special there. */
+function lessPrompt(label: string): string {
+	return `--prompt=s${label.replace(/[?:.%\\]/g, '\\$&')}`;
 }
 
 function lesskey(name: string, keys: string): string {
