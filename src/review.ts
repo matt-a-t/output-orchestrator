@@ -213,8 +213,8 @@ export function prHeader(pr: PrDetails, width = 80): string {
 		status.join(' · '),
 		reviews.length ? `reviews: ${reviews.join(', ')}` : '',
 		'',
-		// GitHub keeps bodies written in the browser with CRLFs, which less would show as ^M.
-		pr.body.replaceAll('\r', '').trim() || paint('dim', 'No description.'),
+		// Sanitized by prDetails, CRLFs from the browser and escapes (OSC 8 links among them) alike.
+		pr.body.trim() || paint('dim', 'No description.'),
 		'',
 		paint('magenta', '─'.repeat(width)),
 		'',

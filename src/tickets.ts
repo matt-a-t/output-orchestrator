@@ -1,5 +1,6 @@
 // The Jira tickets and GitHub issues threads work on, read with `gh` or Jira Cloud's REST API.
 import { execa } from 'execa';
+import { parseUntrusted } from './sanitize.js';
 import { isJiraCloudHost, JIRA_CLOUD_ONLY, type Project, type Thread } from './state.js';
 
 export type TicketRef = NonNullable<Thread['ticket']>;
@@ -43,7 +44,7 @@ export async function recentTickets(project: Project): Promise<Ticket[]> {
 			['issue', 'list', '--assignee', '@me', '--state', 'open', '--search', 'sort:updated-desc', '--limit', String(RECENT), '--json', 'number,title,url'],
 			{ cwd: project.path },
 		);
-		return (JSON.parse(stdout) as { number: number; title: string; url: string }[]).map(i => ({
+		return parseUntrusted<{ number: number; title: string; url: string }[]>(stdout).map(i => ({
 			key: `#${i.number}`,
 			url: i.url,
 			summary: i.title,
@@ -68,7 +69,7 @@ export function recentJql(project: Project): string {
 export async function fetchTicket(project: Project, key: string): Promise<Ticket> {
 	if (isGithubKey(key)) {
 		const { stdout } = await execa('gh', ['issue', 'view', key.slice(1), '--json', 'title,body,url'], { cwd: project.path });
-		const issue = JSON.parse(stdout) as { title: string; body: string; url: string };
+		const issue = parseUntrusted<{ title: string; body: string; url: string }>(stdout);
 		return { key, url: issue.url, summary: issue.title, description: issue.body.trim() };
 	}
 	const issue = (await jira(project, `/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,description`)) as {
@@ -106,7 +107,7 @@ async function jira(project: Project, path: string, body?: unknown): Promise<unk
 		signal: AbortSignal.timeout(15_000),
 	});
 	if (!response.ok) throw new Error(`Jira said ${response.status} ${response.statusText}`);
-	return response.json();
+	return parseUntrusted(await response.text());
 }
 
 /** A node of Atlassian Document Format, which Jira's v3 API uses for rich text. */

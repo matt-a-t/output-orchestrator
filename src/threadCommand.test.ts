@@ -58,6 +58,16 @@ test('with the board closed, add and move write state.json', async t => {
 	);
 });
 
+test('add and send store titles, plans and messages without terminal escapes', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one' }]);
+	capture(t);
+	const ctx = { ...context(dir, project), stdin: () => 'the \x1b]8;;https://evil.example\x07plan\x1b]8;;\x07\r\n' };
+	assert.equal(await threadCommand(['add', 'red\x1b[31m', 'title\x07', '--plan-file', '-'], ctx), 0);
+	assert.equal(await threadCommand(['send', '2', 'hi\x1b[2J', 'there'], ctx), 0);
+	const thread = loadState(join(dir, 'state.json')).threads.find(t => t.id === '2')!;
+	assert.deepEqual([thread.title, thread.plan, thread.inbox?.[0]?.text], ['red title', 'the plan', 'hi there']);
+});
+
 test('add --ticket attaches the ticket in the project\'s form, and show prints it', async t => {
 	const { dir, project, state } = fixture();
 	saveState(
