@@ -147,17 +147,20 @@ async function threadFromForm(board: Board, project: Project, title: string, tic
 		board.setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
 		return known;
 	});
-	if (ticket) return createThread(board, project.name, title || ticket.summary, { ticket: { key: ticketKey, url: ticket.url }, plan: ticket.description });
+	// Its description stays on the ticket, not the plan: anyone can file an issue, and claude follows plans.
+	if (ticket) return createThread(board, project.name, title || ticket.summary, { ticket: { ...ticket, key: ticketKey } });
 	// Without the ticket there's nothing to title the thread after.
 	if (!title) return void board.setMessage(`✗ Couldn't read ${ticketKey}, so it needs a title — press n to try again`);
 	const url = await ticketUrl(project, ticketKey).catch(() => '');
 	return createThread(board, project.name, title, { ticket: { key: ticketKey, url } });
 }
 
-function createThread(board: Board, project: string, title: string, fields: Partial<Pick<Thread, 'ticket' | 'plan'>> = {}) {
+function createThread(board: Board, project: string, title: string, fields: Partial<Pick<Thread, 'ticket'>> = {}) {
 	const { thread } = addThread(board.state(), { project, title, ...fields });
 	board.setState(s => ({ ...s, threads: [...s.threads, thread] }));
 	board.showAtEnd('planned');
-	board.setMessage(`Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}${thread.plan ? '' : ' — e to add a plan'}`);
+	const { ticket } = thread;
+	const outsider = ticket?.outsider ? ` · ⚠ ${ticket.key} is by ${ticket.author ?? 'someone'}, not a collaborator` : '';
+	board.setMessage(`Created #${thread.id}${ticket ? ` for ${ticket.key}` : ''} — e to add a plan${outsider}`);
 	return thread;
 }

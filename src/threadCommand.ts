@@ -5,7 +5,7 @@ import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Re
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
 import { sanitize } from './sanitize.js';
-import { normalizeKey, ticketUrl } from './tickets.js';
+import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -175,6 +175,8 @@ function details(state: State, t: Thread): string {
 	const unread = undelivered(t.inbox).length;
 	if (unread) lines.push(`inbox:   ${unread} not yet delivered (oo thread inbox)`);
 	if (t.todos?.length) lines.push(`todos:   ${todoProgress(t.todos)} done`, ...t.todos.map(todo => `  ${TODO_MARKS[todo.status]} ${todo.subject}`));
+	const content = t.ticket && ticketContent(t.ticket);
+	if (content) lines.push('', content);
 	if (t.plan) lines.push('', t.plan);
 	return lines.join('\n');
 }

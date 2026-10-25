@@ -97,7 +97,19 @@ const ThreadSchema = z.preprocess(
 		// Where the worktree lives; recorded when the project is renamed (see worktreePath).
 		worktree: z.string().optional(),
 		// The Jira ticket (AV-123) or GitHub issue (#45) the thread works on; names the branch and PR.
-		ticket: z.object({ key: z.string(), url: z.string() }).optional(),
+		// What it says, and who said it, are kept when the board reads it: shown to claude as the
+		// ticket's content, never as the plan, since anyone can file an issue on a public repo.
+		ticket: z
+			.object({
+				key: z.string(),
+				url: z.string(),
+				summary: z.string().optional(),
+				description: z.string().optional(),
+				author: z.string().optional(),
+				// A GitHub issue whose author isn't the repo's owner, a member or a collaborator.
+				outsider: z.boolean().optional(),
+			})
+			.optional(),
 		// Opened on moving to PR; polled so the thread moves to Done once it's merged.
 		pr: z.object({ number: z.number(), url: z.string() }).optional(),
 		// Checkpoints to review and commit, kept across claude runs (see `oo thread todo`).
