@@ -344,6 +344,13 @@ test('committing outside the board ticks off the checkpoint in review', async ()
 	assert.equal(await approveTodo('2', context(dir, '/')), undefined);
 });
 
+test('committing outside the board drops the commit draft it used, keeping the PR one', async () => {
+	const pr = { title: 't', body: 'b' };
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', drafts: { commit: 'Add a', pr } }]);
+	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.drafts, { pr });
+});
+
 test('a stopped claude is told which step was committed and what comes next, and nothing after the last', () => {
 	const todo = (subject: string, status: 'pending' | 'done') => ({ subject, status });
 	assert.equal(

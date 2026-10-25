@@ -403,9 +403,14 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: str
 	return [`${done} (commit: ${commitSubject}).`, comments, then].filter(Boolean).join(' ');
 }
 
-/** After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint, as approving it on the board does. */
+/**
+ * After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint and
+ * drop the commit draft it used, as approving it on the board does.
+ */
 export async function approveTodo(thread: string, ctx: Context = defaultContext()): Promise<string | undefined> {
-	const todos = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread)?.todos ?? [];
+	const stored = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread);
+	if (stored?.drafts?.commit) await change({ op: 'draft', thread, commit: null }, ctx);
+	const todos = stored?.todos ?? [];
 	const item = approvedTodo(todos);
 	if (item === -1) return;
 	const response = await change({ op: 'todo', thread, item: item + 1, status: 'done' }, ctx);
