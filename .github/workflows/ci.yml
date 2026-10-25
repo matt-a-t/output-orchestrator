@@ -1,0 +1,27 @@
+name: CI
+
+# Checks every pull request and push to main. Runs with a read-only token and never on
+# pull_request_target, so a fork's PR can't reach secrets or write to the repo.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # Checks the registry signatures and provenance attestations of every installed package.
+      - run: npm audit signatures
