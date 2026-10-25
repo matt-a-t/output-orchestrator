@@ -1,23 +1,23 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Key } from 'ink';
-import { editAt, editText, fieldKey } from './input.js';
+import { choiceStep, editAt, fieldKey, fieldStep, isBack, isSubmit, nextField } from './input.js';
 
 const key = (k: Partial<Key> = {}) => k as Key;
 
 test('ctrl-u clears a text field', () => {
-	assert.equal(editText('Fix the thing', 'u', key({ ctrl: true })), '');
+	assert.deepEqual(editAt('Fix the thing', 13, 'u', key({ ctrl: true })), { value: '', cursor: 0 });
 });
 
 test('ctrl-w deletes the last word, with any spaces after it', () => {
-	assert.equal(editText('Fix the thing', 'w', key({ ctrl: true })), 'Fix the ');
-	assert.equal(editText('Fix the  ', 'w', key({ ctrl: true })), 'Fix ');
-	assert.equal(editText('Fix', 'w', key({ ctrl: true })), '');
+	assert.equal(editAt('Fix the thing', 13, 'w', key({ ctrl: true }))?.value, 'Fix the ');
+	assert.equal(editAt('Fix the  ', 9, 'w', key({ ctrl: true }))?.value, 'Fix ');
+	assert.equal(editAt('Fix', 3, 'w', key({ ctrl: true }))?.value, '');
 });
 
 test('other ctrl keys are not typed into the field', () => {
-	assert.equal(editText('Fix', 'a', key({ ctrl: true })), undefined);
-	assert.equal(editText('Fix', 'e', key()), 'Fixe');
+	assert.equal(editAt('Fix', 3, 'b', key({ ctrl: true })), undefined);
+	assert.equal(editAt('Fix', 3, 'e', key())?.value, 'Fixe');
 });
 
 test('editing at the cursor inserts and deletes there, and ←/→ stop at the ends', () => {
@@ -57,4 +57,40 @@ test('esc stops editing and keeps the text, and ⏎ while editing is the form\'s
 	assert.equal(fieldKey('Fixed', 5, '', key({ return: true })), undefined);
 	assert.equal(fieldKey('Fixed', null, '', key({ escape: true })), undefined);
 	assert.equal(fieldKey('Fixed', 5, '', key({ tab: true })), undefined);
+});
+
+test('a submits a form only while not editing, and shift-⏎ always does', () => {
+	assert.equal(isSubmit('a', key(), null), true);
+	assert.equal(isSubmit('a', key(), 'd'), true);
+	assert.equal(isSubmit('a', key(), 3), false);
+	assert.equal(isSubmit('', key({ return: true, shift: true }), 3), true);
+	assert.equal(isSubmit('', key({ return: true }), null), false);
+	// So shift-⏎ on a text field submits rather than starting to edit it.
+	assert.equal(fieldKey('Fix', null, '', key({ return: true, shift: true })), undefined);
+});
+
+test('q closes a form only while not editing, and esc always does once fieldKey passes it on', () => {
+	assert.equal(isBack('q', key(), null), true);
+	assert.equal(isBack('q', key(), 0), false);
+	assert.equal(isBack('', key({ escape: true }), null), true);
+	assert.deepEqual(fieldKey('Fix', 3, '', key({ escape: true })), { value: 'Fix', edit: null });
+});
+
+test('h/l and ←/→ change a choice, j/k ↑/↓ and tab move between fields', () => {
+	assert.equal(choiceStep('h', key()), -1);
+	assert.equal(choiceStep('', key({ rightArrow: true })), 1);
+	assert.equal(choiceStep('l', key()), 1);
+	assert.equal(choiceStep('x', key()), 0);
+	assert.equal(fieldStep('k', key()), -1);
+	assert.equal(fieldStep('', key({ tab: true, shift: true })), -1);
+	assert.equal(fieldStep('', key({ tab: true })), 1);
+	assert.equal(fieldStep('h', key()), 0);
+});
+
+test('⏎ goes on to the next field, editing it if it is text, and stays on the last', () => {
+	const lengths = [undefined, 3, 5];
+	assert.deepEqual(nextField(0, 3, i => lengths[i]), { field: 1, edit: 3 });
+	assert.deepEqual(nextField(1, 3, i => lengths[i]), { field: 2, edit: 5 });
+	assert.deepEqual(nextField(2, 3, i => lengths[i]), { field: 2, edit: null });
+	assert.deepEqual(nextField(0, 3, () => undefined), { field: 1, edit: null });
 });

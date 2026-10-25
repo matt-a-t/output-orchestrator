@@ -25,44 +25,71 @@ const ctx: NewThreadContext = { projects: [project('web', 'jira'), project('note
 const press = (form: NewThreadForm, ...keys: [string, Partial<Key>?][]) =>
 	keys.reduce((f, [input, k]) => newThreadKey(f, input, key(k), ctx) as NewThreadForm, form);
 
-test('tab and ↑/↓ move through the fields, skipping the ticket without a tracker', () => {
+test('j/k, tab and ↑/↓ move through the fields, skipping the ticket without a tracker', () => {
 	const web = newThreadForm('web');
 	assert.equal(press(web, ['', { tab: true }]).field, 'ticket');
+	assert.equal(press(web, ['j']).field, 'ticket');
 	assert.equal(press(web, ['', { upArrow: true }]).field, 'prompt');
+	assert.equal(press(web, ['k']).field, 'prompt');
 	assert.equal(press(web, ['', { tab: true, shift: true }]).field, 'prompt');
 	assert.equal(press(newThreadForm('notes'), ['', { downArrow: true }]).field, 'title');
 });
 
-test('←/→ on the project switches project and drops the ticket', () => {
+test('text is only typed once a field is being edited: i at the end, I at the start, dd cleared', () => {
+	const title = { ...newThreadForm('notes'), field: 'title' as const, title: 'Fix' };
+	assert.deepEqual(press(title, ['x']), title);
+	assert.equal(press(title, ['i'], ['x']).title, 'Fixx');
+	assert.equal(press(title, ['I'], ['x']).title, 'xFix');
+	assert.equal(press(title, ['d'], ['d'], ['x']).title, 'x');
+	// q and a are typed while editing, rather than closing or submitting.
+	assert.equal(press(title, ['i'], ['q'], ['a']).title, 'Fixqa');
+	assert.equal(press(title, ['i'], ['', { escape: true }]).edit, null);
+});
+
+test('⏎ saves the field and edits the next one, stopping on the last', () => {
+	let form = press(newThreadForm('web'), ['', { return: true }]);
+	assert.deepEqual([form.field, form.edit], ['ticket', 0]);
+	form = press(form, ['7'], ['', { return: true }], ['Fix'], ['', { return: true }], ['go']);
+	assert.deepEqual([form.ticketKey, form.title, form.prompt, form.field, form.edit], ['7', 'Fix', 'go', 'prompt', 2]);
+	form = press(form, ['', { return: true }]);
+	assert.deepEqual([form.field, form.edit], ['prompt', null]);
+	// Not editing, ⏎ on a text field edits it.
+	assert.equal(press(form, ['', { return: true }]).edit, 2);
+});
+
+test('h/l and ←/→ on the project switch project and drop the ticket', () => {
 	const picked: NewThreadForm = { ...newThreadForm('web'), ticketKey: 'AV-1', ticket: 0, title: 'Fix login' };
-	const moved = press(picked, ['', { rightArrow: true }]);
+	const moved = press(picked, ['l']);
 	assert.equal(moved.project, 'notes');
 	assert.equal(moved.ticketKey, '');
 	assert.equal(moved.title, '');
+	assert.equal(press(moved, ['h']).project, 'web');
 	assert.equal(press(moved, ['', { leftArrow: true }]).project, 'web');
 });
 
-test('←/→ on the ticket picks a recent one and titles the thread after it until the title is typed', () => {
+test('h/l on the ticket picks a recent one and titles the thread after it until the title is typed', () => {
 	const onTicket = { ...newThreadForm('web'), field: 'ticket' as const };
-	const first = press(onTicket, ['', { rightArrow: true }]);
+	const first = press(onTicket, ['l']);
 	assert.deepEqual([first.ticketKey, first.title], ['AV-1', 'Fix login']);
-	assert.equal(press(first, ['', { leftArrow: true }]).ticketKey, '');
+	assert.equal(press(first, ['h']).ticketKey, '');
 	assert.equal(press(onTicket, ['', { leftArrow: true }]).ticketKey, 'AV-2');
-	const typed = press({ ...first, field: 'title' }, ['', { ctrl: true }], ['x']);
+	// Starting to edit isn't typing, so the picked ticket stays.
+	assert.equal(press(first, ['i']).ticket, 0);
+	const typed = press({ ...first, field: 'title' }, ['i'], ['x'], ['', { escape: true }]);
 	assert.equal(typed.title, 'Fix loginx');
-	assert.equal(press({ ...typed, field: 'ticket' }, ['', { rightArrow: true }]).title, 'Fix loginx');
+	assert.equal(press({ ...typed, field: 'ticket' }, ['l']).title, 'Fix loginx');
 	// Cleared, the title follows the ticket again.
-	const cleared = press(typed, ['u', { ctrl: true }]);
-	assert.equal(press({ ...cleared, field: 'ticket' }, ['', { rightArrow: true }]).title, 'Add export');
+	const cleared = press(typed, ['d'], ['d'], ['', { escape: true }]);
+	assert.equal(press({ ...cleared, field: 'ticket' }, ['l']).title, 'Add export');
 });
 
 test('typing a ticket key forgets the picked one', () => {
-	const typed = press({ ...newThreadForm('web'), field: 'ticket', ticketKey: 'AV-1', ticket: 0 }, ['3']);
+	const typed = press({ ...newThreadForm('web'), field: 'ticket', ticketKey: 'AV-1', ticket: 0 }, ['i'], ['3']);
 	assert.deepEqual([typed.ticketKey, typed.ticket], ['AV-13', -1]);
 });
 
-test('enter submits with the key normalized and the picked ticket, or says what is missing', () => {
-	const submit = (form: Partial<NewThreadForm>, project = 'web') => newThreadKey({ ...newThreadForm(project), ...form }, '', key({ return: true }), ctx);
+test('a and shift-⏎ submit with the key normalized and the picked ticket, or say what is missing', () => {
+	const submit = (form: Partial<NewThreadForm>, project = 'web') => newThreadKey({ ...newThreadForm(project), ...form }, 'a', key(), ctx);
 	assert.deepEqual(submit({ ticketKey: '2', title: 'Add export', prompt: ' go ' }), {
 		done: { project: 'web', ticketKey: 'AV-2', ticket: tickets[1], title: 'Add export', prompt: 'go' },
 	});
@@ -72,5 +99,15 @@ test('enter submits with the key normalized and the picked ticket, or says what 
 	assert.deepEqual(submit({ title: 'Notes', ticketKey: 'stale' }, 'notes'), {
 		done: { project: 'notes', ticketKey: undefined, ticket: undefined, title: 'Notes', prompt: '' },
 	});
+	const editing = { ...newThreadForm('notes'), field: 'title' as const, title: 'Notes', edit: 5 };
+	assert.deepEqual(newThreadKey(editing, '', key({ return: true, shift: true }), ctx), {
+		done: { project: 'notes', ticketKey: undefined, ticket: undefined, title: 'Notes', prompt: '' },
+	});
+});
+
+test('q and esc cancel, once nothing is being edited', () => {
+	assert.deepEqual(newThreadKey(newThreadForm('web'), 'q', key(), ctx), { done: null });
 	assert.deepEqual(newThreadKey(newThreadForm('web'), '', key({ escape: true }), ctx), { done: null });
+	const editing = { ...newThreadForm('notes'), field: 'title' as const, edit: 0 };
+	assert.equal((newThreadKey(editing, '', key({ escape: true }), ctx) as NewThreadForm).edit, null);
 });

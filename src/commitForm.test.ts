@@ -17,17 +17,22 @@ test('a field is typed into after i, and tab, ↑, ↓, j and k switch fields', 
 	assert.equal((formKey(start, '', key({ downArrow: true })) as FormState).field, 1);
 });
 
-test('⏎ edits the field, then submits both fields from either one', () => {
+test('⏎ edits the field, then goes on to editing the notes, and a or shift-⏎ submits both', () => {
 	const done = { done: { message: 'Fix', notes: 'also b' } };
 	const values: FormState['values'] = ['Fix', 'also b'];
 	assert.deepEqual(formKey({ values, field: 0, edit: null }, '', key({ return: true })), { values, field: 0, edit: 3 });
-	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, '', key({ return: true })), done);
-	assert.deepEqual(formKey({ values, field: 1, edit: 0 }, '', key({ return: true })), done);
+	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, '', key({ return: true })), { values, field: 1, edit: 6 });
+	assert.deepEqual(formKey({ values, field: 1, edit: 6 }, '', key({ return: true })), { values, field: 1, edit: null });
+	assert.deepEqual(formKey({ values, field: 1, edit: null }, 'a', key()), done);
+	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, '', key({ return: true, shift: true })), done);
+	// Typed while editing, a is just a letter.
+	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, 'a', key()), { values: ['Fixa', 'also b'], field: 0, edit: 4 });
 });
 
-test('esc stops editing, and esc again cancels', () => {
+test('esc stops editing, and esc or q then cancels', () => {
 	assert.deepEqual(formKey({ ...start, edit: 3 }, '', key({ escape: true })), start);
 	assert.deepEqual(formKey(start, '', key({ escape: true })), { done: null });
+	assert.deepEqual(formKey(start, 'q', key()), { done: null });
 });
 
 test('the form is read back trimmed, and an empty message is a cancel', () => {

@@ -40,7 +40,8 @@ oo                               # open the board
 ```
 
 On the board, `n` opens the new thread form: a project, a ticket if the project has a tracker, a
-title and an initial prompt. The thread starts in Planned, and `e` adds a plan if you want one.
+title and an initial prompt. Its fields are edited vim-style: `i` to type into one, ⏎ on to the
+next, `a` to create it and `q` or esc to cancel. The thread starts in Planned, and `e` adds a plan if you want one.
 With an initial prompt, its claude starts straight away in the background, in plan mode, on that
 prompt; without one, Enter opens its claude when you're ready. `Ctrl-b b` (or `Alt-b`) brings you back to the
 board. `?` on the board lists every key, and so does [KEYS.md](KEYS.md).
@@ -90,8 +91,8 @@ project's tickets come from with **tickets** in the projects screen (`P`):
   [API token](https://id.atlassian.com/manage-profile/security/api-tokens): export
   `JIRA_EMAIL` and `JIRA_API_TOKEN` in the shell you start `oo` from.
 
-The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`), or use
-←/→ to pick from your five most recently updated open tickets. The ticket's summary becomes
+The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`) after `i`, or use
+`h`/`l` to pick from your five most recently updated open tickets. The ticket's summary becomes
 the title unless you type your own, and its description becomes the plan. Leave it empty for no
 ticket.
 
@@ -121,11 +122,14 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   ```
 - In a step diff, `a` approves the step. Approving commits everything with
   a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
-  and **for claude** (comments to send along). Tab or ↑/↓ switches fields, ⏎ commits from either,
-  esc cancels (leaving the changes staged), and ctrl-u / ctrl-w clear a field or delete a word.
+  and **for claude** (comments to send along). It takes the same keys as every form (see
+  [KEYS.md](KEYS.md#in-a-form)): `i` edits a field, ⏎ goes on to the next, `a` commits, and `q` or
+  esc cancels (leaving the changes staged).
   Press `a` while claude is still writing to commit whatever it writes without opening the form
-  (`a` again goes back). If the thread's claude has stopped (✓), it's then told the step was committed, given your
-  comments, and told to move on to the next checkpoint, or to stop if that was the last one.
+  (`a` again goes back). The thread's claude is then told the step was committed, given your
+  comments, and told to move on to the next checkpoint, or to stop if that was the last one: right
+  away if it's at its prompt (stopped ✓, or just reopened), otherwise as a message in its inbox,
+  put to it when its turn ends or when it next starts.
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels).
@@ -140,8 +144,8 @@ claude if it isn't running) and jumps there. The diff is the step's, or the thre
 step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
 closes it. `a` commits everything uncommitted, like approving from `d`:
 claude drafts the message (`a` again while it writes takes it as it is) and it opens in the same
-commit form (esc or an empty message cancels, leaving the changes staged), and a stopped claude is
-given your comments and told to move on. Pressing the
+commit form (esc or an empty message cancels, leaving the changes staged), and claude is
+given your comments and told to move on, as from `d`. Pressing the
 other key swaps what's on the right, and either key jumps back to it later. From inside a
 thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
 scroll and go back to the board (see [KEYS.md](KEYS.md)).

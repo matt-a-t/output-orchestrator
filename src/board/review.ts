@@ -5,7 +5,7 @@ import { commit, currentRef, defaultBranch, forcePushBranch, rebaseInProgress, r
 import { openChanges, reviewDiff, showDiff, writeCommit } from '../review.js';
 import type { Thread } from '../state.js';
 import { approvedPrompt } from '../threadCommand.js';
-import { approvedTodo, conflictPrompt, setTodoStatus } from '../threads.js';
+import { applyRequest, approvedTodo, conflictPrompt, setTodoStatus } from '../threads.js';
 import { pasteInto, progressPopup, threadWindowName, windowNames } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -15,14 +15,15 @@ import { inWorktree } from './worktree.js';
 
 /**
  * Approve the step: stage everything in `cwd`, have claude draft the message, and commit it once
- * it's edited in the commit form. A claude stopped for the review is then told to move on (or stop,
- * after the last step), with any comments from the form.
+ * it's edited in the commit form. A claude at its prompt is then told to move on (or stop, after the
+ * last step), with any comments from the form; any other claude gets that as a message in its inbox.
  */
 export async function approveStep(board: Board, cwd: string, thread: Thread) {
 	if (!(await stageAll(cwd))) return board.setMessage('Nothing to commit');
 	const window = threadWindowName(thread.id);
-	// Not one that's working or waiting on a question, where the paste would land as an answer.
-	const waiting = board.statuses()[thread.id] === 'stopped' && (await windowNames()).includes(window);
+	// Stopped, or just reopened (idle): not one that's working or waiting on a question, where the paste would land as an answer.
+	const status = board.statuses()[thread.id];
+	const waiting = (status === 'stopped' || status === 'idle') && (await windowNames()).includes(window);
 	let form: CommitForm | null;
 	const progress = progressPopup(' commit ', COMMIT_FORM);
 	try {
@@ -39,10 +40,22 @@ export async function approveStep(board: Board, cwd: string, thread: Thread) {
 	const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
 	if (item !== -1) board.updateThread(thread.id, { todos: ticked });
 	const prompt = approvedPrompt(ticked, item, form.message, form.notes);
-	const told = !!prompt && waiting && (await windowNames()).includes(window);
+	const open = (await windowNames()).includes(window);
+	const told = !!prompt && waiting && open;
 	if (told) await pasteInto(window, prompt);
-	const tellClaude = told ? ` · told claude${form.notes ? ' with comments' : ''}` : form.notes ? " · ⚠ comments not sent — claude wasn't waiting" : '';
-	board.setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${tellClaude}`);
+	const said = prompt ? await tellClaude(board, thread, prompt, told ? 'told' : open ? 'busy' : 'closed') : '';
+	board.setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${said}${form.notes ? ' (with your comments)' : ''}`);
+}
+
+/**
+ * The end of approving's message about claude, putting what it wasn't told in its inbox: the board
+ * pastes it in when a busy claude's turn ends, and a closed one's SessionStart briefing carries it.
+ */
+async function tellClaude(board: Board, thread: Thread, prompt: string, claude: 'told' | 'busy' | 'closed'): Promise<string> {
+	if (claude === 'told') return ' · told claude';
+	const sent = await applyRequest(board.store, { id: 'approve', op: 'send', thread: thread.id, from: 'user', text: prompt });
+	if (!sent.ok) return ` · ⚠ claude not told: ${sent.message}`;
+	return ` · ✉ claude hears it ${claude === 'busy' ? 'when its turn ends' : 'when it next starts'}`;
 }
 
 /** d / D: the step's (uncommitted) or whole thread's diff, approving the step from it if asked. */

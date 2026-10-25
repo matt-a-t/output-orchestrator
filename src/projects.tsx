@@ -3,8 +3,8 @@ import { resolve } from 'node:path';
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
-import { EDITING_HELP, FIELD_HELP, FieldText } from './fieldText.js';
-import { fieldKey, loop, type Edit } from './input.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
+import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
 const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
@@ -117,16 +117,23 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				const next = fieldKey(fieldValue(form.project, field), form.edit, input, key);
 				if (next) return setForm({ ...form, project: withField(form.project, field, next.value), edit: next.edit });
 			}
-			if (key.escape) return setForm(null);
-			if (key.return) return save(form);
+			if (isBack(input, key, form.edit)) return setForm(null);
+			if (isSubmit(input, key, form.edit)) return save(form);
+			if (key.return) {
+				const next = nextField(form.field, FIELDS.length, i => {
+					const f = FIELDS[i]!;
+					return isChoice(f) ? undefined : fieldValue(form.project, f).length;
+				});
+				return setForm({ ...form, ...next });
+			}
 			const moved = { ...form, edit: null };
-			if (key.upArrow || (key.tab && key.shift) || input === 'k') return setForm({ ...moved, field: (form.field + FIELDS.length - 1) % FIELDS.length });
-			if (key.downArrow || key.tab || input === 'j') return setForm({ ...moved, field: (form.field + 1) % FIELDS.length });
+			const step = fieldStep(input, key);
+			if (step) return setForm({ ...moved, field: loop(form.field, step, FIELDS.length) });
 			if (isChoice(field)) {
-				const delta = key.leftArrow ? -1 : key.rightArrow || input === ' ' ? 1 : 0;
+				const delta = choiceStep(input, key);
 				if (!delta) return;
 				const choices = CHOICES[field] as readonly Project[Choice][];
-				const value = choices[(choices.indexOf(form.project[field]) + delta + choices.length) % choices.length];
+				const value = choices[loop(choices.indexOf(form.project[field]), delta, choices.length)];
 				return setForm({ ...moved, project: { ...form.project, [field]: value } });
 			}
 			if (form.edit !== null) setForm(moved);
@@ -212,7 +219,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				{form
 					? typeof form.edit === 'number'
 						? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${EDITING_HELP}`
-						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? '←/→ change  ⏎ save' : FIELD_HELP}  j/k ↑/↓ or tab field  esc cancel`
+						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? 'h/l change' : FIELD_HELP}  ${formHelp('save')}`
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>

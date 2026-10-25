@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { useState } from 'react';
 import { Box, render, Text, useApp, useInput, type Key } from 'ink';
-import { EDITING_HELP, FIELD_HELP, FieldText } from './fieldText.js';
-import { fieldKey, type Edit } from './input.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
+import { fieldKey, fieldStep, isBack, isSubmit, nextField, type Edit } from './input.js';
 import { OO_COMMAND } from './status.js';
 
 /**
@@ -40,9 +40,13 @@ export function formKey(state: FormState, input: string, key: Key): FormState | 
 		values[state.field] = next.value;
 		return { ...state, values, edit: next.edit };
 	}
-	if (key.escape) return { done: null };
-	if (key.return) return { done: { message: state.values[0], notes: state.values[1] } };
-	if (key.tab || key.upArrow || key.downArrow || input === 'j' || input === 'k') return { ...state, field: state.field === 0 ? 1 : 0, edit: null };
+	if (isBack(input, key, state.edit)) return { done: null };
+	if (isSubmit(input, key, state.edit)) return { done: { message: state.values[0], notes: state.values[1] } };
+	if (key.return) {
+		const { field, edit } = nextField(state.field, 2, i => state.values[i]!.length);
+		return { ...state, field: field as 0 | 1, edit };
+	}
+	if (fieldStep(input, key)) return { ...state, field: state.field === 0 ? 1 : 0, edit: null };
 	return { ...state, edit: null };
 }
 
@@ -71,7 +75,7 @@ function Form({ initial, note, onDone }: { initial: string; note?: string; onDon
 			{note ? <Text color="yellow">{note}</Text> : null}
 			<Box flexGrow={1} />
 			<Text dimColor>
-				{typeof state.edit === 'number' ? EDITING_HELP.replace('⏎ save', '⏎ commit') : `${FIELD_HELP}  j/k tab or ↑/↓ field  esc cancel`}
+				{typeof state.edit === 'number' ? EDITING_HELP : `${FIELD_HELP}  ${formHelp('commit')}`}
 			</Text>
 		</Box>
 	);

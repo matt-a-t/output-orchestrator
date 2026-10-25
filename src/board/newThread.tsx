@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from '../fieldText.js';
 import { runNewThreadHook } from '../hooks.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadSubmit } from '../newThreadForm.js';
 import type { Project, Thread } from '../state.js';
@@ -63,26 +64,28 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
 
 	const project = board.project(form.project);
 	const tickets = recent?.project === form.project ? recent.tickets : null;
-	const cursor = <Text inverse> </Text>;
 	const value = (field: NewThreadField, active: boolean) => {
 		if (field === 'project') return <Text color={project?.color}>{active ? `‹ ${form.project} ›` : form.project}</Text>;
+		const edit = active ? form.edit : null;
 		if (field === 'ticket') {
 			return (
 				<Text color="blue">
-					{form.ticketKey}
-					{active ? cursor : null}
-					{!form.ticketKey ? <Text dimColor>{active ? '  type a key or ←/→ for recent' : 'none'}</Text> : null}
+					<FieldText value={form.ticketKey} edit={edit} />
+					{!form.ticketKey && typeof edit !== 'number' ? <Text dimColor>{active ? 'i to type a key, h/l for recent' : 'none'}</Text> : null}
 				</Text>
 			);
 		}
 		return (
 			<Text>
-				{form[field]}
-				{active ? cursor : null}
-				{field === 'prompt' && !form.prompt && !active ? <Text dimColor>none — claude isn't started</Text> : null}
+				<FieldText value={form[field]} edit={edit} />
+				{field === 'prompt' && !form.prompt && typeof edit !== 'number' ? <Text dimColor>none — claude isn't started</Text> : null}
 			</Text>
 		);
 	};
+	const help =
+		typeof form.edit === 'number'
+			? EDITING_HELP
+			: `${form.field === 'project' ? 'h/l change' : form.field === 'ticket' ? `${FIELD_HELP}  h/l recent` : FIELD_HELP}  ${formHelp('create')}`;
 	return (
 		<Box flexDirection="column" borderStyle="round" borderColor={project?.color} paddingX={1}>
 			<Text bold>New thread</Text>
@@ -114,7 +117,7 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
 					</Box>
 				);
 			})}
-			<Text dimColor>tab or ↑/↓ field  ←/→ project / ticket  ⏎ create  esc cancel  ctrl-u clear  ctrl-w delete word</Text>
+			<Text dimColor>{help}</Text>
 		</Box>
 	);
 }

@@ -26,16 +26,6 @@ export const KEY_SECTIONS: KeySection[] = [
 		],
 	},
 	{
-		title: 'New thread form',
-		keys: [
-			['tab / ↑/↓', 'next / previous field'],
-			['←/→', 'change project / pick a recent ticket'],
-			['⏎', 'create; starts claude on the initial prompt'],
-			['esc', 'cancel'],
-			['ctrl-u / ctrl-w', 'clear field / delete word'],
-		],
-	},
-	{
 		title: 'Reviewing',
 		keys: [
 			['d / D', 'step / whole thread diff'],
@@ -64,16 +54,17 @@ export const KEY_SECTIONS: KeySection[] = [
 		],
 	},
 	{
-		title: 'In a form (e, P, commit)',
+		title: 'In a form (n, e, P, commit)',
 		keys: [
 			['j/k ↑/↓ tab', 'move between fields'],
-			['i / ⏎', 'edit, cursor at the end'],
-			['I', 'edit, cursor at the start'],
+			['h/l ←/→', 'change a choice (project, colour, recent ticket…)'],
+			['i / I', 'edit, cursor at the end / start'],
 			['dd', 'clear the field and edit'],
+			['⏎', 'edit the field; editing: save it and edit the next'],
+			['a / shift-⏎', 'create / save / commit'],
+			['q / esc', 'cancel (esc while editing: stop editing)'],
 			['←/→ C-a/C-e', 'editing: move / start, end'],
 			['C-u / C-w', 'editing: delete line / word'],
-			['esc', 'stop editing; again: cancel'],
-			['⏎ (editing)', 'save (on a choice too)'],
 		],
 	},
 	{

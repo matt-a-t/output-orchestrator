@@ -364,7 +364,7 @@ export function todoBriefing(todos: Todo[]): string | undefined {
 }
 
 /**
- * What a stopped claude is told once its step is approved and committed: which checkpoint that was
+ * What claude is told once its step is approved and committed: which checkpoint that was
  * (`ticked`, -1 for none), the user's comments from the commit form and what to do next. `todos` are
  * the checkpoints after ticking it off. Undefined after the last one with no comments: claude has
  * already stopped, so there's nothing to tell it.
