@@ -3,7 +3,7 @@
 import { COMMIT_FORM, type CommitForm } from '../commitForm.js';
 import { commit, currentRef, defaultBranch, forcePushBranch, rebaseInProgress, rebaseOnMain, stageAll } from '../git.js';
 import { openChanges, reviewDiff, showDiff, writeCommit } from '../review.js';
-import type { Thread } from '../state.js';
+import { USER_SENDER, type Thread } from '../state.js';
 import { approvedPrompt } from '../threadCommand.js';
 import { applyRequest, approvedTodo, conflictPrompt, setTodoStatus, withDrafts } from '../threads.js';
 import { pasteInto, progressPopup, threadWindowName, windowNames } from '../tmux.js';
@@ -56,7 +56,7 @@ export async function approveStep(board: Board, cwd: string, thread: Thread) {
  */
 async function tellClaude(board: Board, thread: Thread, prompt: string, claude: 'told' | 'busy' | 'closed'): Promise<string> {
 	if (claude === 'told') return ' · told claude';
-	const sent = await applyRequest(board.store, { id: 'approve', op: 'send', thread: thread.id, from: 'user', text: prompt });
+	const sent = await applyRequest(board.store, { id: 'approve', op: 'send', thread: thread.id, from: USER_SENDER, text: prompt });
 	if (!sent.ok) return ` · ⚠ claude not told: ${sent.message}`;
 	return ` · ✉ claude hears it ${claude === 'busy' ? 'when its turn ends' : 'when it next starts'}`;
 }

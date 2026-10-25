@@ -60,7 +60,13 @@ export const TODO_STATUSES = ['pending', 'active', 'review', 'done'] as const;
 export type TodoStatus = (typeof TODO_STATUSES)[number];
 const TodoSchema = z.object({ subject: z.string(), status: z.enum(TODO_STATUSES) });
 export type Todo = z.infer<typeof TodoSchema>;
-/** A message from another thread's claude (or `user`, from outside one), held until it's put to this thread's claude. */
+/**
+ * A message from another thread's claude, held until it's put to this thread's claude. `from` is the
+ * sending thread's id, USER_SENDER for ones the board writes itself, or UNVERIFIED_SENDER for
+ * `oo thread send` from outside any thread, which could be anyone (or any claude) with a shell.
+ */
+export const USER_SENDER = 'user';
+export const UNVERIFIED_SENDER = 'unverified';
 const MessageSchema = z.object({ from: z.string(), text: z.string(), ts: z.string(), delivered: z.boolean() });
 export type Message = z.infer<typeof MessageSchema>;
 

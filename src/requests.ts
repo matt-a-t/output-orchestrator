@@ -22,7 +22,7 @@ export type Request =
 	| { id: string; op: 'todos'; thread: string; subjects: string[] }
 	// `item` counts from 1, as `oo thread show` lists them.
 	| { id: string; op: 'todo'; thread: string; item: number; status: TodoStatus }
-	// `from` is the sending thread's id, or 'user'; `wake` (board-only) resumes a closed claude to hear it.
+	// `from` is the sending thread's id, or UNVERIFIED_SENDER (see Message); `wake` (board-only) resumes a closed claude to hear it.
 	| { id: string; op: 'send'; thread: string; from: string; text: string; wake?: boolean }
 	// The thread's first `count` undelivered messages have been put to its claude.
 	| { id: string; op: 'delivered'; thread: string; count: number };

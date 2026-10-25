@@ -2,9 +2,9 @@
 
 import { useEffect, useRef } from 'react';
 import type { Request, Response } from '../requests.js';
-import type { Message, State } from '../state.js';
+import { USER_SENDER, type Message, type State } from '../state.js';
 import type { Status } from '../status.js';
-import { applyRequest, markDelivered, messagesPrompt, undelivered } from '../threads.js';
+import { applyRequest, markDelivered, messagesPrompt, senderLabel, undelivered } from '../threads.js';
 import { pasteInto, threadWindowName, windowNames } from '../tmux.js';
 import type { Board } from './board.js';
 import { wakeThread } from './claude.js';
@@ -14,6 +14,8 @@ import { wakeThread } from './claude.js';
  * after answering, so the SessionStart hook isn't held up behind it; an open claude hears it once its turn ends, as without --wake.
  */
 export async function messageRequest(board: Board, request: Extract<Request, { op: 'send' }>): Promise<Response> {
+	// Anything with a shell can write requests.jsonl; only the board itself sends as the user.
+	if (request.from === USER_SENDER) return { id: request.id, ok: false, message: 'Only the board sends as the user' };
 	const response = await applyRequest(board.store, request);
 	const thread = board.state().threads.find(t => t.id === request.thread);
 	if (!response.ok || !request.wake || !thread || (await windowNames()).includes(threadWindowName(thread.id))) return response;
@@ -49,7 +51,7 @@ export function useMessageDelivery(board: Board, state: State, statuses: Record<
 					await pasteInto(window, messagesPrompt(board.state(), messages));
 					const inbox = board.state().threads.find(t => t.id === thread.id)?.inbox ?? [];
 					board.updateThread(thread.id, { inbox: markDelivered(inbox, messages.length) });
-					const from = [...new Set(messages.map(m => (m.from === 'user' ? 'you' : `#${m.from}`)))].join(', ');
+					const from = [...new Set(messages.map(m => senderLabel(m.from)))].join(', ');
 					board.setMessage(`Told #${thread.id} · ${messages.length === 1 ? 'message' : `${messages.length} messages`} from ${from}`);
 				} catch (err) {
 					board.setMessage(`✗ Couldn't tell #${thread.id} its messages: ${err instanceof Error ? err.message : String(err)}`);
