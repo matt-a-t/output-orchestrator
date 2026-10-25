@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Box, Text, measureElement, useWindowSize, type DOMElement } from 'ink';
 import type { PrStatus } from '../github.js';
 import { mouse, type MouseEvent } from '../mouse.js';
-import { COLUMN_LABELS, COLUMNS, type Column, type Thread } from '../state.js';
+import { COLUMN_LABELS, type Column, type Thread } from '../state.js';
 import { threadWindowName } from '../tmux.js';
 import type { Board } from './board.js';
 import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES } from './card.js';
@@ -19,7 +19,8 @@ export const newColumnsLayout = (): ColumnsLayout => ({ height: 0, scrollOffsets
 
 type Props = {
 	board: Board;
-	// Each column's threads, in COLUMNS order, with the filter applied.
+	// The columns shown (COLUMNS, and ARCHIVED while A shows it), and each one's threads with the filter applied.
+	shown: readonly Column[];
 	columns: Thread[][];
 	// Its row is within the column.
 	cursor: Cursor;
@@ -31,9 +32,9 @@ type Props = {
 	layout: RefObject<ColumnsLayout>;
 };
 
-export function Columns({ board, columns, cursor, setCursor, active, unreviewed, merge, layout }: Props) {
+export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, layout }: Props) {
 	const { columns: width } = useWindowSize();
-	const colWidth = Math.max(16, Math.floor(width / COLUMNS.length));
+	const colWidth = Math.max(16, Math.floor(width / shown.length));
 
 	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
 	const boardRef = useRef<DOMElement>(null);
@@ -64,7 +65,7 @@ export function Columns({ board, columns, cursor, setCursor, active, unreviewed,
 		scrollOffsets[column] = start;
 		return { start, end: start + fits, top: start > 0 ? 1 : 0 };
 	};
-	const columnSlice = (c: number) => visibleSlice(COLUMNS[c]!, columns[c]!, c === cursor.col ? cursor.row : undefined);
+	const columnSlice = (c: number) => visibleSlice(shown[c]!, columns[c]!, c === cursor.col ? cursor.row : undefined);
 
 	const isDoubleClick = useDoubleClick();
 	// The layout is a fixed grid, so a press's cell says what it's on. The wheel stops at the ends rather than looping.
@@ -74,7 +75,7 @@ export function Columns({ board, columns, cursor, setCursor, active, unreviewed,
 		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(columns[cursor.col]!.length - 1, cursor.row + wheel)) });
 		const col = Math.floor(x / colWidth);
-		if (button !== 'left' || y < 1 || col >= COLUMNS.length) return;
+		if (button !== 'left' || y < 1 || col >= shown.length) return;
 		const slice = columnSlice(col);
 		let top = LIST_TOP + slice.top;
 		// The column's header, or its "more" line.
@@ -101,7 +102,7 @@ export function Columns({ board, columns, cursor, setCursor, active, unreviewed,
 
 	return (
 		<Box ref={boardRef} flexGrow={1} overflow="hidden">
-			{COLUMNS.map((column, c) => {
+			{shown.map((column, c) => {
 				const threads = columns[c]!;
 				const { start, end } = columnSlice(c);
 				return (

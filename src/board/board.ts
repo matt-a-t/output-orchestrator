@@ -40,8 +40,14 @@ export type Board = {
 	showAtEnd: (column: Column) => void;
 };
 
-/** For a key binding that acts on the highlighted thread, and does nothing when there isn't one. */
+/**
+ * For a key binding that acts on the highlighted thread, and does nothing when there isn't one.
+ * Archived threads have no worktree or window, so only bindings that say `archived` act on them.
+ */
 export const onThread =
-	(run: (board: Board, thread: Thread) => unknown) =>
-	(board: Board, thread: Thread | undefined) =>
-		thread && run(board, thread);
+	(run: (board: Board, thread: Thread) => unknown, { archived = false } = {}) =>
+	(board: Board, thread: Thread | undefined) => {
+		if (!thread) return;
+		if (thread.column === 'archived' && !archived) return board.setMessage(`⚠ #${thread.id} is archived — H brings it back to Done`);
+		return run(board, thread);
+	};

@@ -37,6 +37,11 @@ export function App() {
 	);
 	const searchRef = useRef(search.query);
 	searchRef.current = search.query;
+	// A shows an ARCHIVED column after Done; the search covers it too.
+	const [showArchived, setShowArchived] = useState(false);
+	const showArchivedRef = useRef(showArchived);
+	showArchivedRef.current = showArchived;
+	const shownColumns: readonly Column[] = showArchived ? [...COLUMNS, 'archived'] : COLUMNS;
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
 	// Asking which project to import from (i with no filter), over the bottom of the board.
@@ -70,10 +75,11 @@ export function App() {
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 
-	const visible = (t: Thread, f = filter, q = search.query) => t.column !== 'archived' && (!f || t.project === f) && matchesSearch(t, q);
+	const visible = (t: Thread, f = filter, q = search.query, archived = showArchived) =>
+		(archived || t.column !== 'archived') && (!f || t.project === f) && matchesSearch(t, q);
 	const columnThreads = (column: Column, f = filter, q = search.query) => state.threads.filter(t => t.column === column && visible(t, f, q));
 
-	const colThreads = columnThreads(COLUMNS[cursor.col]!);
+	const colThreads = columnThreads(shownColumns[cursor.col]!);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
 	const selected: Thread | undefined = colThreads[row];
 
@@ -150,11 +156,11 @@ export function App() {
 		setBusy,
 		run,
 		ask,
-		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current, searchRef.current)),
+		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current, searchRef.current, showArchivedRef.current)),
 		showAtEnd: column =>
 			setCursor({
 				col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]),
-				row: stateRef.current.threads.filter(t => t.column === column && visible(t, filterRef.current, searchRef.current)).length,
+				row: stateRef.current.threads.filter(t => t.column === column && visible(t, filterRef.current, searchRef.current, showArchivedRef.current)).length,
 			}),
 	};
 	useRequests(board);
@@ -192,13 +198,13 @@ export function App() {
 
 	/** Where the thread is shown with `f` as the filter and `q` as the search: its column, and its row there. */
 	const positionOf = (thread: Thread, f: string | null, q = search.query) => {
-		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
+		const col = shownColumns.indexOf(thread.column);
 		return { col, row: columnThreads(thread.column, f, q).indexOf(thread) };
 	};
 
 	/** Jump to the column/row a thread is shown at, clearing the filter and search if they hide it. */
 	const showThread = (thread: Thread) => {
-		if (thread.column === 'archived') return false;
+		if (thread.column === 'archived' && !showArchived) return false;
 		const shown = filter && filter !== thread.project ? null : filter;
 		const query = matchesSearch(thread, search.query) ? search.query : '';
 		setFilter(shown);
@@ -232,14 +238,20 @@ export function App() {
 			return;
 		}
 		if (input === '/') return search.open();
-		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, COLUMNS.length), row });
-		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, COLUMNS.length), row });
+		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, shownColumns.length), row });
+		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, shownColumns.length), row });
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
 		if (input === 'R') return openReviews();
 		if (input === '?') return setShowKeys(true);
+		if (input === 'A') {
+			setShowArchived(!showArchived);
+			// Out of the ARCHIVED column as it goes, into Done.
+			if (showArchived && cursor.col >= COLUMNS.length) setCursor({ col: COLUMNS.indexOf('done'), row: 0 });
+			return;
+		}
 		if (input === 'i') return startImport();
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
@@ -266,6 +278,7 @@ export function App() {
 				<Text dimColor>
 					filter: {filter ?? 'all'}
 					{search.query ? ` · /${search.query}` : ''}
+					{showArchived ? ' · +archived' : ''}
 				</Text>
 			</Box>
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
@@ -298,7 +311,8 @@ export function App() {
 			) : (
 				<Columns
 					board={board}
-					columns={COLUMNS.map(column => columnThreads(column))}
+					shown={shownColumns}
+					columns={shownColumns.map(column => columnThreads(column))}
 					cursor={{ col: cursor.col, row }}
 					setCursor={setCursor}
 					active={!busy && !newThreadIn && !choosingImport && !confirm && !search.typing}
