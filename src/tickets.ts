@@ -1,6 +1,6 @@
 // The Jira tickets and GitHub issues threads work on, read with `gh` or Jira Cloud's REST API.
 import { execa } from 'execa';
-import type { Project, Thread } from './state.js';
+import { isJiraCloudHost, JIRA_CLOUD_ONLY, type Project, type Thread } from './state.js';
 
 export type TicketRef = NonNullable<Thread['ticket']>;
 export type Ticket = TicketRef & { summary: string; description: string };
@@ -92,7 +92,10 @@ function jiraHost(project: Project): string {
 async function jira(project: Project, path: string, body?: unknown): Promise<unknown> {
 	const { JIRA_EMAIL: email, JIRA_API_TOKEN: token } = process.env;
 	if (!email || !token) throw new Error('Set JIRA_EMAIL and JIRA_API_TOKEN to read Jira tickets');
-	const response = await fetch(`https://${jiraHost(project)}${path}`, {
+	// Checked here too, for a site saved before projectProblem refused it.
+	const host = jiraHost(project);
+	if (!isJiraCloudHost(host)) throw new Error(JIRA_CLOUD_ONLY);
+	const response = await fetch(`https://${host}${path}`, {
 		method: body ? 'POST' : 'GET',
 		headers: {
 			Authorization: `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`,

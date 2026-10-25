@@ -27,6 +27,7 @@ import {
 	pasteInto,
 	renameCurrentWindow,
 	selectExistingBoard,
+	shellQuote,
 	threadWindowName,
 	tmuxVersionOk,
 	windowNames,
@@ -230,7 +231,7 @@ if (cmd === 'project') {
 	await renameCurrentWindow(BOARD_WINDOW);
 	await labelWindow(BOARD_WINDOW, BOARD_LABEL);
 	// Not just `oo`, so the keys don't depend on it being on tmux's PATH.
-	await bindBoardKeys([...OO_COMMAND, 'split'].map(arg => JSON.stringify(arg)).join(' '));
+	await bindBoardKeys([...OO_COMMAND, 'split'].map(shellQuote).join(' '));
 	await enableTmuxMouse();
 	writeClaudeSettings();
 	writeOoSkill();

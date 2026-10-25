@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execaSync } from 'execa';
@@ -117,6 +117,14 @@ export type State = z.infer<typeof StateSchema>;
 
 export const DATA_DIR = join(homedir(), '.local', 'share', 'output-orchestrator');
 export const STATE_FILE = join(DATA_DIR, 'state.json');
+/** Mode for the files oo writes there: thread prompts, messages and claude's events are nobody else's business. */
+export const PRIVATE_FILE = 0o600;
+
+/** Create oo's data dir, or close up one made before it was private, so only you can read what's in it. */
+export function ensureDataDir(dir = DATA_DIR): void {
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	chmodSync(dir, 0o700);
+}
 
 export function loadState(file = STATE_FILE): State {
 	let raw: string;
@@ -145,10 +153,10 @@ export function withHome(state: State, home = homedir()): State {
 }
 
 export function saveState(state: State, file = STATE_FILE): string {
-	mkdirSync(dirname(file), { recursive: true });
+	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 	const tmp = `${file}.tmp`;
 	const json = JSON.stringify(state, null, 2);
-	writeFileSync(tmp, json);
+	writeFileSync(tmp, json, { mode: PRIVATE_FILE });
 	renameSync(tmp, file);
 	return json;
 }
@@ -157,6 +165,10 @@ export function saveState(state: State, file = STATE_FILE): string {
 export function isRepo(path: string): boolean {
 	return execaSync('git', ['-C', path, 'rev-parse', '--git-dir'], { reject: false }).exitCode === 0;
 }
+
+/** Whether `host` is a Jira Cloud site, the only kind JIRA_EMAIL and JIRA_API_TOKEN are sent to. */
+export const isJiraCloudHost = (host: string) => /^[a-z0-9-]+\.atlassian\.net$/i.test(host);
+export const JIRA_CLOUD_ONLY = 'The jira site must be yourco.atlassian.net (JIRA_EMAIL and JIRA_API_TOKEN are only sent to Jira Cloud)';
 
 /** Why `project` can't be saved over the project currently named `original` (undefined for a new one), if it can't. */
 export function projectProblem(state: State, project: Project, original?: string): string | undefined {
@@ -168,6 +180,7 @@ export function projectProblem(state: State, project: Project, original?: string
 	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
 	if (project.worktrees && !isRepo(project.path)) return `${project.path} isn't a git repo — turn worktrees off for a project without one`;
 	if (project.tracker === 'jira' && !project.jiraSite) return 'Jira tickets need a jira site';
+	if (project.jiraSite && !isJiraCloudHost(project.jiraSite)) return JIRA_CLOUD_ONLY;
 }
 
 export function newThreadId(state: State): string {

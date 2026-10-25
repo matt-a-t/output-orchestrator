@@ -2,11 +2,11 @@
 // overwrites state.json whenever it saves, so nothing else may write that file meanwhile: the CLI
 // appends a request to requests.jsonl instead, the board applies it and appends a response.
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { JsonlReader } from './jsonl.js';
-import { DATA_DIR, type Column, type Thread, type TodoStatus } from './state.js';
+import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Thread, type TodoStatus } from './state.js';
 
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
@@ -34,10 +34,10 @@ const pidFile = (dir: string) => join(dir, 'board.pid');
 
 /** Record that this process is the board, until it exits; requests from before it started are dropped. */
 export function claimBoard(dir = DATA_DIR): void {
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(requestsFile(dir), '');
-	writeFileSync(responsesFile(dir), '');
-	writeFileSync(pidFile(dir), String(process.pid));
+	ensureDataDir(dir);
+	writeFileSync(requestsFile(dir), '', { mode: PRIVATE_FILE });
+	writeFileSync(responsesFile(dir), '', { mode: PRIVATE_FILE });
+	writeFileSync(pidFile(dir), String(process.pid), { mode: PRIVATE_FILE });
 	process.on('exit', () => releaseBoard(dir));
 }
 
@@ -76,7 +76,7 @@ export class RequestReader extends JsonlReader<Request> {
 }
 
 export function respond(response: Response, dir = DATA_DIR): void {
-	appendFileSync(responsesFile(dir), JSON.stringify(response) + '\n');
+	appendFileSync(responsesFile(dir), JSON.stringify(response) + '\n', { mode: PRIVATE_FILE });
 }
 
 export type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
@@ -93,7 +93,7 @@ export async function sendRequest(
 	// Read from the current end, so a large old file isn't scanned every time.
 	const reader = new JsonlReader<Response>(responsesFile(dir), isResponse);
 	reader.read();
-	appendFileSync(requestsFile(dir), JSON.stringify({ ...request, id }) + '\n');
+	appendFileSync(requestsFile(dir), JSON.stringify({ ...request, id }) + '\n', { mode: PRIVATE_FILE });
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		const response = reader.read().find(r => r.id === id);

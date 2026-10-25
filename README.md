@@ -189,6 +189,8 @@ They run in a background tmux window: `oo-hook-<project>` for the local hooks,
 exits, so its output stays readable. The next hook of the same kind replaces it and stops
 anything still running (e.g. a dev server), so a polish hook leaves a local hook's dev server
 alone. `OO_THREAD_ID`, `OO_THREAD_TITLE`, `OO_PROJECT` and `OO_BRANCH` are set for them.
+`OO_THREAD_TITLE`, `OO_PROMPT` and `OO_BRANCH` can carry ticket text someone else wrote, so quote
+them (`"$OO_THREAD_TITLE"`) and never `eval` them or splice them unquoted into another command.
 
 ### PRs and Done
 

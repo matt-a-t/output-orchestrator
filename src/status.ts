@@ -3,8 +3,9 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonlReader } from './jsonl.js';
-import { DATA_DIR } from './state.js';
+import { DATA_DIR, ensureDataDir, PRIVATE_FILE } from './state.js';
 import { THREAD_USAGE } from './threadCommand.js';
+import { shellQuote } from './tmux.js';
 
 export const EVENTS_FILE = join(DATA_DIR, 'events.jsonl');
 export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
@@ -30,15 +31,15 @@ const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notific
 
 /** Write the settings file passed to every thread's claude via `--settings`. */
 export function writeClaudeSettings(): void {
-	const node = (args: string[]) => [process.execPath, '--no-warnings', ...args].map(arg => JSON.stringify(arg)).join(' ');
+	const node = (args: string[]) => [process.execPath, '--no-warnings', ...args].map(shellQuote).join(' ');
 	const command = node([HOOK_SCRIPT]);
 	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]> = Object.fromEntries(
 		HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]),
 	);
 	hooks.PostToolUse!.push({ matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: node(PLAN_HOOK) }] });
 	hooks.SessionStart!.push({ matcher: '*', hooks: [{ type: 'command', command: node(SESSION_HOOK) }] });
-	mkdirSync(DATA_DIR, { recursive: true });
-	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
+	ensureDataDir();
+	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2), { mode: PRIVATE_FILE });
 }
 
 export const SKILL_FILE = join(homedir(), '.claude', 'skills', 'oo', 'SKILL.md');

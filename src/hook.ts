@@ -25,7 +25,8 @@ process.stdin.on('end', () => {
 			type: data.notification_type,
 			ts: new Date().toISOString(),
 		});
-		mkdirSync(dataDir, { recursive: true });
-		appendFileSync(join(dataDir, 'events.jsonl'), line + '\n');
+		// Private, like the rest of oo's data (state.ts's ensureDataDir and PRIVATE_FILE).
+		mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+		appendFileSync(join(dataDir, 'events.jsonl'), line + '\n', { mode: 0o600 });
 	} catch {}
 });
