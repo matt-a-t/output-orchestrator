@@ -36,7 +36,8 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread draft [id] pr [--title <title>] --body-file <path>|-
                               save the commit message (or PR title and description) the board's form opens with,
                               instead of claude drafting one then; it's cleared once used. No --title: the thread's
-  Inside a thread's claude, id defaults to that thread. The project defaults to the one you're in.`;
+  Inside a thread's claude, id defaults to that thread, and it can change only that one: others it can only
+  message, without --wake. The project defaults to the one you're in.`;
 
 /** What the command runs against; tests swap these out. */
 export type Context = { cwd: string; env: NodeJS.ProcessEnv; dir: string; stdin: () => string };
@@ -131,6 +132,17 @@ export function resolveThreadId(state: State, arg: string | undefined, env: Node
 	return id;
 }
 
+/**
+ * A thread's claude may be prompt-injected, so it changes only its own thread: OO_THREAD_ID's, or the one
+ * it's working in, as OO_THREAD_ID can leak into another thread's claude (see fromThreadDir). Others it
+ * can only message. Not a sandbox (it could unset OO_THREAD_ID), but an injected "move #5 to done" doesn't just work.
+ */
+function ownThreadOnly(state: State, thread: string, ctx: Context): string {
+	const own = ctx.env.OO_THREAD_ID;
+	if (!own || thread === own || thread === threadAt(state, ctx.cwd)?.id) return thread;
+	throw new CommandError(`A thread's claude can only change its own thread; message #${thread} with oo thread send, or ask the user`);
+}
+
 /** Through the board if it's running (it owns state.json then), else straight to state.json. */
 async function change(request: DistributiveOmit<Request, 'id'>, ctx: Context & { timeoutMs?: number }): Promise<Response> {
 	if (boardRunning(ctx.dir)) return sendRequest(request, { dir: ctx.dir, timeoutMs: ctx.timeoutMs });
@@ -207,7 +219,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const { positional } = parseArgs(rest, [], []);
 		if (positional.length < 1 || positional.length > 2) throw new UsageError('oo thread move [id] <column>');
 		const column = parseColumn(positional.at(-1)!);
-		const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
 		// That removes the worktree and closes the thread's claude, which is likely the one asking. A thread
 		// with its own directory (imported, or in a project without worktrees) keeps both.
 		const ownDir = state.threads.find(t => t.id === thread)?.cwd;
@@ -226,7 +238,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const direction = last === 'in' || last === 'out' ? last : undefined;
 		const ids = direction ? positional.slice(0, -1) : positional;
 		if (ids.length > 1) throw new UsageError(`Unknown direction "${last}"; in or out`);
-		const thread = resolveThreadId(state, ids[0], ctx.env, ctx.cwd);
+		const thread = ownThreadOnly(state, resolveThreadId(state, ids[0], ctx.env, ctx.cwd), ctx);
 		// It checks out, closes and resumes claude and runs hooks, which only the board can do.
 		if (!boardRunning(ctx.dir)) return fail('Moving into or out of Local needs the board running');
 		return report(await sendRequest({ op: 'local', thread, local: direction ? direction === 'in' : 'toggle' }, { dir: ctx.dir }));
@@ -237,7 +249,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const bodyFile = flag('body-file');
 		const body = bodyFile === undefined ? undefined : (bodyFile === '-' ? ctx.stdin() : readFileSync(bodyFile, 'utf8')).trim();
 		const title = flag('title')?.trim() || undefined;
-		const thread = resolveThreadId(state, positional[0], ctx.env, ctx.cwd);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional[0], ctx.env, ctx.cwd), ctx);
 		// It pushes, opens the PR, moves the thread and runs hooks, which only the board can do.
 		if (!boardRunning(ctx.dir)) return fail('Opening a PR needs the board running');
 		// claude drafting the description and the push can take a few minutes.
@@ -249,7 +261,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const planFile = flag('plan-file');
 		if (planFile === undefined) throw new UsageError('oo thread plan [id] --plan-file <path>|-');
 		const plan = (planFile === '-' ? ctx.stdin() : readFileSync(planFile, 'utf8')).trim();
-		const thread = resolveThreadId(state, positional[0], ctx.env, ctx.cwd);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional[0], ctx.env, ctx.cwd), ctx);
 		const response = await change({ op: 'plan', thread, plan }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.message);
@@ -261,7 +273,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.length < 1 || positional.length > 2 || (kind !== 'commit' && kind !== 'pr')) {
 			throw new UsageError('oo thread draft [id] commit --message <message> | pr [--title <title>] --body-file <path>|-');
 		}
-		const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
 		if (kind === 'commit') {
 			const message = flag('message')?.trim();
 			if (!message) throw new UsageError('oo thread draft [id] commit --message <message>');
@@ -279,14 +291,14 @@ async function run(args: string[], ctx: Context): Promise<number> {
 			const file = flag('file');
 			if (positional.length > 2 || file === undefined) throw new UsageError('oo thread todo [id] set --file <path>|-');
 			const subjects = todoLines(file === '-' ? ctx.stdin() : readFileSync(file, 'utf8'));
-			const thread = resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd);
+			const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
 			return report(await change({ op: 'todos', thread, subjects }, ctx));
 		}
 		if (positional.length < 2 || positional.length > 3) throw new UsageError('oo thread todo [id] <n> <status>');
 		const [item, status] = positional.slice(-2) as [string, string];
 		if (!TODO_STATUSES.includes(status as TodoStatus)) throw new UsageError(`Unknown status "${status}"; one of ${TODO_STATUSES.join(', ')}`);
 		if (!/^[1-9]\d*$/.test(item)) throw new UsageError(`"${item}" isn't a checkpoint number`);
-		const thread = resolveThreadId(state, positional.length === 3 ? positional[0] : undefined, ctx.env, ctx.cwd);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === 3 ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
 		return report(await change({ op: 'todo', thread, item: Number(item), status: status as TodoStatus }, ctx));
 	}
 	if (sub === 'send') {
@@ -299,6 +311,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const thread = resolveThreadId(state, to, ctx.env, ctx.cwd);
 		const from = senderId(state, ctx);
 		// Resuming a claude is something only the board can do.
+		if (has('wake') && ctx.env.OO_THREAD_ID) return fail("--wake is for the user, not a thread's claude");
 		if (has('wake') && !boardRunning(ctx.dir)) return fail('--wake needs the board running');
 		return report(await change({ op: 'send', thread, from, text, wake: has('wake') || undefined }, has('wake') ? { ...ctx, timeoutMs: 60_000 } : ctx));
 	}

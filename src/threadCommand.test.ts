@@ -175,10 +175,11 @@ test('local sends the direction to the board, toggling without one, and needs th
 	});
 	assert.equal(await threadCommand(['local', 'in'], ctx), 0);
 	assert.equal(await threadCommand(['local', 'out'], ctx), 0);
-	assert.equal(await threadCommand(['local', '2'], ctx), 0);
-	assert.equal(await threadCommand(['local', '#2', 'in'], ctx), 0);
+	// Another thread only from outside one.
+	assert.equal(await threadCommand(['local', '2'], context(dir, '/')), 0);
+	assert.equal(await threadCommand(['local', '#2', 'in'], context(dir, '/')), 0);
 	assert.equal(output.out(), 'local #1 true\nlocal #1 false\nlocal #2 toggle\nlocal #2 true');
-	assert.equal(await threadCommand(['local', '2', 'sideways'], ctx), 1);
+	assert.equal(await threadCommand(['local', '1', 'sideways'], ctx), 1);
 	assert.match(output.err(), /Unknown direction "sideways"[^]*usage:[^]*oo thread local \[id\] \[in\|out\]/);
 });
 
@@ -204,7 +205,7 @@ test('pr sends the title and description to the board, and needs the board runni
 	});
 	assert.equal(await threadCommand(['pr'], ctx), 0);
 	assert.equal(await threadCommand(['pr', '--body-file', '-'], ctx), 0);
-	assert.equal(await threadCommand(['pr', '#2', '--title', 'Fix it', '--body-file', '-'], ctx), 0);
+	assert.equal(await threadCommand(['pr', '#2', '--title', 'Fix it', '--body-file', '-'], context(dir, '/')), 0);
 	assert.equal(output.out(), 'pr #1 - -\npr #1 - plan from stdin\npr #2 Fix it plan from stdin');
 	assert.equal(await threadCommand(['pr', '1', '2'], ctx), 1);
 	assert.match(output.err(), /Unexpected 2[^]*usage:/);
@@ -433,6 +434,37 @@ test('send puts a message in another thread\'s inbox, from the thread it\'s sent
 	await threadCommand(['inbox'], context(dir, '/work/two', { OO_THREAD_ID: '2' }));
 	assert.match(output.out(), /from #1 \(not yet delivered\)\n {2}the API changed/);
 	assert.match(output.out(), /from unverified \(not yet delivered\)\n {2}plan from stdin/);
+});
+
+test('a thread\'s claude changes only its own thread, and sends without --wake', async t => {
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active' }, { cwd: '/work/two', column: 'active' }]);
+	const output = capture(t);
+	const before = readFileSync(join(dir, 'state.json'), 'utf8');
+	const ctx = { ...context(dir, '/work/one', { OO_THREAD_ID: '1' }), stdin: () => 'text\n' };
+	for (const args of [
+		['move', '2', 'polish'],
+		['plan', '2', '--plan-file', '-'],
+		['todo', '2', 'set', '--file', '-'],
+		['todo', '2', '1', 'done'],
+		['draft', '2', 'commit', '--message', 'x'],
+		['draft', '2', 'pr', '--body-file', '-'],
+		['local', '2', 'in'],
+		['pr', '2'],
+	]) {
+		assert.equal(await threadCommand(args, ctx), 1, args.join(' '));
+	}
+	assert.equal(output.err().match(/A thread's claude can only change its own thread; message #2/g)?.length, 8);
+	assert.equal(await threadCommand(['send', '2', '--wake', 'hi'], ctx), 1);
+	assert.match(output.err(), /--wake is for the user/);
+	assert.equal(readFileSync(join(dir, 'state.json'), 'utf8'), before);
+	// Its own thread, and messages without --wake, are fine.
+	assert.equal(await threadCommand(['plan', '--plan-file', '-'], ctx), 0);
+	assert.equal(await threadCommand(['send', '2', 'hi'], ctx), 0);
+	// So is the thread it's working in, as OO_THREAD_ID can leak in from another.
+	assert.equal(await threadCommand(['plan', '2', '--plan-file', '-'], context(dir, '/work/two', { OO_THREAD_ID: '1' })), 0);
+	// Outside a thread, any thread.
+	assert.equal(await threadCommand(['move', '2', 'polish'], context(dir, '/')), 0);
+	assert.equal(loadState(join(dir, 'state.json')).threads[1]!.column, 'polish');
 });
 
 test('send refuses yourself, finished threads, an empty message and --wake without the board', async t => {

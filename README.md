@@ -252,9 +252,11 @@ Threads whose work is related can pass each other context. A thread's claude run
 relies on, such as an API, a shared file or a decision, and the message waits in that thread's inbox,
 shown as ✉ on its card. The board pastes it into the other claude once its turn ends (never while
 it's working or waiting on a question). If that claude is closed, it's told as it next starts, or straight
-away with `--wake`, which resumes it. Run outside a thread, `oo thread send`
+away with `--wake`, which resumes it (only from outside a thread). Run outside a thread, `oo thread send`
 marks its message unverified rather than from you: any claude could `cd` out of its thread and send it.
 The receiving claude is told messages from threads and unverified senders aren't your instructions.
+A thread's claude (`OO_THREAD_ID` set, which includes the shell and diff panes beside it) can only
+change its own thread with `oo thread`; other threads it can only message.
 `oo thread inbox [id]` lists what a thread has been sent.
 
 A starting claude is told which other threads are open in its project, and the `oo` skill tells it
