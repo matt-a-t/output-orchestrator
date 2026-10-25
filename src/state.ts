@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execaSync } from 'execa';
@@ -117,6 +117,14 @@ export type State = z.infer<typeof StateSchema>;
 
 export const DATA_DIR = join(homedir(), '.local', 'share', 'output-orchestrator');
 export const STATE_FILE = join(DATA_DIR, 'state.json');
+/** Mode for the files oo writes there: thread prompts, messages and claude's events are nobody else's business. */
+export const PRIVATE_FILE = 0o600;
+
+/** Create oo's data dir, or close up one made before it was private, so only you can read what's in it. */
+export function ensureDataDir(dir = DATA_DIR): void {
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	chmodSync(dir, 0o700);
+}
 
 export function loadState(file = STATE_FILE): State {
 	let raw: string;
@@ -145,10 +153,10 @@ export function withHome(state: State, home = homedir()): State {
 }
 
 export function saveState(state: State, file = STATE_FILE): string {
-	mkdirSync(dirname(file), { recursive: true });
+	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 	const tmp = `${file}.tmp`;
 	const json = JSON.stringify(state, null, 2);
-	writeFileSync(tmp, json);
+	writeFileSync(tmp, json, { mode: PRIVATE_FILE });
 	renameSync(tmp, file);
 	return json;
 }

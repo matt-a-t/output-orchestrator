@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fixture } from './testHelpers.js';
@@ -99,4 +99,14 @@ test('sendRequest stops waiting once the board closes', async () => {
 	const response = await sendRequest({ op: 'add', project: 'p', title: 'a', plan: '' }, { dir });
 	assert.equal(response.ok, false);
 	assert.match(response.message, /closed/);
+});
+
+test('claiming the board makes the data dir and its files private, even a dir made before', () => {
+	const { dir } = fixture();
+	const data = join(dir, 'data');
+	mkdirSync(data, { mode: 0o755 });
+	claimBoard(data);
+	stops.push(() => releaseBoard(data));
+	assert.equal(statSync(data).mode & 0o777, 0o700);
+	for (const file of ['requests.jsonl', 'responses.jsonl', 'board.pid']) assert.equal(statSync(join(data, file)).mode & 0o777, 0o600, file);
 });
