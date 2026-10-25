@@ -16,13 +16,19 @@ export function insideTmux(): boolean {
 /** Popups (display-popup) arrived in tmux 3.2. */
 export const MIN_TMUX = [3, 2] as const;
 
+/** Popup borders (display-popup -b and -S) arrived in tmux 3.3; before that popups keep the plain one. */
+const BORDER_TMUX = [3, 3] as const;
+
 /** Whether `tmux -V` output is new enough; builds it can't read (e.g. `tmux master`) get the benefit of the doubt. */
-export function tmuxVersionOk(versionOutput: string): boolean {
+export function tmuxVersionOk(versionOutput: string, min: readonly [number, number] = MIN_TMUX): boolean {
 	const match = versionOutput.match(/(\d+)\.(\d+)/);
 	if (!match) return true;
 	const [major, minor] = [Number(match[1]), Number(match[2])];
-	return major > MIN_TMUX[0] || (major === MIN_TMUX[0] && minor >= MIN_TMUX[1]);
+	return major > min[0] || (major === min[0] && minor >= min[1]);
 }
+
+let popupBorders: Promise<boolean> | undefined;
+const popupBordersOk = () => (popupBorders ??= execa('tmux', ['-V']).then(r => tmuxVersionOk(r.stdout, BORDER_TMUX)));
 
 export function threadWindowName(threadId: string): string {
 	return `oo-${threadId}`;
@@ -216,13 +222,19 @@ export async function enableTmuxMouse(): Promise<void> {
 	await execa('tmux', ['set-option', 'mouse', 'on']);
 }
 
-/** Run a command in a tmux popup and resolve with its exit status once it exits. */
-export async function popup(command: string, opts: { cwd?: string; title?: string; width?: string; height?: string } = {}): Promise<number> {
+export type PopupOptions = { cwd?: string; title?: string; width?: string; height?: string; border?: string; borderStyle?: string };
+
+/** Run a command in a tmux popup and resolve with its exit status once it exits. `border` is tmux's popup-border-lines (heavy, double…) and `borderStyle` its style, which the title is drawn in too. */
+export async function popup(command: string, opts: PopupOptions = {}): Promise<number> {
 	const channel = `oo-${randomUUID()}`;
 	const statusFile = join(tmpdir(), `${channel}.status`);
 	const args = ['display-popup', '-E', '-w', opts.width ?? '90%', '-h', opts.height ?? '90%'];
 	if (opts.cwd) args.push('-d', opts.cwd);
 	if (opts.title) args.push('-T', opts.title);
+	if ((opts.border || opts.borderStyle) && (await popupBordersOk())) {
+		if (opts.border) args.push('-b', opts.border);
+		if (opts.borderStyle) args.push('-S', opts.borderStyle);
+	}
 	// wait-for makes this independent of whether display-popup blocks.
 	args.push(`${command}; echo $? > ${shellQuote(statusFile)}; tmux wait-for -S ${channel}`);
 	await execa('tmux', args);
@@ -335,6 +347,12 @@ export function progressPopup(title: string, editor: string): ProgressPopup {
 			rmSync(dir, { recursive: true, force: true });
 		},
 	};
+}
+
+/** How many columns the attached client has. */
+export async function clientWidth(): Promise<number> {
+	const { stdout } = await execa('tmux', ['display-message', '-p', '#{client_width}']);
+	return Number(stdout);
 }
 
 /** Ask a question in a small popup; true if it's answered with y. */
