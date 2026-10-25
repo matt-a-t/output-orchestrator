@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import type { PrStatus } from './github.js';
 import { loop } from './input.js';
 import { ProjectsView } from './projects.js';
+import { SearchBox, useSearch } from './search.js';
 import { ThreadView } from './thread.js';
 import type { Board } from './board/board.js';
 import { runBinding } from './board/bindings.js';
@@ -19,7 +20,7 @@ import { useRequests } from './board/requests.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
 import { COLORS, COLUMNS, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
-import { setColumn as moveTo } from './threads.js';
+import { matchesSearch, setColumn as moveTo } from './threads.js';
 import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
 
 export function App() {
@@ -30,6 +31,17 @@ export function App() {
 	const [filter, setFilter] = useState<string | null>(null);
 	const filterRef = useRef(filter);
 	filterRef.current = filter;
+	// Narrows the board along with the project filter; the highlighted thread stays highlighted while it still matches.
+	const search = useSearch(query =>
+		setCursor(selected && matchesSearch(selected, query) ? positionOf(selected, filter, query) : { col: cursor.col, row: 0 }),
+	);
+	const searchRef = useRef(search.query);
+	searchRef.current = search.query;
+	// A shows an ARCHIVED column after Done; the search covers it too.
+	const [showArchived, setShowArchived] = useState(false);
+	const showArchivedRef = useRef(showArchived);
+	showArchivedRef.current = showArchived;
+	const shownColumns: readonly Column[] = showArchived ? [...COLUMNS, 'archived'] : COLUMNS;
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
 	// Asking which project to import from (i with no filter), over the bottom of the board.
@@ -63,10 +75,11 @@ export function App() {
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 
-	const visible = (t: Thread, f = filter) => t.column !== 'archived' && (!f || t.project === f);
-	const columnThreads = (column: Column, f = filter) => state.threads.filter(t => t.column === column && visible(t, f));
+	const visible = (t: Thread, f = filter, q = search.query, archived = showArchived) =>
+		(archived || t.column !== 'archived') && (!f || t.project === f) && matchesSearch(t, q);
+	const columnThreads = (column: Column, f = filter, q = search.query) => state.threads.filter(t => t.column === column && visible(t, f, q));
 
-	const colThreads = columnThreads(COLUMNS[cursor.col]!);
+	const colThreads = columnThreads(shownColumns[cursor.col]!);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
 	const selected: Thread | undefined = colThreads[row];
 
@@ -143,11 +156,11 @@ export function App() {
 		setBusy,
 		run,
 		ask,
-		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current)),
+		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current, searchRef.current, showArchivedRef.current)),
 		showAtEnd: column =>
 			setCursor({
 				col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]),
-				row: stateRef.current.threads.filter(t => t.column === column && visible(t, filterRef.current)).length,
+				row: stateRef.current.threads.filter(t => t.column === column && visible(t, filterRef.current, searchRef.current, showArchivedRef.current)).length,
 			}),
 	};
 	useRequests(board);
@@ -183,18 +196,20 @@ export function App() {
 			setReviews(requests);
 		}, 'looking for review requests');
 
-	/** Where the thread is shown with `f` as the filter: its column, and its row there. */
-	const positionOf = (thread: Thread, f: string | null) => {
-		const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]);
-		return { col, row: columnThreads(thread.column, f).indexOf(thread) };
+	/** Where the thread is shown with `f` as the filter and `q` as the search: its column, and its row there. */
+	const positionOf = (thread: Thread, f: string | null, q = search.query) => {
+		const col = shownColumns.indexOf(thread.column);
+		return { col, row: columnThreads(thread.column, f, q).indexOf(thread) };
 	};
 
-	/** Jump to the column/row a thread is shown at, clearing the filter if it hides it. */
+	/** Jump to the column/row a thread is shown at, clearing the filter and search if they hide it. */
 	const showThread = (thread: Thread) => {
-		if (thread.column === 'archived') return false;
+		if (thread.column === 'archived' && !showArchived) return false;
 		const shown = filter && filter !== thread.project ? null : filter;
+		const query = matchesSearch(thread, search.query) ? search.query : '';
 		setFilter(shown);
-		setCursor(positionOf(thread, shown));
+		search.set(query);
+		setCursor(positionOf(thread, shown, query));
 		return true;
 	};
 
@@ -210,22 +225,33 @@ export function App() {
 			setConfirm(null);
 			return input === 'y' ? confirm() : setMessage('Cancelled');
 		}
+		if (search.key(input, key)) return;
 		if (input === 'q') return ask('Quit?', exit);
 		if (input === 'Q') return void run(quitClosingWindows, 'listing windows');
-		if (key.escape && filter) {
-			setFilter(null);
+		// esc drops the search, then the project filter.
+		if (key.escape && (search.query || filter)) {
+			const f = search.query ? filter : null;
+			search.set('');
+			setFilter(f);
 			// Stay on the same thread now that the rest of its column is back.
-			if (selected) setCursor(positionOf(selected, null));
+			if (selected) setCursor(positionOf(selected, f, ''));
 			return;
 		}
-		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, COLUMNS.length), row });
-		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, COLUMNS.length), row });
+		if (input === '/') return search.open();
+		if (input === 'h' || key.leftArrow) return setCursor({ col: loop(cursor.col, -1, shownColumns.length), row });
+		if (input === 'l' || key.rightArrow) return setCursor({ col: loop(cursor.col, 1, shownColumns.length), row });
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setShowProjects(true);
 		if (input === 'R') return openReviews();
 		if (input === '?') return setShowKeys(true);
+		if (input === 'A') {
+			setShowArchived(!showArchived);
+			// Out of the ARCHIVED column as it goes, into Done.
+			if (showArchived && cursor.col >= COLUMNS.length) setCursor({ col: COLUMNS.indexOf('done'), row: 0 });
+			return;
+		}
 		if (input === 'i') return startImport();
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
@@ -249,7 +275,11 @@ export function App() {
 				<Text bold>
 					output-orchestrator{busy ? <Text color="cyan"> ● busy</Text> : null}
 				</Text>
-				<Text dimColor>filter: {filter ?? 'all'}</Text>
+				<Text dimColor>
+					filter: {filter ?? 'all'}
+					{search.query ? ` · /${search.query}` : ''}
+					{showArchived ? ' · +archived' : ''}
+				</Text>
 			</Box>
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
 			{showProjects ? (
@@ -281,10 +311,11 @@ export function App() {
 			) : (
 				<Columns
 					board={board}
-					columns={COLUMNS.map(column => columnThreads(column))}
+					shown={shownColumns}
+					columns={shownColumns.map(column => columnThreads(column))}
 					cursor={{ col: cursor.col, row }}
 					setCursor={setCursor}
-					active={!busy && !newThreadIn && !choosingImport && !confirm}
+					active={!busy && !newThreadIn && !choosingImport && !confirm && !search.typing}
 					unreviewed={unreviewed}
 					merge={merge}
 					layout={columnsLayout}
@@ -301,6 +332,7 @@ export function App() {
 				hidden={showProjects || showKeys || !!editing}
 			>
 				{choosingImport ? <ImportProject board={board} active={!busy} onPick={openPicker} onClose={() => setChoosingImport(false)} /> : null}
+				<SearchBox search={search} />
 				{newThreadIn ? <NewThread board={board} project={newThreadIn} recent={recent} active={!busy} onClose={() => setNewThreadIn(null)} /> : null}
 			</Footer>
 		</Box>

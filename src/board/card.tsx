@@ -26,7 +26,7 @@ export const LEGEND: [string, string | undefined, string][] = [
 export const LIST_TOP = 3;
 // Each card is two lines, or one in Done.
 const CARD_HEIGHT = 2;
-export const cardHeight = (column: Column) => (column === 'done' ? 1 : CARD_HEIGHT);
+export const cardHeight = (column: Column) => (column === 'done' || column === 'archived' ? 1 : CARD_HEIGHT);
 // A thread in Local stays in its column, its card outlined in yellow, which takes a line above and below.
 export const LOCAL_BORDER_LINES = 2;
 export const cardLines = (t: Thread) => cardHeight(t.column) + (t.local ? LOCAL_BORDER_LINES : 0);

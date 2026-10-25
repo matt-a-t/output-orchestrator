@@ -39,8 +39,9 @@ export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS
 	}, 'checking PR');
 }
 
-/** H / L: one column left or right. */
+/** H / L: one column left or right. H on an archived thread brings it back to Done. */
 export function moveColumn(board: Board, thread: Thread, delta: number) {
+	if (thread.column === 'archived') return delta < 0 && moveThread(board, thread, 'done');
 	const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 	if (col < 0 || col >= COLUMNS.length) return;
 	moveThread(board, thread, COLUMNS[col]!);
@@ -69,7 +70,7 @@ export const archiveThread = (board: Board, thread: Thread) =>
 	}, 'checking for uncommitted changes');
 
 export const moveKeys: Binding[] = [
-	{ key: 'H', run: onThread((board, thread) => moveColumn(board, thread, -1)) },
+	{ key: 'H', run: onThread((board, thread) => moveColumn(board, thread, -1), { archived: true }) },
 	{ key: 'L', run: onThread((board, thread) => moveColumn(board, thread, 1)) },
 	{ key: 'F', run: onThread(finishThread) },
 	{ key: 'x', run: onThread(archiveThread) },
