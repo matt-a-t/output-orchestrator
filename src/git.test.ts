@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { branchName, carryChanges, checkout, currentRef, defaultBranch, ensureWorktree, isDirty, pullBranch, rebaseInProgress, rebaseOnMain, renameBranch, restartBranch, restoreChanges } from './git.js';
+import { branchName, carryChanges, checkout, currentRef, defaultBranch, ensureWorktree, isDirty, pullBranch, pushState, rebaseInProgress, rebaseOnto, rebaseTarget, renameBranch, restartBranch, restoreChanges } from './git.js';
 import type { Thread } from './state.js';
 
 const thread = (t: Partial<Thread>): Thread => ({
@@ -102,15 +102,15 @@ test("asks origin for its default branch, not the clone's stale origin/HEAD", as
 test('rebases on origin/main, keeping uncommitted changes', async () => {
 	const clone = await behindMain('a\n-\n-\nb\n', 'A\n-\n-\nb\n', 'a\n-\n-\nB\n');
 	writeFileSync(join(clone, 'new'), 'wip');
-	assert.deepEqual(await rebaseOnMain(clone, 'main'), { result: 'rebased' });
+	assert.deepEqual(await rebaseOnto(clone, await rebaseTarget(clone, thread({ base: 'main' }))), { result: 'rebased' });
 	assert.equal(readFileSync(join(clone, 'f'), 'utf8'), 'A\n-\n-\nB\n');
 	assert.ok(await isDirty(clone));
-	assert.deepEqual(await rebaseOnMain(clone, 'main'), { result: 'up-to-date' });
+	assert.deepEqual(await rebaseOnto(clone, await rebaseTarget(clone, thread({ base: 'main' }))), { result: 'up-to-date' });
 });
 
 test('leaves a conflicting rebase in progress and says which files', async () => {
 	const clone = await behindMain('a\n', 'mine\n', 'theirs\n');
-	assert.deepEqual(await rebaseOnMain(clone, 'main'), { result: 'conflicts', files: ['f'] });
+	assert.deepEqual(await rebaseOnto(clone, await rebaseTarget(clone, thread({ base: 'main' }))), { result: 'conflicts', files: ['f'] });
 	assert.ok(await rebaseInProgress(clone));
 });
 
@@ -184,4 +184,34 @@ test('a branch with no commits of its own moves onto the parent, one with commit
 	await commit(worktree, 'child');
 	assert.equal(await restartBranch(repo, child, 'oo/parent'), false);
 	assert.equal(readFileSync(join(worktree, 'f'), 'utf8'), 'child');
+});
+
+test("a stacked thread rebases onto its parent's branch as it is here, pushed or not", async () => {
+	const { repo, dir, commit } = await withParent();
+	const worktree = join(dir, 'wt');
+	await execa('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'oo/child', worktree, 'oo/parent']);
+	writeFileSync(join(worktree, 'g'), 'child');
+	await execa('git', ['-C', worktree, 'add', 'g']);
+	await execa('git', ['-C', worktree, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'child']);
+	// The parent moves on after the child branched.
+	await execa('git', ['-C', repo, 'checkout', '-q', 'oo/parent']);
+	await commit(repo, 'parent 2');
+	const child = thread({ branch: 'oo/child', base: 'oo/parent', stackedOn: '1', worktree });
+	const upstream = await rebaseTarget(worktree, child);
+	assert.equal(upstream, 'oo/parent');
+	await execa('git', ['-C', worktree, 'config', 'user.name', 't']);
+	await execa('git', ['-C', worktree, 'config', 'user.email', 't@t']);
+	assert.deepEqual(await rebaseOnto(worktree, upstream), { result: 'rebased' });
+	assert.equal(readFileSync(join(worktree, 'f'), 'utf8'), 'parent 2');
+	assert.equal(readFileSync(join(worktree, 'g'), 'utf8'), 'child');
+});
+
+test('pushState says whether origin has a branch with all its commits', async () => {
+	const clone = await behindMain('a\n', 'b\n', 'c\n');
+	assert.equal(await pushState(clone, 'oo/x'), 'missing');
+	await execa('git', ['-C', clone, 'push', '-q', 'origin', 'oo/x']);
+	assert.equal(await pushState(clone, 'oo/x'), 'pushed');
+	writeFileSync(join(clone, 'f'), 'more');
+	await execa('git', ['-C', clone, 'commit', '-qam', 'more']);
+	assert.equal(await pushState(clone, 'oo/x'), 'behind');
 });

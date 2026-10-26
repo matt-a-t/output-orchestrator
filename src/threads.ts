@@ -408,10 +408,10 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	return done(messages.filter(Boolean).join('\n'));
 }
 
-/** What to tell the thread's claude when rebasing it on `base` (see rebaseOnMain) stopped on conflicts. */
-export function conflictPrompt(base: string, files: string[], push: boolean): string {
+/** What to tell the thread's claude when rebasing it onto `upstream` (see rebaseOnto) stopped on conflicts. */
+export function conflictPrompt(upstream: string, files: string[], push: boolean): string {
 	return [
-		`Rebasing this branch onto origin/${base} stopped on conflicts in: ${files.join(', ') || '(see git status)'}.`,
+		`Rebasing this branch onto ${upstream} stopped on conflicts in: ${files.join(', ') || '(see git status)'}.`,
 		'Resolve each one, `git add` it, and run `GIT_EDITOR=true git rebase --continue` until the rebase finishes.',
 		'Uncommitted changes were autostashed and come back at the end; if they conflict too, resolve them and leave them uncommitted.',
 		push ? 'The branch has a PR, so finish with `git push --force-with-lease`.' : '',

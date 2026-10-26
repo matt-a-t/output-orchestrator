@@ -1,7 +1,7 @@
 // Reviewing a thread's changes: diffs, comments, approving a step, and rebasing it on main.
 
 import { COMMIT_FORM, type CommitForm } from '../commitForm.js';
-import { commit, currentRef, defaultBranch, forcePushBranch, rebaseInProgress, rebaseOnMain, stageAll } from '../git.js';
+import { commit, currentRef, forcePushBranch, rebaseInProgress, rebaseOnto, rebaseTarget, stageAll } from '../git.js';
 import { openChanges, reviewDiff, showDiff, writeCommit } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { approvedPrompt } from '../threadCommand.js';
@@ -105,8 +105,8 @@ export const listChanges = (board: Board, thread: Thread) =>
 	);
 
 /**
- * u: rebase the thread's branch on origin's default branch, keeping uncommitted changes, and push
- * it if it has a PR. Conflicts are left for the thread's claude to resolve (and push).
+ * u: rebase the thread's branch on origin's default branch, or the branch it builds on (see rebaseTarget),
+ * keeping uncommitted changes, and push it if it has a PR. Conflicts are left for the thread's claude to resolve (and push).
  */
 export const updateFromMain = (board: Board, thread: Thread) =>
 	inWorktree(
@@ -120,21 +120,21 @@ export const updateFromMain = (board: Board, thread: Thread) =>
 			if (await rebaseInProgress(cwd)) return board.setMessage(`⚠ #${thread.id} is already partway through a rebase — finish or abort it first`);
 			const branch = thread.branch ?? (await currentRef(cwd));
 			if (/^[0-9a-f]{40}$/.test(branch)) return board.setMessage(`⚠ ${cwd} isn't on a branch`);
-			const base = (await defaultBranch(cwd)) ?? thread.base ?? 'main';
-			const rebased = await rebaseOnMain(cwd, base);
-			if (rebased.result === 'up-to-date') return board.setMessage(`#${thread.id} is already on origin/${base}`);
+			const upstream = await rebaseTarget(cwd, thread);
+			const rebased = await rebaseOnto(cwd, upstream);
+			if (rebased.result === 'up-to-date') return board.setMessage(`#${thread.id} is already on ${upstream}`);
 			if (rebased.result === 'conflicts') {
 				const count = `${rebased.files.length} file${rebased.files.length === 1 ? '' : 's'}`;
-				if (!(await wakeThread(board, thread, conflictPrompt(base, rebased.files, !!thread.pr)))) return;
-				return board.setMessage(`⚠ Rebasing #${thread.id} on origin/${base} conflicts in ${count} — handed to claude`);
+				if (!(await wakeThread(board, thread, conflictPrompt(upstream, rebased.files, !!thread.pr)))) return;
+				return board.setMessage(`⚠ Rebasing #${thread.id} on ${upstream} conflicts in ${count} — handed to claude`);
 			}
-			if (!thread.pr) return board.setMessage(`Rebased #${thread.id} on origin/${base}`);
+			if (!thread.pr) return board.setMessage(`Rebased #${thread.id} on ${upstream}`);
 			await forcePushBranch(cwd, branch);
-			board.setMessage(`Rebased #${thread.id} on origin/${base} and pushed`);
+			board.setMessage(`Rebased #${thread.id} on ${upstream} and pushed`);
 			// The push may have fixed the PR's conflicts, so don't wait for the next poll to show it.
 			void checkPr(board, thread);
 		},
-		{ git: true, label: 'rebasing on main' },
+		{ git: true, label: 'rebasing' },
 	);
 
 export const reviewKeys: Binding[] = [

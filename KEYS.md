@@ -11,7 +11,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `J`/`K` | reorder within its column |
 | `⏎` | open (or resume) its claude |
 | `w` / `W` | wake it / every thread closed mid-work ("keep going") |
-| `u` | rebase on origin/main (pushes a PR; conflicts go to claude) |
+| `u` | rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude) |
 | `n` | new thread (the form below) |
 | `e` | edit the thread |
 | `t` | into / out of Local (`oo thread local` from the shell) |

@@ -214,7 +214,9 @@ them (`"$OO_THREAD_TITLE"`) and never `eval` them or splice them unquoted into a
 ### PRs and Done
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
-`gh pr create`, whatever branch the thread started from. claude drafts the title and description
+`gh pr create`. A thread that builds on another's branch (see [Blocked threads](#blocked-threads)) opens its
+PR into that branch instead, so the PR shows only its own work. That branch has to be pushed with all its
+commits first, which opening the other thread's PR does. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
 cancels). Press `a` while claude is still writing to open the PR with what it writes, skipping vim.
 A thread in Local opens its PR from the project's checkout and stays in Local.
@@ -236,7 +238,8 @@ across every project with a repo; `⏎` opens one in the viewer, and once you've
 drops off the list.
 
 `u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
-branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread with a
+branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread that builds on
+another's branch is rebased onto that branch instead, picking up whatever that thread has added since. A thread with a
 PR is then force-pushed (`--force-with-lease`), which clears a "conflicts with base" badge once
 GitHub catches up. If the rebase conflicts, it's left partway and the thread's claude (resumed in
 the background if it's closed) is told which files to resolve, to finish the rebase and, with a

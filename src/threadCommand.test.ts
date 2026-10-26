@@ -435,9 +435,9 @@ test('a project inside a thread\'s directory is nearer than the thread', () => {
 });
 
 test('the conflict prompt names the files, and says to push only with a PR', () => {
-	assert.match(conflictPrompt('main', ['a.ts', 'b.ts'], false), /origin\/main stopped on conflicts in: a\.ts, b\.ts\./);
-	assert.doesNotMatch(conflictPrompt('main', ['a.ts'], false), /push/);
-	assert.match(conflictPrompt('main', ['a.ts'], true), /git push --force-with-lease/);
+	assert.match(conflictPrompt('origin/main', ['a.ts', 'b.ts'], false), /origin\/main stopped on conflicts in: a\.ts, b\.ts\./);
+	assert.doesNotMatch(conflictPrompt('origin/main', ['a.ts'], false), /push/);
+	assert.match(conflictPrompt('origin/main', ['a.ts'], true), /git push --force-with-lease/);
 });
 
 test('send puts a message in another thread\'s inbox, from the thread it\'s sent from or, outside one, unverified', async t => {

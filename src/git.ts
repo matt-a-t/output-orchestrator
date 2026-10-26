@@ -123,6 +123,18 @@ export async function restartBranch(repo: string, thread: Thread, branch: string
 	return true;
 }
 
+/**
+ * Whether origin has the branch with all its commits here: 'missing' if origin hasn't got it, 'behind' if it's
+ * missing some. A PR into another thread's branch needs it there, or GitHub shows that thread's commits too.
+ */
+export async function pushState(repo: string, branch: string): Promise<'pushed' | 'missing' | 'behind'> {
+	const fetched = await execa('git', ['-C', repo, 'fetch', 'origin', branch], { reject: false });
+	if (fetched.exitCode !== 0) return 'missing';
+	if (!(await refExists(repo, `refs/heads/${branch}`))) return 'pushed';
+	const contained = await execa('git', ['-C', repo, 'merge-base', '--is-ancestor', branch, `origin/${branch}`], { reject: false });
+	return contained.exitCode === 0 ? 'pushed' : 'behind';
+}
+
 /** The checked-out branch, or the commit if HEAD is detached. */
 export async function currentRef(repo: string): Promise<string> {
 	const symbolic = await execa('git', ['-C', repo, 'symbolic-ref', '--short', '-q', 'HEAD'], { reject: false });
@@ -269,13 +281,26 @@ export async function rebaseInProgress(cwd: string): Promise<boolean> {
 export type RebaseResult = { result: 'up-to-date' | 'rebased' } | { result: 'conflicts'; files: string[] };
 
 /**
- * Fetch origin's `base` and rebase the checked-out branch onto it, keeping uncommitted changes
+ * What `u` rebases the thread onto, fetched first: origin's default branch, or for a thread that builds
+ * on another's branch, that branch as it is here (see stackStart).
+ */
+export async function rebaseTarget(cwd: string, thread: Thread): Promise<string> {
+	if (thread.stackedOn && thread.base) {
+		// It may not be pushed yet, and then the local branch is all there is.
+		await execa('git', ['-C', cwd, 'fetch', 'origin', thread.base], { reject: false });
+		return stackStart(cwd, thread.base);
+	}
+	const base = (await defaultBranch(cwd)) ?? thread.base ?? 'main';
+	await git(cwd, ['fetch', 'origin', base]);
+	return `origin/${base}`;
+}
+
+/**
+ * Rebase the checked-out branch onto `upstream` (see rebaseTarget), keeping uncommitted changes
  * (autostashed in the rebase's own state, not the stash list shared with other worktrees). On
  * conflicts the rebase is left in progress for someone to finish.
  */
-export async function rebaseOnMain(cwd: string, base: string): Promise<RebaseResult> {
-	await git(cwd, ['fetch', 'origin', base]);
-	const upstream = `origin/${base}`;
+export async function rebaseOnto(cwd: string, upstream: string): Promise<RebaseResult> {
 	const behind = await execa('git', ['-C', cwd, 'merge-base', '--is-ancestor', upstream, 'HEAD'], { reject: false });
 	if (behind.exitCode === 0) return { result: 'up-to-date' };
 	const rebased = await execa('git', ['-C', cwd, 'rebase', '--autostash', upstream], { reject: false });
