@@ -119,6 +119,13 @@ const ThreadSchema = z.preprocess(
 		// Messages the thread's claude wrote ahead of review (see `oo thread draft`), so the commit and PR
 		// forms open filled in instead of waiting on a fresh draft. Each is cleared once used.
 		drafts: z.object({ commit: z.string().optional(), pr: z.object({ title: z.string(), body: z.string() }).optional() }).optional(),
+		// Threads this one waits on; dropped as each reaches Done or is archived (see threads.ts).
+		blockedBy: z.array(z.string()).optional(),
+		// The blocker (also in blockedBy) whose branch this thread's branch builds on; its base is that branch.
+		stackedOn: z.string().optional(),
+		// Set when the thread it built on merges: that branch's last commit, so u rebases only this thread's own
+		// commits onto the default branch (a squash merge leaves the originals behind). Cleared once u runs.
+		rebaseFrom: z.string().optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

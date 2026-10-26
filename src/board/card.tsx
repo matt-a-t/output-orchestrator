@@ -20,6 +20,7 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['±', 'magenta', 'changes to review'],
 	['⚡', 'red', 'PR has conflicts'],
 	['✉', 'cyan', 'messages from other threads, told when claude stops'],
+	['⧗', 'red', 'blocked by another thread (B)'],
 ];
 
 // The columns and the import list start below the title bar, a header and a rule.
@@ -43,19 +44,22 @@ type Props = {
 	stalled: boolean;
 	unreviewed: boolean;
 	merge: PrStatus | undefined;
+	// The unfinished threads it waits on (see blockers).
+	blockers: Thread[];
 };
 
 /** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
-export function Card({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge }: Props) {
+export function Card({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers }: Props) {
 	const oneLine = cardHeight(t.column) === 1;
 	const color = t.color ?? project?.color;
 	// Changes aren't ready to review until claude stops working on them.
 	const working = live && status === 'working';
 	const [badge, badgeColor] = live ? (BADGES[status!] ?? ['○', 'gray']) : resumable ? ['↻', stalled ? 'red' : 'gray'] : [' ', undefined];
+	// A blocked thread's title is dimmed, so the threads that can go on stand out.
 	const title = (
 		<>
 			{t.ticket ? <Text color="blue">{t.ticket.key} </Text> : null}
-			{t.title}
+			<Text dimColor={blockers.length > 0}>{t.title}</Text>
 		</>
 	);
 	return (
@@ -67,6 +71,11 @@ export function Card({ thread: t, selected, project, live, status, resumable, st
 				{unreviewed && !working ? (
 					<Text color="magenta" bold>
 						{' '}±
+					</Text>
+				) : null}
+				{blockers.length ? (
+					<Text color="red" bold>
+						{' '}⧗{blockers.map(b => `#${b.id}`).join(',')}
 					</Text>
 				) : null}
 				{merge?.mergeable === 'CONFLICTING' ? (

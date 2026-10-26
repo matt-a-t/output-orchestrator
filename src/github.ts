@@ -78,17 +78,23 @@ function ticketFooter({ key, url }: TicketRef, body: string): string | undefined
 }
 
 /**
- * Open a PR for the thread's branch, which must already be pushed, into the repo's default branch:
- * not the thread's base, which is whatever the checkout happened to be on when the thread started.
+ * Open a PR for the thread's branch, which must already be pushed, into `base` (another thread's
+ * branch it builds on, which must be pushed too), or the repo's default branch without one.
  */
-export async function createPr(cwd: string, thread: Thread, title: string, body: string): Promise<Pr> {
+export async function createPr(cwd: string, thread: Thread, title: string, body: string, base?: string): Promise<Pr> {
 	const branch = thread.branch!;
-	const { stdout } = await execa('gh', ['pr', 'create', '--head', branch, '--title', title, '--body-file', '-'], {
+	const into = base ? ['--base', base] : [];
+	const { stdout } = await execa('gh', ['pr', 'create', '--head', branch, ...into, '--title', title, '--body-file', '-'], {
 		cwd,
 		input: body,
 	});
 	const url = stdout.trim().split('\n').at(-1)!;
 	return { number: Number(/\/pull\/(\d+)/.exec(url)?.[1]), url };
+}
+
+/** Point the PR at `base`, for when the branch it went into has merged. */
+export async function retargetPr(cwd: string, pr: Pr, base: string): Promise<void> {
+	await execa('gh', ['pr', 'edit', String(pr.number), '--base', base], { cwd });
 }
 
 /**

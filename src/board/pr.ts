@@ -2,12 +2,12 @@
 
 import { existsSync } from 'node:fs';
 import { EDITOR, parsePr, prText } from '../editor.js';
-import { currentRef, defaultBranch, isDirty, pushBranch } from '../git.js';
+import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart } from '../git.js';
 import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../github.js';
 import { runColumnHook } from '../hooks.js';
 import { showPr } from '../review.js';
 import type { Thread } from '../state.js';
-import { withDrafts } from '../threads.js';
+import { unblockedNote, unstackChildren, withDrafts } from '../threads.js';
 import { CLOSED, progressPopup, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
@@ -52,14 +52,24 @@ export async function openPr(board: Board, thread: Thread, steps: PrSteps): Prom
 		steps.status('looking for a PR');
 		existing = pr = thread.pr ?? (await findPr(cwd, branch));
 		if (!pr) {
-			// The PR goes into the default branch (see createPr), so describe the changes against that.
-			const target = await defaultBranch(cwd);
-			const draft = await steps.describe(cwd, { ...thread, branch }, target ? `origin/${target}` : (thread.base ?? 'HEAD'));
+			// One building on another thread's branch goes into it, which GitHub needs to have in full.
+			const into = thread.stackedOn && thread.base;
+			if (into) {
+				steps.status(`checking ${into} is pushed`);
+				const pushed = await pushState(cwd, into);
+				const parent = `#${thread.stackedOn}`;
+				if (pushed === 'missing') return { ok: false, message: `#${thread.id} builds on ${parent}'s ${into}, which isn't pushed — open ${parent}'s PR first` };
+				if (pushed === 'behind') return { ok: false, message: `${parent}'s ${into} has commits that aren't pushed — push them (${parent}'s PR, or git push) first, or #${thread.id}'s PR shows them too` };
+			}
+			// The PR goes into the default branch or the parent's (see createPr), so describe the changes against that.
+			const target = into ? undefined : await defaultBranch(cwd);
+			const against = into ? await stackStart(cwd, into) : target ? `origin/${target}` : (thread.base ?? 'HEAD');
+			const draft = await steps.describe(cwd, { ...thread, branch }, against);
 			if (!draft) return { ok: true, message: 'Cancelled' };
 			steps.status(`pushing ${branch}`);
 			await pushBranch(cwd, branch);
 			steps.status('opening PR');
-			pr = await createPr(cwd, thread, draft.title, draft.body);
+			pr = await createPr(cwd, thread, draft.title, draft.body, into || undefined);
 		} else {
 			steps.status(`pushing ${branch}`);
 			await pushBranch(cwd, branch);
@@ -135,8 +145,10 @@ export async function checkPr(board: Board, thread: Thread) {
 		}
 	}
 	board.setMerge(({ [thread.id]: _, ...rest }) => rest);
+	const unblocked = unblockedNote(board.state(), thread.id, 'done');
 	board.setColumn(thread.id, 'done');
-	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left].filter(Boolean).join('; '));
+	const unstacked = await unstackChildren(project, board.store, thread, true).catch(() => undefined);
+	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left, unblocked, unstacked].filter(Boolean).join('; '));
 	await syncWorktree(board, { ...thread, local: undefined, column: 'done' }).catch(err => board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
 }
 

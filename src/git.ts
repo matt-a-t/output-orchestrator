@@ -82,13 +82,63 @@ export async function ensureWorktree(repo: string, thread: Thread): Promise<Pick
 		await git(repo, ['worktree', 'add', path, thread.branch]);
 		return;
 	}
+	const branch = await freeBranchName(repo, branchName(thread));
+	// A stacked thread builds on its blocker's branch, as that thread has it here (see stackStart).
+	if (thread.stackedOn && thread.base) {
+		await git(repo, ['worktree', 'add', '-b', branch, '--no-track', path, await stackStart(repo, thread.base)]);
+		return { branch, base: thread.base };
+	}
 	const base = (await defaultBranch(repo)) ?? 'main';
 	// Start from origin's copy when we can fetch it, so the branch isn't behind a stale local main.
 	const fetched = await execa('git', ['-C', repo, 'fetch', 'origin', base], { reject: false });
 	const start = fetched.exitCode === 0 ? `origin/${base}` : base;
-	const branch = await freeBranchName(repo, branchName(thread));
 	await git(repo, ['worktree', 'add', '-b', branch, '--no-track', path, start]);
 	return { branch, base };
+}
+
+/**
+ * Where a thread stacked on another's `branch` starts: that branch here, which has its latest commits
+ * (worktrees share branches, and oo pushes from them), or origin's copy if it's only there.
+ */
+export async function stackStart(repo: string, branch: string): Promise<string> {
+	return (await refExists(repo, `refs/heads/${branch}`)) ? branch : `origin/${branch}`;
+}
+
+/** The commit another thread's `branch` is at (see stackStart), if it's still around. */
+export async function branchTip(repo: string, branch: string): Promise<string | undefined> {
+	const found = await execa('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', `${await stackStart(repo, branch)}^{commit}`], { reject: false });
+	return found.exitCode === 0 ? found.stdout.trim() : undefined;
+}
+
+/**
+ * Point the thread's branch at `branch` (another thread's) if it has no commits of its own yet and no
+ * uncommitted changes, in its worktree if it has one; false if it has either, so it's left as it is.
+ */
+export async function restartBranch(repo: string, thread: Thread, branch: string): Promise<boolean> {
+	if (!thread.branch || !thread.base) return false;
+	const own = await execa('git', ['-C', repo, 'rev-list', '--count', `${await diffBase(repo, thread)}..${thread.branch}`], { reject: false });
+	if (own.exitCode !== 0 || own.stdout.trim() !== '0') return false;
+	const start = await stackStart(repo, branch);
+	if (!hasWorktree(thread)) {
+		await git(repo, ['branch', '-f', thread.branch, start]);
+		return true;
+	}
+	const worktree = worktreePath(thread);
+	if (await isDirty(worktree)) return false;
+	await git(worktree, ['reset', '-q', '--keep', start]);
+	return true;
+}
+
+/**
+ * Whether origin has the branch with all its commits here: 'missing' if origin hasn't got it, 'behind' if it's
+ * missing some. A PR into another thread's branch needs it there, or GitHub shows that thread's commits too.
+ */
+export async function pushState(repo: string, branch: string): Promise<'pushed' | 'missing' | 'behind'> {
+	const fetched = await execa('git', ['-C', repo, 'fetch', 'origin', branch], { reject: false });
+	if (fetched.exitCode !== 0) return 'missing';
+	if (!(await refExists(repo, `refs/heads/${branch}`))) return 'pushed';
+	const contained = await execa('git', ['-C', repo, 'merge-base', '--is-ancestor', branch, `origin/${branch}`], { reject: false });
+	return contained.exitCode === 0 ? 'pushed' : 'behind';
 }
 
 /** The checked-out branch, or the commit if HEAD is detached. */
@@ -97,8 +147,15 @@ export async function currentRef(repo: string): Promise<string> {
 	return symbolic.stdout || (await git(repo, ['rev-parse', 'HEAD'])).stdout;
 }
 
-/** The remote's default branch (e.g. `main`), if origin has told us one. */
+/**
+ * The remote's default branch (e.g. `main`), if origin has told us one. Asks origin first: the
+ * local `origin/HEAD` is set at clone time and goes stale when the remote's default changes (a
+ * retired `master`). Offline, it falls back to that local ref.
+ */
 export async function defaultBranch(repo: string): Promise<string | undefined> {
+	const remote = await execa('git', ['-C', repo, 'ls-remote', '--symref', 'origin', 'HEAD'], { reject: false, timeout: 10_000 });
+	const named = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(remote.stdout)?.[1];
+	if (named) return named;
 	const result = await execa('git', ['-C', repo, 'symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD'], { reject: false });
 	return result.stdout.replace(/^origin\//, '') || undefined;
 }
@@ -129,6 +186,8 @@ export type DiffKind = 'step' | 'thread';
 /** What to compare the thread against: origin's copy of its base if there is one, so a stale local main doesn't drag in upstream commits. */
 export async function diffBase(cwd: string, thread: Thread): Promise<string> {
 	if (!thread.base) return 'HEAD';
+	// Another thread's branch is newest here, and origin's copy may be missing commits not yet pushed.
+	if (thread.stackedOn) return stackStart(cwd, thread.base);
 	const remote = `origin/${thread.base}`;
 	const found = await execa('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', `refs/remotes/${remote}`], { reject: false });
 	return found.exitCode === 0 ? remote : thread.base;
@@ -228,16 +287,29 @@ export async function rebaseInProgress(cwd: string): Promise<boolean> {
 export type RebaseResult = { result: 'up-to-date' | 'rebased' } | { result: 'conflicts'; files: string[] };
 
 /**
- * Fetch origin's `base` and rebase the checked-out branch onto it, keeping uncommitted changes
- * (autostashed in the rebase's own state, not the stash list shared with other worktrees). On
- * conflicts the rebase is left in progress for someone to finish.
+ * What `u` rebases the thread onto, fetched first: origin's default branch, or for a thread that builds
+ * on another's branch, that branch as it is here (see stackStart).
  */
-export async function rebaseOnMain(cwd: string, base: string): Promise<RebaseResult> {
+export async function rebaseTarget(cwd: string, thread: Thread): Promise<string> {
+	if (thread.stackedOn && thread.base) {
+		// It may not be pushed yet, and then the local branch is all there is.
+		await execa('git', ['-C', cwd, 'fetch', 'origin', thread.base], { reject: false });
+		return stackStart(cwd, thread.base);
+	}
+	const base = (await defaultBranch(cwd)) ?? thread.base ?? 'main';
 	await git(cwd, ['fetch', 'origin', base]);
-	const upstream = `origin/${base}`;
+	return `origin/${base}`;
+}
+
+/**
+ * Rebase the checked-out branch onto `upstream` (see rebaseTarget), keeping uncommitted changes
+ * (autostashed in the rebase's own state, not the stash list shared with other worktrees). With `from`,
+ * only the commits after it move (see rebaseFrom). On conflicts the rebase is left in progress for someone to finish.
+ */
+export async function rebaseOnto(cwd: string, upstream: string, from?: string): Promise<RebaseResult> {
 	const behind = await execa('git', ['-C', cwd, 'merge-base', '--is-ancestor', upstream, 'HEAD'], { reject: false });
 	if (behind.exitCode === 0) return { result: 'up-to-date' };
-	const rebased = await execa('git', ['-C', cwd, 'rebase', '--autostash', upstream], { reject: false });
+	const rebased = await execa('git', ['-C', cwd, 'rebase', '--autostash', ...(from ? ['--onto', upstream, from] : [upstream])], { reject: false });
 	if (rebased.exitCode === 0) return { result: 'rebased' };
 	if (!(await rebaseInProgress(cwd))) throw new Error(rebased.stderr || rebased.stdout);
 	const { stdout } = await git(cwd, ['diff', '--name-only', '--diff-filter=U']);

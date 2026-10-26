@@ -20,7 +20,7 @@ import { useRequests } from './board/requests.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
 import { COLORS, COLUMNS, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
-import { matchesSearch, setColumn as moveTo } from './threads.js';
+import { applyRequest, blockers, matchesSearch, setColumn as moveTo } from './threads.js';
 import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
 
 export function App() {
@@ -66,6 +66,8 @@ export function App() {
 	const [reviews, setReviews] = useState<Review[] | null>(null);
 	// The columns' measured height and scroll positions, kept while another screen covers them.
 	const columnsLayout = useRef(newColumnsLayout());
+	// The thread B is picking a blocker for, while the cursor moves to the one it waits on.
+	const [picking, setPicking] = useState<string | null>(null);
 	// An action waiting on y (any other key cancels); its question is shown as the message.
 	const [confirm, setConfirm] = useState<(() => void) | null>(null);
 	const ask = (question: string, action: () => void) => {
@@ -213,6 +215,24 @@ export function App() {
 		return true;
 	};
 
+	/**
+	 * ⏎ while picking: `target` blocks `thread` (its branch building on target's, if it can), or stops
+	 * blocking it if it already did; `thread` itself clears them all. The same rules as `oo thread block`.
+	 */
+	const pickBlocker = (thread: Thread, target: Thread) => {
+		setPicking(null);
+		showThread(thread);
+		const request =
+			target.id === thread.id
+				? ({ op: 'unblock', thread: thread.id } as const)
+				: ({ op: thread.blockedBy?.includes(target.id) ? 'unblock' : 'block', thread: thread.id, blocker: target.id } as const);
+		void run(async () => {
+			const response = await applyRequest(board.store, { ...request, id: '' });
+			setMessage(response.ok ? response.message : `⚠ ${response.message}`);
+		}, 'blocking');
+	};
+	const pickingThread = picking ? state.threads.find(t => t.id === picking) : undefined;
+
 	useInput((input, key) => {
 		// The form, the import and review lists and the import prompt take their own keys.
 		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews) return;
@@ -224,6 +244,16 @@ export function App() {
 		if (confirm) {
 			setConfirm(null);
 			return input === 'y' ? confirm() : setMessage('Cancelled');
+		}
+		if (picking) {
+			// Only moving, ⏎ and esc while picking.
+			if (key.escape || !pickingThread) {
+				setPicking(null);
+				if (pickingThread) showThread(pickingThread);
+				return setMessage('Cancelled');
+			}
+			if (key.return) return selected && pickBlocker(pickingThread, selected);
+			if (!/^[hjkl]$/.test(input) && !key.leftArrow && !key.rightArrow && !key.upArrow && !key.downArrow) return;
 		}
 		if (search.key(input, key)) return;
 		if (input === 'q') return ask('Quit?', exit);
@@ -263,6 +293,10 @@ export function App() {
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
 		if (input === 'e') return setEditing(selected.id);
+		if (input === 'B') {
+			if (selected.column === 'done' || selected.column === 'archived') return setMessage(`⚠ #${selected.id} is finished, so nothing blocks it`);
+			return setPicking(selected.id);
+		}
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
@@ -319,14 +353,20 @@ export function App() {
 					unreviewed={unreviewed}
 					merge={merge}
 					layout={columnsLayout}
+					onPick={pickingThread ? target => pickBlocker(pickingThread, target) : undefined}
 				/>
 			)}
 			<Footer
 				// About the highlighted card, so not while the import or review list covers the board.
 				thread={picker || reviews ? undefined : selected}
 				merge={selected && merge[selected.id]}
+				blockers={selected && !picker && !reviews ? blockers(state, selected) : []}
 				busy={busy}
-				message={message}
+				message={
+					pickingThread
+						? `Blocked by? Move to the thread #${pickingThread.id} waits on, ⏎ picks (again unpicks, on #${pickingThread.id} clears), esc cancels`
+						: message
+				}
 				confirming={!!confirm}
 				width={width}
 				hidden={showProjects || showKeys || !!editing}

@@ -435,9 +435,9 @@ test('a project inside a thread\'s directory is nearer than the thread', () => {
 });
 
 test('the conflict prompt names the files, and says to push only with a PR', () => {
-	assert.match(conflictPrompt('main', ['a.ts', 'b.ts'], false), /origin\/main stopped on conflicts in: a\.ts, b\.ts\./);
-	assert.doesNotMatch(conflictPrompt('main', ['a.ts'], false), /push/);
-	assert.match(conflictPrompt('main', ['a.ts'], true), /git push --force-with-lease/);
+	assert.match(conflictPrompt('origin/main', ['a.ts', 'b.ts'], false), /origin\/main stopped on conflicts in: a\.ts, b\.ts\./);
+	assert.doesNotMatch(conflictPrompt('origin/main', ['a.ts'], false), /push/);
+	assert.match(conflictPrompt('origin/main', ['a.ts'], true), /git push --force-with-lease/);
 });
 
 test('send puts a message in another thread\'s inbox, from the thread it\'s sent from or, outside one, unverified', async t => {
@@ -553,4 +553,110 @@ test('a starting claude is told the project\'s other open threads it could messa
 	// Alone in its project, there's nothing to say.
 	const alone = fixture([{ cwd: '/work/one', column: 'active' }]);
 	assert.equal(await sessionStarted({ cwd: '/work/one' }, context(alone.dir, '/', { OO_THREAD_ID: '1' })), undefined);
+});
+
+test('block and unblock record what a thread waits on, and show and list say so', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }, { cwd: '/work/three' }]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	const blockedBy = (id: string) => loadState(join(dir, 'state.json')).threads.find(t => t.id === id)!.blockedBy;
+	assert.equal(await threadCommand(['block', '1', '2'], ctx), 0);
+	assert.equal(await threadCommand(['block', '1', '#3'], ctx), 0);
+	assert.deepEqual(blockedBy('1'), ['2', '3']);
+	await threadCommand(['show', '1'], ctx);
+	assert.match(output.out(), /blocked: #2 thread 2 \(PLANNED\)\nblocked: #3 thread 3 \(PLANNED\)/);
+	await threadCommand(['list'], ctx);
+	assert.match(output.out(), /#1\tPLANNED ⧗#2,#3\tp\tthread 1/);
+	assert.equal(await threadCommand(['unblock', '1', '2'], ctx), 0);
+	assert.deepEqual(blockedBy('1'), ['3']);
+	assert.equal(await threadCommand(['unblock', '1', '--all'], ctx), 0);
+	assert.equal(blockedBy('1'), undefined);
+});
+
+test('a thread can only be blocked by an unfinished thread other than itself, without a cycle', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two', blockedBy: ['3'] }, { cwd: '/work/three', blockedBy: ['1'] }, { column: 'done' }]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	assert.equal(await threadCommand(['block', '1', '1'], ctx), 1);
+	assert.match(output.err(), /#1 can't wait on itself/);
+	assert.equal(await threadCommand(['block', '1', '2'], ctx), 1);
+	assert.match(output.err(), /#2 is already waiting on #1, so that would be a cycle/);
+	assert.equal(await threadCommand(['block', '1', '4'], ctx), 1);
+	assert.match(output.err(), /#4 is already in DONE/);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.blockedBy, undefined);
+});
+
+test('a blocker reaching Done or archived unblocks the threads waiting on it', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one', blockedBy: ['2', '3'] }, { cwd: '/work/two' }, { cwd: '/work/three' }]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	const blockedBy = () => loadState(join(dir, 'state.json')).threads.find(t => t.id === '1')!.blockedBy;
+	assert.equal(await threadCommand(['move', '2', 'archived'], ctx), 0);
+	assert.match(output.out(), /Unblocked #1/);
+	assert.deepEqual(blockedBy(), ['3']);
+	assert.equal(await threadCommand(['move', '3', 'done'], ctx), 0);
+	assert.equal(blockedBy(), undefined);
+});
+
+test('a thread waiting on a finished one shows as not blocked', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one', blockedBy: ['2'] }, { column: 'done' }]);
+	const output = capture(t);
+	await threadCommand(['show', '1'], context(dir, project));
+	assert.doesNotMatch(output.out(), /blocked/);
+});
+
+test('moving a blocked thread to Active warns', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one', blockedBy: ['2'] }, { cwd: '/work/two', title: 'the base' }]);
+	const output = capture(t);
+	assert.equal(await threadCommand(['move', '1', 'active'], context(dir, project)), 0);
+	assert.match(output.out(), /⚠ #1 is blocked by #2 the base/);
+});
+
+test('add --from builds on the thread\'s branch and is blocked by it; unblocking puts that back', async t => {
+	const { dir, project } = fixture([{ branch: 'oo/parent', base: 'main' }, {}]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	assert.equal(await threadCommand(['add', 'child', '--from', '1'], ctx), 0);
+	const child = () => loadState(join(dir, 'state.json')).threads.find(t => t.title === 'child')!;
+	assert.deepEqual([child().blockedBy, child().stackedOn, child().base], [['1'], '1', 'oo/parent']);
+	assert.equal(await threadCommand(['unblock', child().id, '1'], ctx), 0);
+	assert.deepEqual([child().blockedBy, child().stackedOn, child().base], [undefined, undefined, undefined]);
+	// One with no branch yet has nothing to build on.
+	assert.equal(await threadCommand(['add', 'other', '--from', '2'], ctx), 1);
+	assert.match(output.err(), /#2 has no branch yet/);
+});
+
+test('block stacks a thread without a branch on a blocker in its project that has one, else only blocks', async t => {
+	const { dir, project } = fixture([{}, { branch: 'oo/parent', base: 'main' }, {}]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	const one = () => loadState(join(dir, 'state.json')).threads.find(t => t.id === '1')!;
+	assert.equal(await threadCommand(['block', '1', '3'], ctx), 0);
+	assert.match(output.out(), /#3 has no branch yet, so #1 doesn't build on it/);
+	assert.equal(one().stackedOn, undefined);
+	assert.equal(await threadCommand(['block', '1', '2'], ctx), 0);
+	assert.match(output.out(), /builds on its branch: #1 branches from oo\/parent/);
+	assert.deepEqual([one().blockedBy, one().stackedOn, one().base], [['3', '2'], '2', 'oo/parent']);
+	// Taking off the other blocker leaves it building on #2.
+	assert.equal(await threadCommand(['unblock', '1', '3'], ctx), 0);
+	assert.deepEqual([one().blockedBy, one().stackedOn], [['2'], '2']);
+});
+
+test("a parent reaching Done or being archived puts the threads building on it back on the default branch", async t => {
+	const { dir, project } = fixture([
+		{ cwd: '/work/one', branch: 'oo/parent', base: 'main' },
+		{ branch: 'oo/child', base: 'oo/parent', stackedOn: '1', blockedBy: ['1'] },
+		{ cwd: '/work/three', branch: 'oo/other', base: 'main' },
+		{ branch: 'oo/child-2', base: 'oo/other', stackedOn: '3', blockedBy: ['3'] },
+	]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	const get = (id: string) => loadState(join(dir, 'state.json')).threads.find(t => t.id === id)!;
+	assert.equal(await threadCommand(['move', '1', 'done'], ctx), 0);
+	assert.match(output.out(), /#2 is on main again/);
+	assert.deepEqual([get('2').stackedOn, get('2').blockedBy, get('2').base], [undefined, undefined, 'main']);
+	assert.match(get('2').inbox![0]!.text, /#1 merged, so this thread no longer builds on its branch oo\/parent: its base is main\. .*moves only this thread's own commits/);
+	assert.equal(await threadCommand(['move', '3', 'archived'], ctx), 0);
+	assert.deepEqual([get('4').stackedOn, get('4').base, get('4').rebaseFrom], [undefined, 'main', undefined]);
+	assert.match(get('4').inbox![0]!.text, /was archived without merging.*are now part of this thread's work/);
 });

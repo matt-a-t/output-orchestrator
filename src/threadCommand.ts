@@ -3,13 +3,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, inDir, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
+import { applyRequest, approvedTodo, blockers, inDir, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
-export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
+export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>] [--from <id>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
                               --ticket: the Jira key (AV-123, or 123 for the project's prefix) or GitHub issue (#45) it's for
+                              --from: build on that thread's branch, blocked by it until it lands (its project by default)
   oo thread list [--json] [--project <name>] [--column <column>]
   oo thread show [id] [--json]
   oo thread move [id] <column>
@@ -33,6 +34,12 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               It's put to that claude when its turn ends, or when it next starts if it's closed;
                               --wake resumes a closed one to hear it now (needs the board running).
   oo thread inbox [id]        the messages other threads have sent this one
+  oo thread block [id] <blocker>
+                              record that the thread waits on another; it's dropped once that one reaches Done or is archived.
+                              A blocker in the same project with a branch is one to build on: the thread's branch moves onto
+                              it if it has no commits yet, and its diff and PR are against that branch either way
+  oo thread unblock [id] (<blocker> | --all)
+                              stop waiting on that thread, or with --all on any
   oo thread draft [id] commit --message <message>
   oo thread draft [id] pr [--title <title>] --body-file <path>|-
                               save the commit message (or PR title and description) the board's form opens with,
@@ -160,12 +167,14 @@ function where(t: Thread): string {
 	return `${COLUMN_LABELS[t.column]}${t.local ? ` (in ${LOCAL_LABEL})` : ''}`;
 }
 
-function summary(t: Thread): string {
-	return `#${t.id}\t${where(t)}\t${t.project}\t${t.title}`;
+function summary(state: State, t: Thread): string {
+	const waiting = blockers(state, t).map(b => `#${b.id}`).join(',');
+	return `#${t.id}\t${where(t)}${waiting ? ` ⧗${waiting}` : ''}\t${t.project}\t${t.title}`;
 }
 
 function details(state: State, t: Thread): string {
 	const lines = [`#${t.id} ${t.title}`, `column:  ${where(t)}`, `project: ${t.project}`];
+	for (const b of blockers(state, t)) lines.push(`blocked: #${b.id} ${b.title} (${where(b)})`);
 	if (t.ticket) lines.push(`ticket:  ${t.ticket.key}${t.ticket.url ? ` ${t.ticket.url}` : ''}`);
 	if (t.branch) lines.push(`branch:  ${t.branch}${t.base ? ` (from ${t.base})` : ''}`);
 	const dir = threadDir(state, t);
@@ -191,14 +200,16 @@ async function run(args: string[], ctx: Context): Promise<number> {
 	const [sub, ...rest] = args.map(sanitize);
 	const state = loadState(join(ctx.dir, 'state.json'));
 	if (sub === 'add') {
-		const { positional, flag } = parseArgs(rest, ['project', 'plan-file', 'ticket'], []);
+		const { positional, flag } = parseArgs(rest, ['project', 'plan-file', 'ticket', 'from'], []);
 		const title = positional.join(' ').trim();
 		if (!title) throw new UsageError('Give the thread a title');
 		const planFile = flag('plan-file');
 		const plan = planFile === undefined ? '' : readInput(ctx, planFile).trim();
-		const project = resolveProject(state, ctx.cwd, flag('project'));
+		const from = flag('from') === undefined ? undefined : resolveThreadId(state, flag('from'), ctx.env, ctx.cwd);
+		// Building on another thread means being in its project.
+		const project = resolveProject(state, ctx.cwd, flag('project') ?? state.threads.find(t => t.id === from)?.project);
 		const ticket = await resolveTicket(state.projects.find(p => p.name === project)!, flag('ticket'));
-		const response = await change({ op: 'add', project, title, plan, ticket }, ctx);
+		const response = await change({ op: 'add', project, title, plan, ticket, from }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.thread);
 		return 0;
@@ -213,7 +224,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const threads = state.threads.filter(
 			t => (column ? t.column === column : t.column !== 'archived') && (!project || t.project === project),
 		);
-		console.log(has('json') ? JSON.stringify(threads, null, 2) : threads.map(summary).join('\n'));
+		console.log(has('json') ? JSON.stringify(threads, null, 2) : threads.map(t => summary(state, t)).join('\n'));
 		return 0;
 	}
 	if (sub === 'show') {
@@ -239,6 +250,18 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (!response.ok) return fail(response.message);
 		console.log(response.message);
 		return 0;
+	}
+	if (sub === 'block' || sub === 'unblock') {
+		const { positional, has } = parseArgs(rest, [], sub === 'unblock' ? ['all'] : []);
+		const all = has('all');
+		const usage = sub === 'block' ? 'oo thread block [id] <blocker>' : 'oo thread unblock [id] (<blocker> | --all)';
+		// Like move, the last id is the one acted on (the blocker); one before it is the thread, else this one.
+		const max = all ? 1 : 2;
+		if (positional.length > max || (!all && !positional.length)) throw new UsageError(usage);
+		const own = positional.length === max ? positional[0] : undefined;
+		const thread = ownThreadOnly(state, resolveThreadId(state, own, ctx.env, ctx.cwd), ctx);
+		const blocker = all ? undefined : resolveThreadId(state, positional.at(-1), ctx.env, ctx.cwd);
+		return report(await change(sub === 'block' ? { op: 'block', thread, blocker: blocker! } : { op: 'unblock', thread, blocker }, ctx));
 	}
 	if (sub === 'local') {
 		const { positional } = parseArgs(rest, [], []);

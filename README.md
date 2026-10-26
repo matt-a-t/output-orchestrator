@@ -77,7 +77,7 @@ already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved, ✉ messages from other threads its claude hasn't heard yet. Each card shows the thread number and project abbreviation (or name, if it has none),
+approved, ✉ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`). Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath (after its ticket key, if it has one).
 
 ### Tickets
@@ -164,6 +164,29 @@ the checkout back on the default branch, and gives the thread its worktree again
 `oo thread local [id] [in|out]` does the same from the shell, and a thread's claude offers it when you want
 to try its change. If the thread's claude is working, the move waits until its turn ends.
 
+### Blocked threads
+
+When a thread can't go on until another one lands, `B` records that: move the cursor to the thread it waits on and
+press `⏎` (`esc` cancels). The card gets a red ⧗#12 and a dimmed title, and the details below it list the blockers.
+A thread can wait on several. Picking one again takes it off, and `⏎` on the thread itself clears them all. A
+block goes away by itself once its blocker reaches Done (a merged PR included) or is archived, and the move's
+message says which threads it unblocked. Moving a blocked thread into Active warns, but doesn't stop you.
+
+A blocker in the same project is one to build on, so the thread's branch stacks on the blocker's branch: one with
+no branch yet is created from it, and one with no commits of its own is moved onto it (with uncommitted changes
+it's left alone). Either way the thread's base becomes that branch, so its diff is only its own work. To start a
+thread on another's branch from the outset, use `oo thread add <title> --from <id>`. A thread builds on one
+blocker at most, and taking that one off puts its base back on the default branch.
+
+When the thread it builds on merges (or is moved to Done), the thread goes back onto the default branch: its
+base, and its PR if it has one (`gh pr edit --base`), and its claude is told. Its branch still has the other
+thread's commits under its own, which a squash merge leaves behind, so the next `u` moves only the thread's own
+commits onto `origin/main`. If the other thread is archived instead, the thread's base goes back the same way but its
+PR is left alone, and those commits count as its own work.
+
+`oo thread block [id] <blocker>` and `oo thread unblock [id] (<blocker> | --all)` do the same from the shell, and
+`oo thread show` and `list` say what's still blocking a thread. A thread's claude records what it's waiting on itself.
+
 ### Project hooks
 
 Each project can set hooks in the projects screen (`P`). These are shell commands that run when
@@ -197,7 +220,9 @@ them (`"$OO_THREAD_TITLE"`) and never `eval` them or splice them unquoted into a
 ### PRs and Done
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
-`gh pr create`, whatever branch the thread started from. claude drafts the title and description
+`gh pr create`. A thread that builds on another's branch (see [Blocked threads](#blocked-threads)) opens its
+PR into that branch instead, so the PR shows only its own work. That branch has to be pushed with all its
+commits first, which opening the other thread's PR does. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
 cancels). Press `a` while claude is still writing to open the PR with what it writes, skipping vim.
 A thread in Local opens its PR from the project's checkout and stays in Local.
@@ -219,7 +244,8 @@ across every project with a repo; `⏎` opens one in the viewer, and once you've
 drops off the list.
 
 `u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
-branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread with a
+branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread that builds on
+another's branch is rebased onto that branch instead, picking up whatever that thread has added since. A thread with a
 PR is then force-pushed (`--force-with-lease`), which clears a "conflicts with base" badge once
 GitHub catches up. If the rebase conflicts, it's left partway and the thread's claude (resumed in
 the background if it's closed) is told which files to resolve, to finish the rebase and, with a
@@ -268,7 +294,7 @@ when a message is worth sending and to reply only when there's something to say.
 
 ### From the command line
 
-`oo thread add|list|show|move|local|pr|plan|todo|send|inbox` reads and changes the board from a shell, and from inside a
+`oo thread add|list|show|move|local|pr|plan|todo|send|inbox|block|unblock` reads and changes the board from a shell, and from inside a
 thread's claude, where the thread id defaults to that thread. Run `oo help` to see them all.
 claude learns these commands from an `oo` skill that the board installs (see below), so you can
 ask a thread's claude to file follow-up work as a new thread, or to tell another thread about a change.
