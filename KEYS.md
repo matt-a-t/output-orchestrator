@@ -15,6 +15,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `n` | new thread (the form below) |
 | `e` | edit the thread |
 | `t` | into / out of Local (`oo thread local` from the shell) |
+| `B` | blocked by another thread: move to it and `⏎` (again unpicks it, `⏎` on the thread itself clears them all, `esc` cancels; `oo thread block` from the shell) |
 | `F` | straight to Done |
 | `x` | archive |
 | `C` | cycle its colour |

@@ -14,6 +14,8 @@ type Props = {
 	// The highlighted thread, unless something covers the board.
 	thread: Thread | undefined;
 	merge: PrStatus | undefined;
+	// The unfinished threads it waits on.
+	blockers: Thread[];
 	busy: string | null;
 	message: string;
 	// Whether the message is a question waiting on y.
@@ -25,10 +27,10 @@ type Props = {
 };
 
 /** Below the board: the highlighted thread's details, the message line, the legend and the help line. */
-export function Footer({ thread, merge, busy, message, confirming, width, hidden, children }: Props) {
+export function Footer({ thread, merge, blockers, busy, message, confirming, width, hidden, children }: Props) {
 	const merged = merge && mergeLabel(merge);
 	// The one-line details go first, so the todo list is what gives up rows when they're all there.
-	const todoLines = INFO_HEIGHT - 1 - (thread?.plan ? 1 : 0) - (thread?.ticket?.url ? 1 : 0) - (thread?.pr ? 1 : 0);
+	const todoLines = INFO_HEIGHT - 1 - (thread?.plan ? 1 : 0) - (thread?.ticket?.url ? 1 : 0) - (thread?.pr ? 1 : 0) - blockers.length;
 	return (
 		<Box marginTop={1} flexDirection="column" display={hidden ? 'none' : 'flex'}>
 			<Box
@@ -58,6 +60,11 @@ export function Footer({ thread, merge, busy, message, confirming, width, hidden
 						{merged ? <Text color={merged[1]}> — {merged[0]}</Text> : null}
 					</Text>
 				) : null}
+				{blockers.map(b => (
+					<Text key={b.id} color="red" dimColor wrap="truncate-end">
+						blocked by #{b.id} {b.title}
+					</Text>
+				))}
 				{thread?.todos?.length ? <TodoList todos={thread.todos} lines={todoLines} /> : null}
 			</Box>
 			{children}

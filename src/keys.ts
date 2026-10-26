@@ -15,6 +15,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['n', 'new thread (form)'],
 			['e', 'edit the thread'],
 			['t', 'into / out of Local'],
+			['B', 'blocked by another thread (move to it, ⏎ picks)'],
 			['F', 'straight to Done'],
 			['x', 'archive'],
 			['C', 'cycle its colour'],

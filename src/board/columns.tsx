@@ -8,6 +8,7 @@ import { COLUMN_LABELS, type Column, type Thread } from '../state.js';
 import { threadWindowName } from '../tmux.js';
 import type { Board } from './board.js';
 import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES } from './card.js';
+import { blockers } from '../threads.js';
 import { openThread, resumeId, stalled } from './claude.js';
 import { useDoubleClick } from './doubleClick.js';
 
@@ -30,9 +31,11 @@ type Props = {
 	unreviewed: Set<string>;
 	merge: Record<string, PrStatus>;
 	layout: RefObject<ColumnsLayout>;
+	// While B is picking a blocker, a double-click picks the thread instead of opening it.
+	onPick?: (thread: Thread) => void;
 };
 
-export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, layout }: Props) {
+export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, layout, onPick }: Props) {
 	const { columns: width } = useWindowSize();
 	const colWidth = Math.max(16, Math.floor(width / shown.length));
 
@@ -90,7 +93,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 		const thread = r < slice.end ? threads[r] : undefined;
 		if (!thread) return;
 		setCursor({ col, row: r });
-		if (isDoubleClick(thread.id)) openThread(board, thread);
+		if (isDoubleClick(thread.id)) (onPick ?? (t => openThread(board, t)))(thread);
 	};
 	const onMouseRef = useRef(onMouse);
 	onMouseRef.current = onMouse;
@@ -124,6 +127,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 								stalled={stalled(board, t)}
 								unreviewed={unreviewed.has(t.id)}
 								merge={merge[t.id]}
+								blockers={blockers(board.state(), t)}
 							/>
 						))}
 						{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}

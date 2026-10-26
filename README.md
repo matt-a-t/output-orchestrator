@@ -77,7 +77,7 @@ already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved, ✉ messages from other threads its claude hasn't heard yet. Each card shows the thread number and project abbreviation (or name, if it has none),
+approved, ✉ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`). Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath (after its ticket key, if it has one).
 
 ### Tickets
@@ -163,6 +163,17 @@ the checkout back on the default branch, and gives the thread its worktree again
 
 `oo thread local [id] [in|out]` does the same from the shell, and a thread's claude offers it when you want
 to try its change. If the thread's claude is working, the move waits until its turn ends.
+
+### Blocked threads
+
+When a thread can't go on until another one lands, `B` records that: move the cursor to the thread it waits on and
+press `⏎` (`esc` cancels). The card gets a red ⧗#12 and a dimmed title, and the details below it list the blockers.
+A thread can wait on several. Picking one again takes it off, and `⏎` on the thread itself clears them all. A
+block goes away by itself once its blocker reaches Done (a merged PR included) or is archived, and the move's
+message says which threads it unblocked. Moving a blocked thread into Active warns, but doesn't stop you.
+
+`oo thread block [id] <blocker>` and `oo thread unblock [id] (<blocker> | --all)` do the same from the shell, and
+`oo thread show` and `list` say what's still blocking a thread. A thread's claude records what it's waiting on itself.
 
 ### Project hooks
 
@@ -265,10 +276,6 @@ change its own thread with `oo thread`; other threads it can only message.
 
 A starting claude is told which other threads are open in its project, and the `oo` skill tells it
 when a message is worth sending and to reply only when there's something to say.
-
-`oo thread block [id] <blocker>` records that a thread can't go on until another one lands, and
-`oo thread unblock [id] (<blocker> | --all)` takes that back. A thread can wait on several. `oo thread show` and
-`list` say what's still blocking it, and the block goes away by itself once the blocker reaches Done or is archived.
 
 ### From the command line
 
