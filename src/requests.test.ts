@@ -106,6 +106,15 @@ test('local requests reach the board, which handles them itself', async () => {
 	assert.match(response.message, /needs the board/);
 });
 
+test("the board answers an op it doesn't know instead of leaving the CLI to time out", async () => {
+	const { dir, state } = fixture([{ cwd: '/work/one' }]);
+	board(dir, state);
+	// As a CLI built after the board started would send it.
+	const response = await sendRequest({ op: 'rename', thread: '1' } as never, { dir, timeoutMs: 2000 });
+	assert.equal(response.ok, false);
+	assert.match(response.message, /doesn't know `oo thread rename`; restart it/);
+});
+
 test('sendRequest gives up when nothing answers', async () => {
 	const { dir } = fixture();
 	claimBoard(dir);
