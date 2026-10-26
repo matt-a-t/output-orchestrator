@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { branchName, carryChanges, checkout, currentRef, isDirty, pullBranch, rebaseInProgress, rebaseOnMain, renameBranch, restoreChanges } from './git.js';
+import { branchName, carryChanges, checkout, currentRef, defaultBranch, isDirty, pullBranch, rebaseInProgress, rebaseOnMain, renameBranch, restoreChanges } from './git.js';
 import type { Thread } from './state.js';
 
 const thread = (t: Partial<Thread>): Thread => ({
@@ -87,6 +87,17 @@ async function behindMain(file: string, branch: string, upstream: string): Promi
 	await execa('git', ['-C', other, 'push', '-q', 'origin', 'HEAD:main']);
 	return clone;
 }
+
+test("asks origin for its default branch, not the clone's stale origin/HEAD", async () => {
+	const clone = await behindMain('a\n', 'b\n', 'c\n');
+	const origin = join(clone, '..', 'origin');
+	await execa('git', ['-C', origin, 'branch', 'trunk', 'main']);
+	await execa('git', ['-C', origin, 'symbolic-ref', 'HEAD', 'refs/heads/trunk']);
+	assert.equal(await defaultBranch(clone), 'trunk');
+	// Offline, the local ref is all there is.
+	await execa('git', ['-C', clone, 'remote', 'set-url', 'origin', join(clone, '..', 'gone')]);
+	assert.equal(await defaultBranch(clone), 'main');
+});
 
 test('rebases on origin/main, keeping uncommitted changes', async () => {
 	const clone = await behindMain('a\n-\n-\nb\n', 'A\n-\n-\nb\n', 'a\n-\n-\nB\n');

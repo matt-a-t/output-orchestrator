@@ -97,8 +97,15 @@ export async function currentRef(repo: string): Promise<string> {
 	return symbolic.stdout || (await git(repo, ['rev-parse', 'HEAD'])).stdout;
 }
 
-/** The remote's default branch (e.g. `main`), if origin has told us one. */
+/**
+ * The remote's default branch (e.g. `main`), if origin has told us one. Asks origin first: the
+ * local `origin/HEAD` is set at clone time and goes stale when the remote's default changes (a
+ * retired `master`). Offline, it falls back to that local ref.
+ */
 export async function defaultBranch(repo: string): Promise<string | undefined> {
+	const remote = await execa('git', ['-C', repo, 'ls-remote', '--symref', 'origin', 'HEAD'], { reject: false, timeout: 10_000 });
+	const named = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(remote.stdout)?.[1];
+	if (named) return named;
 	const result = await execa('git', ['-C', repo, 'symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD'], { reject: false });
 	return result.stdout.replace(/^origin\//, '') || undefined;
 }
