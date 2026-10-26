@@ -65,13 +65,33 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'pr', 'plan', 'todos', 'todo', 'send', 'delivered'].includes(r.op);
+const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'draft', 'todos', 'todo', 'send', 'delivered'] as const;
+// Doesn't compile if an op is missing above: the board would refuse its requests as unknown.
+const allOps: [Exclude<Request['op'], (typeof REQUEST_OPS)[number]>] extends [never] ? true : never = true;
+void allOps;
+
+const isKnownOp = (op: string): op is Request['op'] => (REQUEST_OPS as readonly string[]).includes(op);
+const isAnyRequest = (r: any) => typeof r.id === 'string' && typeof r.op === 'string';
 const isResponse = (r: any) => typeof r.id === 'string' && typeof r.ok === 'boolean';
 
-/** The board's side: new requests since the last read. */
-export class RequestReader extends JsonlReader<Request> {
-	constructor(dir = DATA_DIR) {
-		super(requestsFile(dir), isRequest);
+/**
+ * The board's side: new requests since the last read. One it doesn't know (from a CLI built after the
+ * board started) is answered here, so the CLI fails with that instead of waiting out its timeout.
+ */
+export class RequestReader {
+	private readonly reader: JsonlReader<{ id: string; op: string }>;
+
+	constructor(private readonly dir = DATA_DIR) {
+		this.reader = new JsonlReader(requestsFile(dir), isAnyRequest);
+	}
+
+	read(): Request[] {
+		return this.reader.read().filter((request): request is Request => {
+			if (isKnownOp(request.op)) return true;
+			const message = `The running board doesn't know \`oo thread ${request.op}\`; restart it (q, then oo) to pick up the new version`;
+			respond({ id: request.id, ok: false, message }, this.dir);
+			return false;
+		});
 	}
 }
 
@@ -101,5 +121,6 @@ export async function sendRequest(
 		if (!boardRunning(dir)) return { id, ok: false, message: 'The board closed before answering' };
 		await sleep(pollMs);
 	}
-	return { id, ok: false, message: `The board didn't answer within ${timeoutMs / 1000}s; it may still apply the change` };
+	// The board applies requests one at a time, so this one may be queued behind a slow pr, local or hook.
+	return { id, ok: false, message: `The board didn't answer within ${timeoutMs / 1000}s; it may be busy with another request and still apply this one` };
 }

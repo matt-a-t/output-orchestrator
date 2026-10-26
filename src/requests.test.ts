@@ -74,6 +74,29 @@ test('messages reach the board, which marks them delivered once claude has them'
 	assert.deepEqual(running.state().threads[1]!.inbox!.map(m => [m.text, m.delivered]), [['a', true], ['b', false]]);
 });
 
+test("a thread's own writes reach the board: drafts, a multi-line commit message among them, and todos", async () => {
+	const { dir, state } = fixture([{ cwd: '/work/one' }]);
+	const running = board(dir, state);
+	const send = (request: Parameters<typeof sendRequest>[0]) => sendRequest(request, { dir, timeoutMs: 2000 });
+	const commit = 'Fix the thing\n\nWhy it was broken.\n\nCo-Authored-By: Claude <noreply@anthropic.com>';
+	const responses = [
+		await send({ op: 'draft', thread: '1', commit }),
+		await send({ op: 'draft', thread: '1', pr: { title: 'Fix the thing', body: 'What\nand why' } }),
+		await send({ op: 'todos', thread: '1', subjects: ['First step', 'Second step'] }),
+		await send({ op: 'todo', thread: '1', item: 1, status: 'review' }),
+	];
+	assert.deepEqual(
+		responses.map(r => [r.ok, r.message]).filter(([ok]) => !ok),
+		[],
+	);
+	const thread = running.state().threads[0]!;
+	assert.deepEqual(thread.drafts, { commit, pr: { title: 'Fix the thing', body: 'What\nand why' } });
+	assert.deepEqual(
+		thread.todos!.map(t => [t.subject, t.status]),
+		[['First step', 'review'], ['Second step', 'pending']],
+	);
+});
+
 test('local requests reach the board, which handles them itself', async () => {
 	const { dir, state } = fixture([{ cwd: '/work/one' }]);
 	board(dir, state);
@@ -81,6 +104,15 @@ test('local requests reach the board, which handles them itself', async () => {
 	const response = await sendRequest({ op: 'local', thread: '1', local: true }, { dir, timeoutMs: 2000 });
 	assert.equal(response.ok, false);
 	assert.match(response.message, /needs the board/);
+});
+
+test("the board answers an op it doesn't know instead of leaving the CLI to time out", async () => {
+	const { dir, state } = fixture([{ cwd: '/work/one' }]);
+	board(dir, state);
+	// As a CLI built after the board started would send it.
+	const response = await sendRequest({ op: 'rename', thread: '1' } as never, { dir, timeoutMs: 2000 });
+	assert.equal(response.ok, false);
+	assert.match(response.message, /doesn't know `oo thread rename`; restart it/);
 });
 
 test('sendRequest gives up when nothing answers', async () => {
