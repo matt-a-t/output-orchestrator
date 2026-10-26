@@ -65,7 +65,12 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const isRequest = (r: any) => typeof r.id === 'string' && ['add', 'move', 'local', 'pr', 'plan', 'todos', 'todo', 'send', 'delivered'].includes(r.op);
+const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'draft', 'todos', 'todo', 'send', 'delivered'] as const;
+// Doesn't compile if an op is missing above: the board would drop its requests and the CLI wait them out.
+const allOps: [Exclude<Request['op'], (typeof REQUEST_OPS)[number]>] extends [never] ? true : never = true;
+void allOps;
+
+const isRequest = (r: any) => typeof r.id === 'string' && (REQUEST_OPS as readonly string[]).includes(r.op);
 const isResponse = (r: any) => typeof r.id === 'string' && typeof r.ok === 'boolean';
 
 /** The board's side: new requests since the last read. */
