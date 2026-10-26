@@ -69,7 +69,7 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'draft', 'todos', 'todo', 'send', 'delivered'] as const;
+const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'draft', 'todos', 'todo', 'send', 'delivered', 'block', 'unblock'] as const;
 // Doesn't compile if an op is missing above: the board would refuse its requests as unknown.
 const allOps: [Exclude<Request['op'], (typeof REQUEST_OPS)[number]>] extends [never] ? true : never = true;
 void allOps;
