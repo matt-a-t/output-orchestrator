@@ -25,7 +25,10 @@ export type Request =
 	// `from` is the sending thread's id, or UNVERIFIED_SENDER (see Message); `wake` (board-only) resumes a closed claude to hear it.
 	| { id: string; op: 'send'; thread: string; from: string; text: string; wake?: boolean }
 	// The thread's first `count` undelivered messages have been put to its claude.
-	| { id: string; op: 'delivered'; thread: string; count: number };
+	| { id: string; op: 'delivered'; thread: string; count: number }
+	| { id: string; op: 'block'; thread: string; blocker: string }
+	// Without a blocker, it clears them all.
+	| { id: string; op: 'unblock'; thread: string; blocker?: string };
 export type Response = { id: string; ok: boolean; message: string; thread?: string };
 
 export const requestsFile = (dir = DATA_DIR) => join(dir, 'requests.jsonl');

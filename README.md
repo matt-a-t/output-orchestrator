@@ -266,9 +266,13 @@ change its own thread with `oo thread`; other threads it can only message.
 A starting claude is told which other threads are open in its project, and the `oo` skill tells it
 when a message is worth sending and to reply only when there's something to say.
 
+`oo thread block [id] <blocker>` records that a thread can't go on until another one lands, and
+`oo thread unblock [id] (<blocker> | --all)` takes that back. A thread can wait on several. `oo thread show` and
+`list` say what's still blocking it, and the block goes away by itself once the blocker reaches Done or is archived.
+
 ### From the command line
 
-`oo thread add|list|show|move|local|pr|plan|todo|send|inbox` reads and changes the board from a shell, and from inside a
+`oo thread add|list|show|move|local|pr|plan|todo|send|inbox|block|unblock` reads and changes the board from a shell, and from inside a
 thread's claude, where the thread id defaults to that thread. Run `oo help` to see them all.
 claude learns these commands from an `oo` skill that the board installs (see below), so you can
 ask a thread's claude to file follow-up work as a new thread, or to tell another thread about a change.

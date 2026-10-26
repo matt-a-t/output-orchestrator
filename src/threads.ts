@@ -126,18 +126,69 @@ export function addThread(
 	return { state: { ...state, threads: [...state.threads, thread] }, thread };
 }
 
-/** Move the thread to the bottom of the column. */
+const finished = (t: Thread) => t.column === 'done' || t.column === 'archived';
+
+/** The threads `thread` still waits on: ones in its blockedBy that exist and aren't Done or archived. */
+export function blockers(state: State, thread: Thread): Thread[] {
+	return (thread.blockedBy ?? []).flatMap(id => state.threads.find(t => t.id === id && !finished(t)) ?? []);
+}
+
+/** Why `thread` can't be blocked by `blocker`, if it can't. */
+export function blockProblem(state: State, thread: Thread, blocker: Thread): string | undefined {
+	if (blocker.id === thread.id) return `#${thread.id} can't wait on itself`;
+	if (finished(blocker)) return `#${blocker.id} is already in ${COLUMN_LABELS[blocker.column]}`;
+	// Walk what the blocker waits on, and what that waits on, looking for `thread`.
+	const seen = new Set<string>();
+	const waits = (t: Thread): boolean =>
+		blockers(state, t).some(b => b.id === thread.id || (!seen.has(b.id) && (seen.add(b.id), waits(b))));
+	if (waits(blocker)) return `#${blocker.id} is already waiting on #${thread.id}, so that would be a cycle`;
+}
+
+/** Add `blocker` to the thread's blockedBy, or take it out if it's there already. */
+export function toggleBlocker(state: State, id: string, blocker: string): { state: State; added: boolean } {
+	const thread = state.threads.find(t => t.id === id);
+	if (!thread) return { state, added: false };
+	const current = thread.blockedBy ?? [];
+	const added = !current.includes(blocker);
+	const next = added ? [...current, blocker] : current.filter(b => b !== blocker);
+	const updated = { ...thread, blockedBy: next.length ? next : undefined, updatedAt: new Date().toISOString() };
+	return { state: { ...state, threads: state.threads.map(t => (t.id === id ? updated : t)) }, added };
+}
+
+/** The threads that moving `id` to Done or archiving it stops being blocked. */
+export function unblockedBy(state: State, id: string): Thread[] {
+	return state.threads.filter(t => !finished(t) && t.blockedBy?.includes(id));
+}
+
+/** Move the thread to the bottom of the column. Reaching Done or archived unblocks whatever waited on it. */
 export function setColumn(state: State, id: string, column: Column, patch: Partial<Thread> = {}): State {
 	const thread = state.threads.find(t => t.id === id);
 	if (!thread) return state;
-	const moved = { ...thread, ...patch, column, updatedAt: new Date().toISOString() };
+	const ends = column === 'done' || column === 'archived';
+	const moved = { ...thread, ...patch, column, ...(ends && { blockedBy: undefined }), updatedAt: new Date().toISOString() };
+	const others = state.threads
+		.filter(t => t.id !== id)
+		.map(t => {
+			if (!ends || !t.blockedBy?.includes(id)) return t;
+			const rest = t.blockedBy.filter(b => b !== id);
+			return { ...t, blockedBy: rest.length ? rest : undefined };
+		});
 	// Moving to the end of the array puts it at the bottom of the target column.
-	return { ...state, threads: [...state.threads.filter(t => t.id !== id), moved] };
+	return { ...state, threads: [...others, moved] };
+}
+
+/** What a move to Done or archived adds to its message: the threads it unblocked. */
+export function unblockedNote(state: State, id: string, column: Column): string | undefined {
+	if (column !== 'done' && column !== 'archived') return;
+	const freed = unblockedBy(state, id);
+	if (freed.length) return `Unblocked ${freed.map(t => `#${t.id}`).join(', ')}`;
 }
 
 /** A heads-up about moving the thread to `column` that doesn't stop the move. */
 export function moveWarning(state: State, thread: Thread, column: Column): string | undefined {
 	if (column !== 'active') return;
+	const waiting = blockers(state, thread)[0];
+	if (waiting) return `⚠ #${thread.id} is blocked by #${waiting.id} ${waiting.title}`;
 	// Threads sharing the project directory is the point of one without worktrees.
 	if (state.projects.find(p => p.name === thread.project)?.worktrees === false) return;
 	const other = state.threads.find(t => t.column === 'active' && t.project === thread.project && t.id !== thread.id);
@@ -273,6 +324,26 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, inbox: markDelivered(t.inbox ?? [], request.count) } : t)) }));
 		return done(`Delivered ${request.count} message${request.count === 1 ? '' : 's'} to #${thread.id}`);
 	}
+	if (request.op === 'block' || request.op === 'unblock') {
+		const blocker = request.blocker === undefined ? undefined : state.threads.find(t => t.id === request.blocker);
+		if (request.blocker !== undefined && !blocker) return { id, ok: false, message: `No thread #${request.blocker}` };
+		const waiting = thread.blockedBy ?? [];
+		if (request.op === 'unblock') {
+			if (!blocker) {
+				if (!waiting.length) return done(`#${thread.id} isn't blocked`);
+				store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, blockedBy: undefined, updatedAt: new Date().toISOString() } : t)) }));
+				return done(`#${thread.id} is no longer blocked`);
+			}
+			if (!waiting.includes(blocker.id)) return done(`#${thread.id} isn't blocked by #${blocker.id}`);
+			store.update(s => toggleBlocker(s, thread.id, blocker.id).state);
+			return done(`#${thread.id} is no longer blocked by #${blocker.id}`);
+		}
+		if (waiting.includes(blocker!.id)) return done(`#${thread.id} is already blocked by #${blocker!.id}`);
+		const problem = blockProblem(state, thread, blocker!);
+		if (problem) return { id, ok: false, message: problem };
+		store.update(s => toggleBlocker(s, thread.id, blocker!.id).state);
+		return done(`#${thread.id} is blocked by #${blocker!.id} ${blocker!.title}`);
+	}
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem =
 		moveProblem(state, thread, request.column) ??
@@ -281,11 +352,12 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		(request.column === 'done' ? await doneProblem(project, thread) : undefined);
 	if (problem) return { id, ok: false, message: problem };
 	const moved = { ...thread, column: request.column };
+	const unblocked = unblockedNote(state, thread.id, request.column);
 	store.update(s => setColumn(s, thread.id, request.column));
 	const { patch, message } = await syncWorktree(project, moved);
 	if (patch) store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch } : t)) }));
 	const ran = await runColumnHook(project, thread.column, { ...moved, ...patch });
-	const messages = [moveWarning(state, thread, request.column), message, `Moved #${thread.id} to ${COLUMN_LABELS[request.column]}`, ran];
+	const messages = [moveWarning(state, thread, request.column), message, `Moved #${thread.id} to ${COLUMN_LABELS[request.column]}`, unblocked, ran];
 	return done(messages.filter(Boolean).join('\n'));
 }
 
