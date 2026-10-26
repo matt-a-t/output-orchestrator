@@ -123,6 +123,9 @@ const ThreadSchema = z.preprocess(
 		blockedBy: z.array(z.string()).optional(),
 		// The blocker (also in blockedBy) whose branch this thread's branch builds on; its base is that branch.
 		stackedOn: z.string().optional(),
+		// Set when the thread it built on merges: that branch's last commit, so u rebases only this thread's own
+		// commits onto the default branch (a squash merge leaves the originals behind). Cleared once u runs.
+		rebaseFrom: z.string().optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

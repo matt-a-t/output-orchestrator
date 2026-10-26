@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { branchName, carryChanges, checkout, currentRef, defaultBranch, ensureWorktree, isDirty, pullBranch, pushState, rebaseInProgress, rebaseOnto, rebaseTarget, renameBranch, restartBranch, restoreChanges } from './git.js';
+import { branchName, branchTip, carryChanges, checkout, currentRef, defaultBranch, ensureWorktree, isDirty, pullBranch, pushState, rebaseInProgress, rebaseOnto, rebaseTarget, renameBranch, restartBranch, restoreChanges } from './git.js';
 import type { Thread } from './state.js';
 
 const thread = (t: Partial<Thread>): Thread => ({
@@ -214,4 +214,22 @@ test('pushState says whether origin has a branch with all its commits', async ()
 	writeFileSync(join(clone, 'f'), 'more');
 	await execa('git', ['-C', clone, 'commit', '-qam', 'more']);
 	assert.equal(await pushState(clone, 'oo/x'), 'behind');
+});
+
+test("after the parent is squash-merged, rebasing from its last commit moves only the child's own commits", async () => {
+	const { repo, dir } = await withParent();
+	const worktree = join(dir, 'wt');
+	await execa('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'oo/child', worktree, 'oo/parent']);
+	await execa('git', ['-C', worktree, 'config', 'user.name', 't']);
+	await execa('git', ['-C', worktree, 'config', 'user.email', 't@t']);
+	writeFileSync(join(worktree, 'f'), 'child');
+	await execa('git', ['-C', worktree, 'commit', '-qam', 'child']);
+	const tip = await branchTip(repo, 'oo/parent');
+	// The parent lands on main as one new commit, as a squash merge does.
+	await execa('git', ['-C', repo, 'merge', '-q', '--squash', 'oo/parent']);
+	await execa('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'squashed parent']);
+	assert.deepEqual(await rebaseOnto(worktree, 'main', tip), { result: 'rebased' });
+	const log = await execa('git', ['-C', worktree, 'log', '--format=%s', 'main..HEAD']);
+	assert.equal(log.stdout, 'child');
+	assert.equal(readFileSync(join(worktree, 'f'), 'utf8'), 'child');
 });

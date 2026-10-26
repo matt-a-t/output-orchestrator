@@ -92,6 +92,11 @@ export async function createPr(cwd: string, thread: Thread, title: string, body:
 	return { number: Number(/\/pull\/(\d+)/.exec(url)?.[1]), url };
 }
 
+/** Point the PR at `base`, for when the branch it went into has merged. */
+export async function retargetPr(cwd: string, pr: Pr, base: string): Promise<void> {
+	await execa('gh', ['pr', 'edit', String(pr.number), '--base', base], { cwd });
+}
+
 /**
  * Whether the PR can merge: `mergeable` is UNKNOWN while GitHub is still working it out, and
  * `mergeStateStatus` says what's in the way (DIRTY is conflicts, BEHIND, BLOCKED, UNSTABLE, CLEAN...).

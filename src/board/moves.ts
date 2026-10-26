@@ -1,7 +1,7 @@
 // Moving a thread between columns, and out of them (Done, archived).
 
 import { COLUMNS, type Thread } from '../state.js';
-import { archiveProblem, doneProblem, moveProblem, moveWarning, unblockedNote } from '../threads.js';
+import { archiveProblem, doneProblem, moveProblem, moveWarning, unblockedNote, unstackChildren } from '../threads.js';
 import { threadWindowName } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -28,7 +28,10 @@ export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS
 		const unblocked = unblockedNote(board.state(), thread.id, column);
 		board.setColumn(thread.id, column);
 		board.showAtEnd(column);
-		if (unblocked) board.setMessage(unblocked);
+		const project = board.project(thread.project);
+		const unstacked = column === 'done' && project ? await unstackChildren(project, board.store, thread, true) : undefined;
+		const note = [unblocked, unstacked].filter(Boolean).join(' · ');
+		if (note) board.setMessage(note);
 		await syncWorktree(board, { ...thread, column }, thread.column);
 		if (restart) await restartClaude(board, { ...thread, column }, column === 'planned' ? 'plan' : 'auto');
 	};
@@ -67,7 +70,9 @@ export const archiveThread = (board: Board, thread: Thread) =>
 				const unblocked = unblockedNote(board.state(), thread.id, 'archived');
 				// Through setColumn, so the threads waiting on it stop waiting.
 				board.setColumn(thread.id, 'archived');
-				board.setMessage([`Archived #${thread.id}`, unblocked].filter(Boolean).join(' · '));
+				const project = board.project(thread.project);
+				const unstacked = project ? await unstackChildren(project, board.store, thread, false) : undefined;
+				board.setMessage([`Archived #${thread.id}`, unblocked, unstacked].filter(Boolean).join(' · '));
 				await syncWorktree(board, { ...thread, column: 'archived' }, thread.column);
 			}, 'archiving'),
 		);

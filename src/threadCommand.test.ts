@@ -641,3 +641,22 @@ test('block stacks a thread without a branch on a blocker in its project that ha
 	assert.equal(await threadCommand(['unblock', '1', '3'], ctx), 0);
 	assert.deepEqual([one().blockedBy, one().stackedOn], [['2'], '2']);
 });
+
+test("a parent reaching Done or being archived puts the threads building on it back on the default branch", async t => {
+	const { dir, project } = fixture([
+		{ cwd: '/work/one', branch: 'oo/parent', base: 'main' },
+		{ branch: 'oo/child', base: 'oo/parent', stackedOn: '1', blockedBy: ['1'] },
+		{ cwd: '/work/three', branch: 'oo/other', base: 'main' },
+		{ branch: 'oo/child-2', base: 'oo/other', stackedOn: '3', blockedBy: ['3'] },
+	]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	const get = (id: string) => loadState(join(dir, 'state.json')).threads.find(t => t.id === id)!;
+	assert.equal(await threadCommand(['move', '1', 'done'], ctx), 0);
+	assert.match(output.out(), /#2 is on main again/);
+	assert.deepEqual([get('2').stackedOn, get('2').blockedBy, get('2').base], [undefined, undefined, 'main']);
+	assert.match(get('2').inbox![0]!.text, /#1 merged, so this thread no longer builds on its branch oo\/parent: its base is main\. .*moves only this thread's own commits/);
+	assert.equal(await threadCommand(['move', '3', 'archived'], ctx), 0);
+	assert.deepEqual([get('4').stackedOn, get('4').base, get('4').rebaseFrom], [undefined, 'main', undefined]);
+	assert.match(get('4').inbox![0]!.text, /was archived without merging.*are now part of this thread's work/);
+});

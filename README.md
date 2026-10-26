@@ -178,6 +178,12 @@ it's left alone). Either way the thread's base becomes that branch, so its diff 
 thread on another's branch from the outset, use `oo thread add <title> --from <id>`. A thread builds on one
 blocker at most, and taking that one off puts its base back on the default branch.
 
+When the thread it builds on merges (or is moved to Done), the thread goes back onto the default branch: its
+base, and its PR if it has one (`gh pr edit --base`), and its claude is told. Its branch still has the other
+thread's commits under its own, which a squash merge leaves behind, so the next `u` moves only the thread's own
+commits onto `origin/main`. If the other thread is archived instead, the thread's base goes back the same way but its
+PR is left alone, and those commits count as its own work.
+
 `oo thread block [id] <blocker>` and `oo thread unblock [id] (<blocker> | --all)` do the same from the shell, and
 `oo thread show` and `list` say what's still blocking a thread. A thread's claude records what it's waiting on itself.
 

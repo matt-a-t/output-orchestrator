@@ -7,7 +7,7 @@ import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitRe
 import { runColumnHook } from '../hooks.js';
 import { showPr } from '../review.js';
 import type { Thread } from '../state.js';
-import { unblockedNote, withDrafts } from '../threads.js';
+import { unblockedNote, unstackChildren, withDrafts } from '../threads.js';
 import { CLOSED, progressPopup, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
@@ -147,7 +147,8 @@ export async function checkPr(board: Board, thread: Thread) {
 	board.setMerge(({ [thread.id]: _, ...rest }) => rest);
 	const unblocked = unblockedNote(board.state(), thread.id, 'done');
 	board.setColumn(thread.id, 'done');
-	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left, unblocked].filter(Boolean).join('; '));
+	const unstacked = await unstackChildren(project, board.store, thread, true).catch(() => undefined);
+	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left, unblocked, unstacked].filter(Boolean).join('; '));
 	await syncWorktree(board, { ...thread, local: undefined, column: 'done' }).catch(err => board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
 }
 

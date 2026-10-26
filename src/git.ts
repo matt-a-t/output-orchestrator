@@ -104,6 +104,12 @@ export async function stackStart(repo: string, branch: string): Promise<string> 
 	return (await refExists(repo, `refs/heads/${branch}`)) ? branch : `origin/${branch}`;
 }
 
+/** The commit another thread's `branch` is at (see stackStart), if it's still around. */
+export async function branchTip(repo: string, branch: string): Promise<string | undefined> {
+	const found = await execa('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', `${await stackStart(repo, branch)}^{commit}`], { reject: false });
+	return found.exitCode === 0 ? found.stdout.trim() : undefined;
+}
+
 /**
  * Point the thread's branch at `branch` (another thread's) if it has no commits of its own yet and no
  * uncommitted changes, in its worktree if it has one; false if it has either, so it's left as it is.
@@ -297,13 +303,13 @@ export async function rebaseTarget(cwd: string, thread: Thread): Promise<string>
 
 /**
  * Rebase the checked-out branch onto `upstream` (see rebaseTarget), keeping uncommitted changes
- * (autostashed in the rebase's own state, not the stash list shared with other worktrees). On
- * conflicts the rebase is left in progress for someone to finish.
+ * (autostashed in the rebase's own state, not the stash list shared with other worktrees). With `from`,
+ * only the commits after it move (see rebaseFrom). On conflicts the rebase is left in progress for someone to finish.
  */
-export async function rebaseOnto(cwd: string, upstream: string): Promise<RebaseResult> {
+export async function rebaseOnto(cwd: string, upstream: string, from?: string): Promise<RebaseResult> {
 	const behind = await execa('git', ['-C', cwd, 'merge-base', '--is-ancestor', upstream, 'HEAD'], { reject: false });
 	if (behind.exitCode === 0) return { result: 'up-to-date' };
-	const rebased = await execa('git', ['-C', cwd, 'rebase', '--autostash', upstream], { reject: false });
+	const rebased = await execa('git', ['-C', cwd, 'rebase', '--autostash', ...(from ? ['--onto', upstream, from] : [upstream])], { reject: false });
 	if (rebased.exitCode === 0) return { result: 'rebased' };
 	if (!(await rebaseInProgress(cwd))) throw new Error(rebased.stderr || rebased.stdout);
 	const { stdout } = await git(cwd, ['diff', '--name-only', '--diff-filter=U']);

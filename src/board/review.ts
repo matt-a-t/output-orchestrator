@@ -121,7 +121,9 @@ export const updateFromMain = (board: Board, thread: Thread) =>
 			const branch = thread.branch ?? (await currentRef(cwd));
 			if (/^[0-9a-f]{40}$/.test(branch)) return board.setMessage(`⚠ ${cwd} isn't on a branch`);
 			const upstream = await rebaseTarget(cwd, thread);
-			const rebased = await rebaseOnto(cwd, upstream);
+			// After the thread it built on merged, only its own commits move (see rebaseFrom).
+			const rebased = await rebaseOnto(cwd, upstream, thread.rebaseFrom);
+			if (thread.rebaseFrom) board.updateThread(thread.id, { rebaseFrom: undefined });
 			if (rebased.result === 'up-to-date') return board.setMessage(`#${thread.id} is already on ${upstream}`);
 			if (rebased.result === 'conflicts') {
 				const count = `${rebased.files.length} file${rebased.files.length === 1 ? '' : 's'}`;

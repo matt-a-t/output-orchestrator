@@ -1,7 +1,7 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
-import { defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
-import { prState } from './github.js';
+import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
+import { prState, retargetPr } from './github.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
 import { COLUMN_LABELS, newThreadId, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
@@ -174,6 +174,42 @@ async function stackOn(project: Project, thread: Thread, parent: Thread): Promis
 async function unstack(project: Project, thread: Thread): Promise<Partial<Thread>> {
 	if (!thread.branch) return { stackedOn: undefined, base: undefined };
 	return { stackedOn: undefined, base: (await defaultBranch(project.path)) ?? 'main' };
+}
+
+/**
+ * After `parent` reaches Done (`merged`) or is archived, the threads building on its branch go back onto
+ * the default branch. After a merge their PRs follow, and u rebases only their own commits (see rebaseFrom);
+ * after archiving, the parent's commits stay part of theirs. Returns what to add to the move's message.
+ */
+export async function unstackChildren(project: Project, store: Store, parent: Thread, merged: boolean): Promise<string | undefined> {
+	const children = store.get().threads.filter(t => t.stackedOn === parent.id);
+	if (!children.length) return;
+	const base = (await defaultBranch(project.path)) ?? 'main';
+	const tip = merged && parent.branch ? await branchTip(project.path, parent.branch) : undefined;
+	const notes: string[] = [];
+	for (const child of children) {
+		const patch: Partial<Thread> = child.branch ? { stackedOn: undefined, base, rebaseFrom: tip } : { stackedOn: undefined, base: undefined };
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === child.id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t)) }));
+		const retargeted =
+			merged && child.pr
+				? await retargetPr(project.path, child.pr, base).then(
+						() => true,
+						() => false,
+					)
+				: undefined;
+		notes.push(`#${child.id} is on ${base} again${retargeted ? ', its PR too' : retargeted === false ? ` (⚠ couldn't point its PR at ${base})` : ''}`);
+		if (!child.branch) continue;
+		const pr = !child.pr
+			? ''
+			: retargeted
+				? ` Its PR now goes into ${base}.`
+				: ` Its PR still goes into ${parent.branch}; the user can point it at ${base} (gh pr edit ${child.pr.number} --base ${base}).`;
+		const commits = merged
+			? `Its branch still has #${parent.id}'s commits under its own until the user presses u on the board, which moves only this thread's own commits onto origin/${base}.`
+			: `#${parent.id}'s commits on its branch are now part of this thread's work; u on the board rebases them all onto origin/${base}.`;
+		tell(store, child.id, `#${parent.id} ${merged ? 'merged' : 'was archived without merging'}, so this thread no longer builds on its branch ${parent.branch}: its base is ${base}.${pr} ${commits}`);
+	}
+	return notes.join(', ');
 }
 
 /** Put a message from the board itself in the thread's inbox, for its claude. */
@@ -401,10 +437,12 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const moved = { ...thread, column: request.column };
 	const unblocked = unblockedNote(state, thread.id, request.column);
 	store.update(s => setColumn(s, thread.id, request.column));
+	const ends = request.column === 'done' || request.column === 'archived';
+	const unstacked = ends ? await unstackChildren(project, store, thread, request.column === 'done') : undefined;
 	const { patch, message } = await syncWorktree(project, moved);
 	if (patch) store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch } : t)) }));
 	const ran = await runColumnHook(project, thread.column, { ...moved, ...patch });
-	const messages = [moveWarning(state, thread, request.column), message, `Moved #${thread.id} to ${COLUMN_LABELS[request.column]}`, unblocked, ran];
+	const messages = [moveWarning(state, thread, request.column), message, `Moved #${thread.id} to ${COLUMN_LABELS[request.column]}`, unblocked, unstacked, ran];
 	return done(messages.filter(Boolean).join('\n'));
 }
 
