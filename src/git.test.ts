@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { branchName, carryChanges, checkout, currentRef, defaultBranch, isDirty, pullBranch, rebaseInProgress, rebaseOnMain, renameBranch, restoreChanges } from './git.js';
+import { branchName, carryChanges, checkout, currentRef, defaultBranch, ensureWorktree, isDirty, pullBranch, rebaseInProgress, rebaseOnMain, renameBranch, restartBranch, restoreChanges } from './git.js';
 import type { Thread } from './state.js';
 
 const thread = (t: Partial<Thread>): Thread => ({
@@ -142,4 +142,46 @@ test('pulls origin/main into a checkout put back on main', async () => {
 	await checkout(clone, 'main');
 	await pullBranch(clone, 'main');
 	assert.equal(readFileSync(join(clone, 'f'), 'utf8'), 'theirs\n');
+});
+
+/** A repo on main with a parent thread's branch one commit ahead, `parent` having `f` = 'parent'. */
+async function withParent(): Promise<{ repo: string; dir: string; commit: (cwd: string, text: string) => Promise<void> }> {
+	const dir = mkdtempSync(join(tmpdir(), 'oo-git-'));
+	const repo = join(dir, 'repo');
+	const commit = async (cwd: string, text: string) => {
+		writeFileSync(join(cwd, 'f'), text);
+		await execa('git', ['-C', cwd, 'add', 'f']);
+		await execa('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', text]);
+	};
+	await execa('git', ['init', '-q', '-b', 'main', repo]);
+	await commit(repo, 'main');
+	await execa('git', ['-C', repo, 'checkout', '-qb', 'oo/parent']);
+	await commit(repo, 'parent');
+	await execa('git', ['-C', repo, 'checkout', '-q', 'main']);
+	return { repo, dir, commit };
+}
+
+test("a stacked thread's new branch starts from its parent's branch, which isn't pushed", async () => {
+	const { repo, dir } = await withParent();
+	const worktree = join(dir, 'wt');
+	const created = await ensureWorktree(repo, thread({ stackedOn: '1', base: 'oo/parent', worktree }));
+	assert.deepEqual(created, { branch: 'oo/do-the-thing', base: 'oo/parent' });
+	assert.equal(readFileSync(join(worktree, 'f'), 'utf8'), 'parent');
+});
+
+test('a branch with no commits of its own moves onto the parent, one with commits stays put', async () => {
+	const { repo, dir, commit } = await withParent();
+	const worktree = join(dir, 'wt');
+	await execa('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'oo/child', worktree, 'main']);
+	const child = thread({ branch: 'oo/child', base: 'main', worktree });
+	writeFileSync(join(worktree, 'wip'), 'wip');
+	assert.equal(await restartBranch(repo, child, 'oo/parent'), false, 'uncommitted changes would be lost');
+	await execa('git', ['-C', worktree, 'clean', '-qfd']);
+	assert.equal(await restartBranch(repo, child, 'oo/parent'), true);
+	assert.equal(readFileSync(join(worktree, 'f'), 'utf8'), 'parent');
+	// Its own work on top of main now isn't something to throw away.
+	await execa('git', ['-C', worktree, 'reset', '-q', '--hard', 'main']);
+	await commit(worktree, 'child');
+	assert.equal(await restartBranch(repo, child, 'oo/parent'), false);
+	assert.equal(readFileSync(join(worktree, 'f'), 'utf8'), 'child');
 });

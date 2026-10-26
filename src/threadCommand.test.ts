@@ -611,3 +611,33 @@ test('moving a blocked thread to Active warns', async t => {
 	assert.equal(await threadCommand(['move', '1', 'active'], context(dir, project)), 0);
 	assert.match(output.out(), /⚠ #1 is blocked by #2 the base/);
 });
+
+test('add --from builds on the thread\'s branch and is blocked by it; unblocking puts that back', async t => {
+	const { dir, project } = fixture([{ branch: 'oo/parent', base: 'main' }, {}]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	assert.equal(await threadCommand(['add', 'child', '--from', '1'], ctx), 0);
+	const child = () => loadState(join(dir, 'state.json')).threads.find(t => t.title === 'child')!;
+	assert.deepEqual([child().blockedBy, child().stackedOn, child().base], [['1'], '1', 'oo/parent']);
+	assert.equal(await threadCommand(['unblock', child().id, '1'], ctx), 0);
+	assert.deepEqual([child().blockedBy, child().stackedOn, child().base], [undefined, undefined, undefined]);
+	// One with no branch yet has nothing to build on.
+	assert.equal(await threadCommand(['add', 'other', '--from', '2'], ctx), 1);
+	assert.match(output.err(), /#2 has no branch yet/);
+});
+
+test('block stacks a thread without a branch on a blocker in its project that has one, else only blocks', async t => {
+	const { dir, project } = fixture([{}, { branch: 'oo/parent', base: 'main' }, {}]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	const one = () => loadState(join(dir, 'state.json')).threads.find(t => t.id === '1')!;
+	assert.equal(await threadCommand(['block', '1', '3'], ctx), 0);
+	assert.match(output.out(), /#3 has no branch yet, so #1 doesn't build on it/);
+	assert.equal(one().stackedOn, undefined);
+	assert.equal(await threadCommand(['block', '1', '2'], ctx), 0);
+	assert.match(output.out(), /builds on its branch: #1 branches from oo\/parent/);
+	assert.deepEqual([one().blockedBy, one().stackedOn, one().base], [['3', '2'], '2', 'oo/parent']);
+	// Taking off the other blocker leaves it building on #2.
+	assert.equal(await threadCommand(['unblock', '1', '3'], ctx), 0);
+	assert.deepEqual([one().blockedBy, one().stackedOn], [['2'], '2']);
+});

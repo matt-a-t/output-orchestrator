@@ -10,7 +10,8 @@ import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Thread, type T
 
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
-	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: Thread['ticket'] }
+	// `from`: the thread whose branch it builds on, and is blocked by (see stackedOn).
+	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: Thread['ticket']; from?: string }
 	| { id: string; op: 'move'; thread: string; column: Column }
 	// Only the board can do this one (it checks out, moves claude and runs hooks); 'toggle' is what t does.
 	| { id: string; op: 'local'; thread: string; local: boolean | 'toggle' }

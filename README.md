@@ -172,6 +172,12 @@ A thread can wait on several. Picking one again takes it off, and `⏎` on the t
 block goes away by itself once its blocker reaches Done (a merged PR included) or is archived, and the move's
 message says which threads it unblocked. Moving a blocked thread into Active warns, but doesn't stop you.
 
+A blocker in the same project is one to build on, so the thread's branch stacks on the blocker's branch: one with
+no branch yet is created from it, and one with no commits of its own is moved onto it (with uncommitted changes
+it's left alone). Either way the thread's base becomes that branch, so its diff is only its own work. To start a
+thread on another's branch from the outset, use `oo thread add <title> --from <id>`. A thread builds on one
+blocker at most, and taking that one off puts its base back on the default branch.
+
 `oo thread block [id] <blocker>` and `oo thread unblock [id] (<blocker> | --all)` do the same from the shell, and
 `oo thread show` and `list` say what's still blocking a thread. A thread's claude records what it's waiting on itself.
 

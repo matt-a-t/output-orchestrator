@@ -121,6 +121,8 @@ const ThreadSchema = z.preprocess(
 		drafts: z.object({ commit: z.string().optional(), pr: z.object({ title: z.string(), body: z.string() }).optional() }).optional(),
 		// Threads this one waits on; dropped as each reaches Done or is archived (see threads.ts).
 		blockedBy: z.array(z.string()).optional(),
+		// The blocker (also in blockedBy) whose branch this thread's branch builds on; its base is that branch.
+		stackedOn: z.string().optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

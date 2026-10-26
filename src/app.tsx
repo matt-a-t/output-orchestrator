@@ -20,7 +20,7 @@ import { useRequests } from './board/requests.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
 import { COLORS, COLUMNS, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
-import { blockers, blockProblem, matchesSearch, setColumn as moveTo, toggleBlocker } from './threads.js';
+import { applyRequest, blockers, matchesSearch, setColumn as moveTo } from './threads.js';
 import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
 
 export function App() {
@@ -215,20 +215,21 @@ export function App() {
 		return true;
 	};
 
-	/** ⏎ while picking: `target` blocks `thread`, or stops blocking it if it already did; `thread` itself clears them all. */
+	/**
+	 * ⏎ while picking: `target` blocks `thread` (its branch building on target's, if it can), or stops
+	 * blocking it if it already did; `thread` itself clears them all. The same rules as `oo thread block`.
+	 */
 	const pickBlocker = (thread: Thread, target: Thread) => {
 		setPicking(null);
 		showThread(thread);
-		if (target.id === thread.id) {
-			if (!thread.blockedBy?.length) return setMessage(`#${thread.id} isn't blocked`);
-			updateThread(thread.id, { blockedBy: undefined });
-			return setMessage(`#${thread.id} is no longer blocked`);
-		}
-		const unpicking = thread.blockedBy?.includes(target.id);
-		const problem = !unpicking && blockProblem(state, thread, target);
-		if (problem) return setMessage(`⚠ ${problem}`);
-		setState(s => toggleBlocker(s, thread.id, target.id).state);
-		setMessage(unpicking ? `#${thread.id} is no longer blocked by #${target.id}` : `#${thread.id} is blocked by #${target.id} ${target.title}`);
+		const request =
+			target.id === thread.id
+				? ({ op: 'unblock', thread: thread.id } as const)
+				: ({ op: thread.blockedBy?.includes(target.id) ? 'unblock' : 'block', thread: thread.id, blocker: target.id } as const);
+		void run(async () => {
+			const response = await applyRequest(board.store, { ...request, id: '' });
+			setMessage(response.ok ? response.message : `⚠ ${response.message}`);
+		}, 'blocking');
 	};
 	const pickingThread = picking ? state.threads.find(t => t.id === picking) : undefined;
 

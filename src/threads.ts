@@ -1,6 +1,6 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
-import { ensureWorktree, hasWorktree, isDirty, removeWorktree, worktreePath } from './git.js';
+import { defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
 import { prState } from './github.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
@@ -144,15 +144,42 @@ export function blockProblem(state: State, thread: Thread, blocker: Thread): str
 	if (waits(blocker)) return `#${blocker.id} is already waiting on #${thread.id}, so that would be a cycle`;
 }
 
-/** Add `blocker` to the thread's blockedBy, or take it out if it's there already. */
-export function toggleBlocker(state: State, id: string, blocker: string): { state: State; added: boolean } {
-	const thread = state.threads.find(t => t.id === id);
-	if (!thread) return { state, added: false };
-	const current = thread.blockedBy ?? [];
-	const added = !current.includes(blocker);
-	const next = added ? [...current, blocker] : current.filter(b => b !== blocker);
-	const updated = { ...thread, blockedBy: next.length ? next : undefined, updatedAt: new Date().toISOString() };
-	return { state: { ...state, threads: state.threads.map(t => (t.id === id ? updated : t)) }, added };
+/** Why `thread`'s branch can't build on `parent`'s, if it can't; it can still be blocked by it. */
+export function stackProblem(state: State, thread: Thread, parent: Thread): string | undefined {
+	if (parent.project !== thread.project) return `#${parent.id} is in ${parent.project}, so #${thread.id} can't build on its branch`;
+	const reason = noRepo(state, thread);
+	if (reason) return `${reason}, so it has no branch to build on #${parent.id}'s`;
+	if (thread.stackedOn && thread.stackedOn !== parent.id) return `#${thread.id} already builds on #${thread.stackedOn}'s branch`;
+	if (thread.local) return `#${thread.id} is in Local, so its branch stays as it is — bring it back and block it again to build on #${parent.id}`;
+	if (!parent.branch) return `#${parent.id} has no branch yet, so #${thread.id} doesn't build on it — open #${parent.id} (⏎), then block again`;
+}
+
+/**
+ * Make the thread's branch build on `parent`'s (see stackProblem first). One without commits of its own is
+ * moved onto it; one with commits keeps them where they are, and `tell` is for its claude.
+ */
+async function stackOn(project: Project, thread: Thread, parent: Thread): Promise<{ patch: Partial<Thread>; note: string; tell?: string }> {
+	const base = parent.branch!;
+	const patch = { stackedOn: parent.id, base };
+	if (!thread.branch) return { patch, note: `#${thread.id} branches from ${base}` };
+	if (await restartBranch(project.path, thread, base)) return { patch, note: `moved #${thread.id}'s branch onto ${base}` };
+	return {
+		patch,
+		note: `#${thread.id}'s diff and PR are against ${base} now; u rebases its commits onto it`,
+		tell: `This thread now builds on #${parent.id}'s branch ${base}: its diff and PR are against that branch. Its commits still sit on ${thread.base ?? 'the default branch'} until the user rebases them onto ${base} (u on the board).`,
+	};
+}
+
+/** What taking the thread off the one it builds on changes: its base goes back to the default branch. */
+async function unstack(project: Project, thread: Thread): Promise<Partial<Thread>> {
+	if (!thread.branch) return { stackedOn: undefined, base: undefined };
+	return { stackedOn: undefined, base: (await defaultBranch(project.path)) ?? 'main' };
+}
+
+/** Put a message from the board itself in the thread's inbox, for its claude. */
+function tell(store: Store, id: string, text: string) {
+	const message: Message = { from: USER_SENDER, text, ts: new Date().toISOString(), delivered: false };
+	store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === id ? { ...t, inbox: [...(t.inbox ?? []), message] } : t)) }));
 }
 
 /** The threads that moving `id` to Done or archiving it stops being blocked. */
@@ -275,10 +302,20 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	if (request.op === 'add') {
 		const project = state.projects.find(p => p.name === request.project);
 		if (!project) return { id, ok: false, message: `Unknown project "${request.project}"` };
-		const { thread } = addThread(state, { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket });
+		const parent = request.from === undefined ? undefined : state.threads.find(t => t.id === request.from);
+		if (request.from !== undefined && !parent) return { id, ok: false, message: `No thread #${request.from}` };
+		const fields = { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket };
+		if (parent) {
+			// The new thread isn't anything's blocker yet, so only the blocker's side can be wrong.
+			const planned = { ...fields, id: newThreadId(state), column: 'planned', createdAt: '', updatedAt: '' } as Thread;
+			const problem = blockProblem(state, planned, parent) ?? stackProblem(state, planned, parent);
+			if (problem) return { id, ok: false, message: problem };
+		}
+		const stacked = parent && { blockedBy: [parent.id], stackedOn: parent.id, base: parent.branch };
+		const { thread } = addThread(state, { ...fields, ...stacked });
 		store.update(s => ({ ...s, threads: [...s.threads, thread] }));
 		const ran = await runNewThreadHook(project, thread);
-		const created = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}`;
+		const created = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}${parent ? `, building on #${parent.id}'s ${parent.branch}` : ''}`;
 		return { id, ok: true, message: ran ? `${created}; ${ran}` : created, thread: thread.id };
 	}
 	const thread = state.threads.find(t => t.id === request.thread);
@@ -328,21 +365,31 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		const blocker = request.blocker === undefined ? undefined : state.threads.find(t => t.id === request.blocker);
 		if (request.blocker !== undefined && !blocker) return { id, ok: false, message: `No thread #${request.blocker}` };
 		const waiting = thread.blockedBy ?? [];
+		const patchThread = (patch: Partial<Thread>) =>
+			store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t)) }));
 		if (request.op === 'unblock') {
-			if (!blocker) {
-				if (!waiting.length) return done(`#${thread.id} isn't blocked`);
-				store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, blockedBy: undefined, updatedAt: new Date().toISOString() } : t)) }));
-				return done(`#${thread.id} is no longer blocked`);
-			}
-			if (!waiting.includes(blocker.id)) return done(`#${thread.id} isn't blocked by #${blocker.id}`);
-			store.update(s => toggleBlocker(s, thread.id, blocker.id).state);
-			return done(`#${thread.id} is no longer blocked by #${blocker.id}`);
+			if (blocker && !waiting.includes(blocker.id)) return done(`#${thread.id} isn't blocked by #${blocker.id}`);
+			if (!blocker && !waiting.length) return done(`#${thread.id} isn't blocked`);
+			const rest = blocker ? waiting.filter(b => b !== blocker.id) : [];
+			// Taking off the thread it builds on puts its base back on the default branch.
+			const unstacked = thread.stackedOn && !rest.includes(thread.stackedOn) ? await unstack(project, thread) : {};
+			patchThread({ blockedBy: rest.length ? rest : undefined, ...unstacked });
+			const note = 'base' in unstacked && unstacked.base ? ` · its base is ${unstacked.base} again` : '';
+			return done(`#${thread.id} is no longer blocked${blocker ? ` by #${blocker.id}` : ''}${note}`);
 		}
-		if (waiting.includes(blocker!.id)) return done(`#${thread.id} is already blocked by #${blocker!.id}`);
-		const problem = blockProblem(state, thread, blocker!);
+		const already = waiting.includes(blocker!.id);
+		const problem = !already && blockProblem(state, thread, blocker!);
 		if (problem) return { id, ok: false, message: problem };
-		store.update(s => toggleBlocker(s, thread.id, blocker!.id).state);
-		return done(`#${thread.id} is blocked by #${blocker!.id} ${blocker!.title}`);
+		// A blocker in the same project is one to build on, so the thread's branch stacks on its branch when it can.
+		const sameProject = blocker!.project === thread.project;
+		const cantStack = sameProject && thread.stackedOn !== blocker!.id ? stackProblem(state, thread, blocker!) : undefined;
+		const stacks = sameProject && thread.stackedOn !== blocker!.id && !cantStack;
+		if (already && !stacks) return done(`#${thread.id} is already blocked by #${blocker!.id}`);
+		const stacked = stacks ? await stackOn(project, thread, blocker!) : undefined;
+		patchThread({ blockedBy: already ? waiting : [...waiting, blocker!.id], ...stacked?.patch });
+		if (stacked?.tell) tell(store, thread.id, stacked.tell);
+		const note = stacked ? ` · builds on its branch: ${stacked.note}` : cantStack ? ` · ${cantStack}` : '';
+		return done(`#${thread.id} is blocked by #${blocker!.id} ${blocker!.title}${note}`);
 	}
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem =

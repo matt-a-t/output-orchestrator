@@ -85,7 +85,8 @@ ${THREAD_USAGE}
 - **Follow-up work goes in a new thread.** When you notice a bug, cleanup or feature outside this thread's
   plan, don't do it here: file it with \`oo thread add <title> --plan-file - <<'EOF'\` and a plan saying what
   and why, then tell the user its id. Keep the title short; put the detail in the plan. If it's for a Jira
-  ticket or GitHub issue, pass \`--ticket <key>\`: the thread's branch and PR are named after it.
+  ticket or GitHub issue, pass \`--ticket <key>\`: the thread's branch and PR are named after it. If it builds on this
+  thread's unmerged work, pass \`--from <this thread's id>\` so its branch starts from this one's.
 - **Tell related threads what they need to know.** Other threads' claudes can't see your work. When it changes
   something another thread in \`oo thread list\` depends on (an API, a shared file, a decision you both rely on), or
   you find something that matters to its plan, send it a message: \`oo thread send <id> --file - <<'EOF'\`. Make it

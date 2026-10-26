@@ -7,9 +7,10 @@ import { applyRequest, approvedTodo, blockers, inDir, threadDir, todoProgress, t
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
-export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>]
+export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>] [--from <id>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
                               --ticket: the Jira key (AV-123, or 123 for the project's prefix) or GitHub issue (#45) it's for
+                              --from: build on that thread's branch, blocked by it until it lands (its project by default)
   oo thread list [--json] [--project <name>] [--column <column>]
   oo thread show [id] [--json]
   oo thread move [id] <column>
@@ -34,7 +35,9 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               --wake resumes a closed one to hear it now (needs the board running).
   oo thread inbox [id]        the messages other threads have sent this one
   oo thread block [id] <blocker>
-                              record that the thread waits on another; it's dropped once that one reaches Done or is archived
+                              record that the thread waits on another; it's dropped once that one reaches Done or is archived.
+                              A blocker in the same project with a branch is one to build on: the thread's branch moves onto
+                              it if it has no commits yet, and its diff and PR are against that branch either way
   oo thread unblock [id] (<blocker> | --all)
                               stop waiting on that thread, or with --all on any
   oo thread draft [id] commit --message <message>
@@ -197,14 +200,16 @@ async function run(args: string[], ctx: Context): Promise<number> {
 	const [sub, ...rest] = args.map(sanitize);
 	const state = loadState(join(ctx.dir, 'state.json'));
 	if (sub === 'add') {
-		const { positional, flag } = parseArgs(rest, ['project', 'plan-file', 'ticket'], []);
+		const { positional, flag } = parseArgs(rest, ['project', 'plan-file', 'ticket', 'from'], []);
 		const title = positional.join(' ').trim();
 		if (!title) throw new UsageError('Give the thread a title');
 		const planFile = flag('plan-file');
 		const plan = planFile === undefined ? '' : readInput(ctx, planFile).trim();
-		const project = resolveProject(state, ctx.cwd, flag('project'));
+		const from = flag('from') === undefined ? undefined : resolveThreadId(state, flag('from'), ctx.env, ctx.cwd);
+		// Building on another thread means being in its project.
+		const project = resolveProject(state, ctx.cwd, flag('project') ?? state.threads.find(t => t.id === from)?.project);
 		const ticket = await resolveTicket(state.projects.find(p => p.name === project)!, flag('ticket'));
-		const response = await change({ op: 'add', project, title, plan, ticket }, ctx);
+		const response = await change({ op: 'add', project, title, plan, ticket, from }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.thread);
 		return 0;
