@@ -14,6 +14,9 @@ import { createWorktree, inWorktree } from './worktree.js';
 
 export type PermissionMode = 'plan' | 'auto';
 
+/** What w tells a thread's claude that has never run, e.g. one made with no initial prompt. */
+const START_PROMPT = 'This is a new oo thread. Run `oo thread show` to read its title, plan, ticket and checkpoints, then get started on it.';
+
 /** Claude session ID to resume the thread with, if its transcript still exists. */
 export function resumeId(thread: Thread): string | undefined {
 	if (thread.sessionId && thread.transcriptPath && existsSync(thread.transcriptPath)) return thread.sessionId;
@@ -101,7 +104,10 @@ export const openThread = (board: Board, thread: Thread) =>
 		await launchClaude(board, thread, cwd);
 	});
 
-/** Resume the thread's claude in the background if it's closed, then tell it `prompt` (keep going, by default); returns whether it did. */
+/**
+ * Resume the thread's claude in the background if it's closed, then tell it `prompt`: by default, keep going,
+ * or, for a claude that has never run, start on the thread. Returns whether it did.
+ */
 export async function wakeThread(board: Board, thread: Thread, prompt?: string): Promise<boolean> {
 	const project = board.project(thread.project);
 	if (!project) {
@@ -110,7 +116,10 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string):
 	}
 	const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
 	const window = threadWindowName(thread.id);
-	if (!(await windowNames()).includes(window)) {
+	const open = (await windowNames()).includes(window);
+	// Nothing to resume, so the claude starts fresh (as in launchClaude).
+	const fresh = !open && !resumeId(thread);
+	if (!open) {
 		const starts = board.sessionStarts.get(thread.id) ?? 0;
 		await launchClaude(board, thread, cwd, { background: true });
 		// It may be waiting on "resume anyway?" instead.
@@ -126,8 +135,8 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string):
 		// SessionStart comes a little before the prompt takes input.
 		await sleep(1000);
 	}
-	await pasteInto(window, prompt ?? (project.wakePrompt || DEFAULT_WAKE_PROMPT));
-	board.setMessage(`Woke #${thread.id}`);
+	await pasteInto(window, prompt ?? (fresh ? START_PROMPT : project.wakePrompt || DEFAULT_WAKE_PROMPT));
+	board.setMessage(fresh && !prompt ? `Started #${thread.id} on its thread` : `Woke #${thread.id}`);
 	return true;
 }
 
