@@ -38,7 +38,7 @@ const HOOK_WHERE: Record<ProjectHook, string> = {
 // Shown at the bottom while the field is selected.
 const FIELD_HINTS: Partial<Record<Field, string>> = {
 	worktrees: 'off: threads run in the project directory itself, several at once, with no branch, diffs or PR; changing it affects new threads only  ',
-	wakePrompt: 'pasted into claude by w / W on the board; empty uses the default  ',
+	wakePrompt: 'pasted into a resumed claude by w / W on the board; empty uses the default  ',
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
 	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',

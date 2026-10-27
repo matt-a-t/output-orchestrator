@@ -10,7 +10,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['H/L', 'move the thread a column (H: archived → Done)'],
 			['J/K', 'reorder within its column'],
 			['⏎', 'open (or resume) its claude'],
-			['w / W', 'wake it / every thread closed mid-work ("keep going")'],
+			['w / W', 'wake it ("keep going", or start it on its thread) / every thread closed mid-work'],
 			['u', 'rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude)'],
 			['n', 'new thread (form)'],
 			['e', 'edit the thread'],
