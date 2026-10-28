@@ -379,6 +379,12 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));
 		return done(`Saved #${thread.id}'s plan`);
 	}
+	if (request.op === 'priority') {
+		const now = new Date().toISOString();
+		const patch = withPriority(request.priority);
+		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch, updatedAt: now } : t)) }));
+		return done(`#${thread.id} is ${request.priority} priority`);
+	}
 	if (request.op === 'draft') {
 		const drafts = withDrafts(thread.drafts, request);
 		const now = new Date().toISOString();

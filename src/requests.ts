@@ -6,7 +6,7 @@ import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { JsonlReader } from './jsonl.js';
-import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Thread, type TodoStatus } from './state.js';
+import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Priority, type Thread, type TodoStatus } from './state.js';
 
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
@@ -18,6 +18,7 @@ export type Request =
 	// Board-only too (it pushes, opens the PR and runs hooks); without a body, claude drafts the PR, and the title too unless given.
 	| { id: string; op: 'pr'; thread: string; title?: string; body?: string }
 	| { id: string; op: 'plan'; thread: string; plan: string }
+	| { id: string; op: 'priority'; thread: string; priority: Priority }
 	// Save (or with null, clear) the messages the commit and PR forms open with; one left out stays as it is.
 	| { id: string; op: 'draft'; thread: string; commit?: string | null; pr?: { title: string; body: string } | null }
 	| { id: string; op: 'todos'; thread: string; subjects: string[] }
@@ -69,7 +70,7 @@ export function boardRunning(dir = DATA_DIR): boolean {
 	}
 }
 
-const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'draft', 'todos', 'todo', 'send', 'delivered', 'block', 'unblock'] as const;
+const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'priority', 'draft', 'todos', 'todo', 'send', 'delivered', 'block', 'unblock'] as const;
 // Doesn't compile if an op is missing above: the board would refuse its requests as unknown.
 const allOps: [Exclude<Request['op'], (typeof REQUEST_OPS)[number]>] extends [never] ? true : never = true;
 void allOps;

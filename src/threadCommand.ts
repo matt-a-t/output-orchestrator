@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
-import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, blockers, inDir, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
+import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { applyRequest, approvedTodo, blockers, inDir, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
@@ -25,6 +25,8 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               or bring it back (no direction: toggle, like t on the board). Needs the board running.
   oo thread plan [id] --plan-file <path>|-
                               replace the thread's plan
+  oo thread priority [id] <${PRIORITIES.join('|')}>
+                              high threads sit at the top of their column on the board, low ones at the bottom
   oo thread todo [id] set --file <path>|-
                               replace the thread's checkpoints, one per line (items already on it keep their status)
   oo thread todo [id] <n> <${TODO_STATUSES.join('|')}>
@@ -169,11 +171,13 @@ function where(t: Thread): string {
 
 function summary(state: State, t: Thread): string {
 	const waiting = blockers(state, t).map(b => `#${b.id}`).join(',');
-	return `#${t.id}\t${where(t)}${waiting ? ` ⧗${waiting}` : ''}\t${t.project}\t${t.title}`;
+	const mark = PRIORITY_MARKS[priorityOf(t)];
+	return `#${t.id}\t${where(t)}${mark ? ` ${mark}` : ''}${waiting ? ` ⧗${waiting}` : ''}\t${t.project}\t${t.title}`;
 }
 
 function details(state: State, t: Thread): string {
 	const lines = [`#${t.id} ${t.title}`, `column:  ${where(t)}`, `project: ${t.project}`];
+	if (t.priority) lines.push(`priority: ${t.priority}`);
 	for (const b of blockers(state, t)) lines.push(`blocked: #${b.id} ${b.title} (${where(b)})`);
 	if (t.ticket) lines.push(`ticket:  ${t.ticket.key}${t.ticket.url ? ` ${t.ticket.url}` : ''}`);
 	if (t.branch) lines.push(`branch:  ${t.branch}${t.base ? ` (from ${t.base})` : ''}`);
@@ -286,6 +290,14 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (!boardRunning(ctx.dir)) return fail('Opening a PR needs the board running');
 		// claude drafting the description and the push can take a few minutes.
 		return report(await sendRequest({ op: 'pr', thread, title, body }, { dir: ctx.dir, timeoutMs: 5 * 60_000 }));
+	}
+	if (sub === 'priority') {
+		const { positional } = parseArgs(rest, [], []);
+		if (positional.length < 1 || positional.length > 2) throw new UsageError(`oo thread priority [id] <${PRIORITIES.join('|')}>`);
+		const priority = positional.at(-1)!.toLowerCase();
+		if (!PRIORITIES.includes(priority as Priority)) throw new UsageError(`Unknown priority "${priority}"; one of ${PRIORITIES.join(', ')}`);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
+		return report(await change({ op: 'priority', thread, priority: priority as Priority }, ctx));
 	}
 	if (sub === 'plan') {
 		const { positional, flag } = parseArgs(rest, ['plan-file'], []);

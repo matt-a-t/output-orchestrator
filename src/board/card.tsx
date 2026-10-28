@@ -1,6 +1,6 @@
 import { Box, Text } from 'ink';
 import type { PrStatus } from '../github.js';
-import type { Column, Project, Thread } from '../state.js';
+import { PRIORITY_COLORS, PRIORITY_MARKS, type Column, type Project, type Thread } from '../state.js';
 import type { Status } from '../status.js';
 import { todosDone, undelivered } from '../threads.js';
 
@@ -70,12 +70,12 @@ export function Card({ thread: t, selected, project, live, status, resumable, st
 				<Text color={badgeColor}>{badge} </Text>
 				<Text bold>#{t.id} </Text>
 				<Text color={color}>{project?.abbrev || t.project}</Text>
-				{t.priority === 'high' ? (
-					<Text color="red" bold>
-						{' '}▲
+				{t.priority ? (
+					<Text color={PRIORITY_COLORS[t.priority]} bold={t.priority === 'high'}>
+						{' '}
+						{PRIORITY_MARKS[t.priority]}
 					</Text>
 				) : null}
-				{t.priority === 'low' ? <Text color="gray"> ▽</Text> : null}
 				{unreviewed && !working ? (
 					<Text color="magenta" bold>
 						{' '}±

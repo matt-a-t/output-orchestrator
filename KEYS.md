@@ -18,7 +18,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `B` | blocked by another thread: move to it and `⏎` (again unpicks it, `⏎` on the thread itself clears them all, `esc` cancels; `oo thread block` from the shell) |
 | `F` | straight to Done |
 | `x` | archive |
-| `!` | cycle its priority: normal → high (`▲`, top of its column) → low (`▽`, bottom) |
+| `!` | cycle its priority: normal → high (`▲`, top of its column) → low (`▽`, bottom); `oo thread priority` from the shell |
 | `C` | cycle its colour |
 | `p` | filter by project |
 | `/` | search the id, title, plan, ticket, branch and PR as you type; `⏎` keeps it, `esc` drops it |

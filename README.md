@@ -58,7 +58,7 @@ A **thread** is one piece of work: a git worktree, a branch, possibly a PR, and 
 that worked on it. Its columns are **Planned → Active → Polish → PR → Done**. `H` / `L` move the
 selected thread between columns, and `J` / `K` reorder it within one. `!` gives it a priority: high
 threads (`▲`) sit at the top of their column and low ones (`▽`) at the bottom, and `J` / `K` reorder
-threads among those of the same priority.
+threads among those of the same priority. `oo thread priority [id] <high|normal|low>` sets it from the shell.
 
 Leaving Planned (or opening a thread) gives it its own worktree and branch (`av-123-<title>` from its ticket, or `oo/<title>` without one),
 under `~/.local/share/output-orchestrator/worktrees/`, and claude runs there. If a thread in
@@ -296,7 +296,7 @@ when a message is worth sending and to reply only when there's something to say.
 
 ### From the command line
 
-`oo thread add|list|show|move|local|pr|plan|todo|send|inbox|block|unblock` reads and changes the board from a shell, and from inside a
+`oo thread add|list|show|move|local|pr|plan|priority|todo|send|inbox|block|unblock` reads and changes the board from a shell, and from inside a
 thread's claude, where the thread id defaults to that thread. Run `oo help` to see them all.
 claude learns these commands from an `oo` skill that the board installs (see below), so you can
 ask a thread's claude to file follow-up work as a new thread, or to tell another thread about a change.

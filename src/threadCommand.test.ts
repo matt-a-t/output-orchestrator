@@ -243,6 +243,24 @@ test('plan replaces the thread\'s plan', async t => {
 	assert.equal(await threadCommand(['plan', '1'], ctx), 1);
 });
 
+test('priority sets the thread\'s priority, normal clearing it, and list and show mark it', async t => {
+	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const output = capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	const priority = () => loadState(join(dir, 'state.json')).threads[0]!.priority;
+	assert.equal(await threadCommand(['priority', 'HIGH'], ctx), 0);
+	assert.equal(priority(), 'high');
+	assert.equal(await threadCommand(['list'], ctx), 0);
+	assert.equal(await threadCommand(['show'], ctx), 0);
+	assert.match(output.out(), /#1 is high priority\n#1\tPLANNED ▲\t[^]*priority: high/);
+	assert.equal(await threadCommand(['priority', '1', 'normal'], ctx), 0);
+	assert.equal(priority(), undefined);
+	assert.equal(await threadCommand(['priority', 'urgent'], ctx), 1);
+	assert.match(output.err(), /Unknown priority "urgent"[^]*usage:/);
+	// Only its own thread, like the other changes.
+	assert.equal(await threadCommand(['priority', '2', 'low'], ctx), 1);
+});
+
 test('approving a Planned thread\'s plan saves it and moves the thread to Active', async () => {
 	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two', column: 'polish', plan: 'kept' }]);
 	const input = (cwd: string) => ({ cwd, tool_name: 'ExitPlanMode', tool_input: { plan: '# Do it\n' } });
