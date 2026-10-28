@@ -16,7 +16,8 @@ import { inWorktree } from './worktree.js';
 /**
  * Approve the step: stage everything in `cwd`, have claude draft the message, and commit it once
  * it's edited in the commit form. A claude at its prompt is then told to move on (or stop, after the
- * last step), with any comments from the form; any other claude gets that as a message in its inbox.
+ * last step), with any comments from the form; a busy claude gets that as a message in its inbox, and a
+ * closed one is woken to hear it.
  */
 export async function approveStep(board: Board, cwd: string, thread: Thread) {
 	if (!(await stageAll(cwd))) return board.setMessage('Nothing to commit');
@@ -65,7 +66,7 @@ async function finishStep(board: Board, thread: Thread, waiting: boolean, commit
 	const open = (await windowNames()).includes(window);
 	const told = !!prompt && waiting && open;
 	if (told) await pasteInto(window, prompt);
-	const said = prompt ? await tellClaude(board, thread, prompt, told ? 'told' : open ? 'busy' : 'closed') : '';
+	const said = !prompt ? '' : open ? await tellClaude(board, thread, prompt, told ? 'told' : 'busy') : wakeToTell(board, thread, prompt);
 	return `${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${said}`;
 }
 
@@ -78,6 +79,18 @@ async function tellClaude(board: Board, thread: Thread, prompt: string, claude: 
 	const sent = await applyRequest(board.store, { id: 'approve', op: 'send', thread: thread.id, from: USER_SENDER, text: prompt });
 	if (!sent.ok) return ` · ⚠ claude not told: ${sent.message}`;
 	return ` · ✉ claude hears it ${claude === 'busy' ? 'when its turn ends' : 'when it next starts'}`;
+}
+
+/**
+ * Resume a closed claude in the background to hear `prompt` (it may have been closed for sitting idle, see
+ * useIdleClose), putting it in the inbox instead if it doesn't start, e.g. while "resume anyway?" is asked.
+ * Returns the end of the board's message about it.
+ */
+function wakeToTell(board: Board, thread: Thread, prompt: string): string {
+	void wakeThread(board, thread, prompt)
+		.then(async woke => void (woke || (await tellClaude(board, thread, prompt, 'closed'))))
+		.catch(err => board.setMessage(`✗ Couldn't wake #${thread.id}: ${err instanceof Error ? err.message : String(err)}`));
+	return ' · waking claude to hear it';
 }
 
 /**
@@ -101,19 +114,17 @@ export const diffThread = (board: Board, thread: Thread, kind: 'step' | 'thread'
 		{ git: true },
 	);
 
-/** c: comment on the diff in vim and send the comments to the thread's claude. */
+/** c: comment on the diff in vim and send the comments to the thread's claude, waking it if it's closed. */
 export const commentOnDiff = (board: Board, thread: Thread) =>
 	inWorktree(
 		board,
 		thread,
 		async cwd => {
 			const window = threadWindowName(thread.id);
-			// Checked first so notes aren't written only to be thrown away.
-			if (!(await windowNames()).includes(window)) return board.setMessage(`#${thread.id} has no claude window — open it with ⏎ first`);
 			const feedback = await reviewDiff(cwd, thread);
 			if (feedback === null) return board.setMessage('No changes');
 			if (!feedback) return board.setMessage('No comments');
-			if (!(await windowNames()).includes(window)) return board.setMessage(`✗ #${thread.id}'s claude window closed; comments not sent`);
+			if (!(await windowNames()).includes(window)) return board.setMessage(`Sent comments to #${thread.id}${wakeToTell(board, thread, feedback)}`);
 			await pasteInto(window, feedback);
 			board.setMessage(`Sent comments to #${thread.id}`);
 		},
