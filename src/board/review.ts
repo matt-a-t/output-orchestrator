@@ -20,10 +20,7 @@ import { inWorktree } from './worktree.js';
  */
 export async function approveStep(board: Board, cwd: string, thread: Thread) {
 	if (!(await stageAll(cwd))) return board.setMessage('Nothing to commit');
-	const window = threadWindowName(thread.id);
-	// Stopped, or just reopened (idle): not one that's working or waiting on a question, where the paste would land as an answer.
-	const status = board.statuses()[thread.id];
-	const waiting = (status === 'stopped' || status === 'idle') && (await windowNames()).includes(window);
+	const waiting = await atPrompt(board, thread);
 	let form: CommitForm | null;
 	const progress = progressPopup(' commit ', COMMIT_FORM);
 	try {
@@ -35,6 +32,27 @@ export async function approveStep(board: Board, cwd: string, thread: Thread) {
 	} finally {
 		await progress.close();
 	}
+	const done = await finishStep(board, thread, waiting, form.message, form.notes);
+	board.setMessage(`Committed step on ${thread.branch ?? cwd}${done}${form.notes ? ' (with your comments)' : ''}`);
+}
+
+/** y after d on a step with no changes: tick off its checkpoint and tell claude, with nothing to commit. */
+async function approveWithoutChanges(board: Board, cwd: string, thread: Thread) {
+	const done = await finishStep(board, thread, await atPrompt(board, thread));
+	board.setMessage(`Marked step done on ${thread.branch ?? cwd}${done}`);
+}
+
+/** Stopped, or just reopened (idle): not one that's working or waiting on a question, where the paste would land as an answer. */
+async function atPrompt(board: Board, thread: Thread): Promise<boolean> {
+	const status = board.statuses()[thread.id];
+	return (status === 'stopped' || status === 'idle') && (await windowNames()).includes(threadWindowName(thread.id));
+}
+
+/**
+ * The rest of approving a step, committed or not: tick off its checkpoint, drop its commit draft and
+ * tell claude. Returns the end of the board's message about both.
+ */
+async function finishStep(board: Board, thread: Thread, waiting: boolean, commitSubject?: string, notes = ''): Promise<string> {
 	// Approving the step is what ticks off the checkpoint claude handed over.
 	const stored = board.state().threads.find(t => t.id === thread.id);
 	const todos = stored?.todos ?? [];
@@ -42,12 +60,13 @@ export async function approveStep(board: Board, cwd: string, thread: Thread) {
 	const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
 	// The draft was for this step, so the next one can't reuse it.
 	board.updateThread(thread.id, { todos: ticked, drafts: withDrafts(stored?.drafts, { commit: null }) });
-	const prompt = approvedPrompt(ticked, item, form.message, form.notes);
+	const prompt = approvedPrompt(ticked, item, commitSubject, notes);
+	const window = threadWindowName(thread.id);
 	const open = (await windowNames()).includes(window);
 	const told = !!prompt && waiting && open;
 	if (told) await pasteInto(window, prompt);
 	const said = prompt ? await tellClaude(board, thread, prompt, told ? 'told' : open ? 'busy' : 'closed') : '';
-	board.setMessage(`Committed step on ${thread.branch ?? cwd}${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${said}${form.notes ? ' (with your comments)' : ''}`);
+	return `${item === -1 ? '' : ` · ✓ ${todos[item]!.subject}`}${said}`;
 }
 
 /**
@@ -61,14 +80,22 @@ async function tellClaude(board: Board, thread: Thread, prompt: string, claude: 
 	return ` · ✉ claude hears it ${claude === 'busy' ? 'when its turn ends' : 'when it next starts'}`;
 }
 
-/** d / D: the step's (uncommitted) or whole thread's diff, approving the step from it if asked. */
+/**
+ * d / D: the step's (uncommitted) or whole thread's diff, approving the step from it if asked. A step
+ * with no changes but a checkpoint to tick off can be approved without them.
+ */
 export const diffThread = (board: Board, thread: Thread, kind: 'step' | 'thread') =>
 	inWorktree(
 		board,
 		thread,
 		async cwd => {
 			const result = await showDiff(cwd, kind, thread);
-			if (result === 'empty') board.setMessage(`No ${kind} changes`);
+			if (result === 'empty') {
+				const todos = board.state().threads.find(t => t.id === thread.id)?.todos ?? [];
+				const item = approvedTodo(todos);
+				if (kind === 'step' && item !== -1) return board.ask(`No step changes — mark "${todos[item]!.subject}" done?`, () => void approveWithoutChanges(board, cwd, thread));
+				board.setMessage(`No ${kind} changes`);
+			}
 			if (result === 'approved') await approveStep(board, cwd, thread);
 		},
 		{ git: true },

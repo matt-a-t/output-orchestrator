@@ -431,21 +431,24 @@ export function todoBriefing(todos: Todo[]): string | undefined {
 }
 
 /**
- * What claude is told once its step is approved and committed: which checkpoint that was
- * (`ticked`, -1 for none), the user's comments from the commit form and what to do next. `todos` are
- * the checkpoints after ticking it off. Undefined after the last one with no comments: claude has
+ * What claude is told once its step is approved, and committed unless there's no `commitSubject` (a
+ * checkpoint approved with no changes): which checkpoint that was (`ticked`, -1 for none), the user's
+ * comments from the commit form and what to do next. `todos` are the checkpoints after ticking it off. Undefined after the last one with no comments: claude has
  * already stopped, so there's nothing to tell it.
  */
-export function approvedPrompt(todos: Todo[], ticked: number, commitSubject: string, notes = ''): string | undefined {
+export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: string, notes = ''): string | undefined {
 	const next = todos.findIndex(t => t.status !== 'done');
 	if (next === -1 && !notes) return;
-	const done = ticked === -1 ? 'The user approved your changes and committed them' : `The user approved and committed your step "${todos[ticked]!.subject}"`;
+	const done =
+		commitSubject === undefined
+			? `The user approved your step "${todos[ticked]?.subject}" with no changes to commit.`
+			: `${ticked === -1 ? 'The user approved your changes and committed them' : `The user approved and committed your step "${todos[ticked]!.subject}"`} (commit: ${commitSubject}).`;
 	const then =
 		next !== -1
 			? `Move on to the next checkpoint: ${next + 1}. ${todos[next]!.subject}. Mark it active with \`oo thread todo ${next + 1} active\`.`
 			: 'That was the last step: open its PR (`oo thread pr`) only when the user asks.';
 	const comments = notes && `The user's comments, to handle before ${next === -1 ? 'you stop' : 'moving on'}: "${notes}".`;
-	return [`${done} (commit: ${commitSubject}).`, comments, then].filter(Boolean).join(' ');
+	return [done, comments, then].filter(Boolean).join(' ');
 }
 
 /**

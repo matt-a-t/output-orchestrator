@@ -132,6 +132,9 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   comments, and told to move on to the next checkpoint, or to stop if that was the last one: right
   away if it's at its prompt (stopped ✓, or just reopened), otherwise as a message in its inbox,
   put to it when its turn ends or when it next starts.
+- A step that's done without changing anything (an investigation, say) has no diff to approve, so
+  `d` on it offers to mark its checkpoint done instead (y to confirm). Nothing is committed, and
+  claude is told just as if you'd approved a commit.
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels).
