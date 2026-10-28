@@ -6,12 +6,14 @@ import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart }
 import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../github.js';
 import { runColumnHook } from '../hooks.js';
 import { showPr } from '../review.js';
-import type { Thread } from '../state.js';
-import { unblockedNote, unstackChildren, withDrafts } from '../threads.js';
+import { USER_SENDER, type Thread } from '../state.js';
+import { followUpPrompt } from '../threadCommand.js';
+import { applyRequest, followUps, unblockedNote, unstackChildren, withDrafts } from '../threads.js';
 import { CLOSED, progressPopup, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
 import { leaveLocalForDone, localProblem } from './local.js';
+import { wakeToHear } from './messages.js';
 import { createWorktree, inWorktree, syncWorktree } from './worktree.js';
 
 /** How opening a PR says how it's going and gets its title and description (null: cancelled). */
@@ -117,7 +119,10 @@ export async function openPrFromBoard(board: Board, thread: Thread) {
 	board.setMessage(ok ? message : `⚠ ${message}`);
 }
 
-/** Record the merge status of the thread's PR, or move the thread to Done (cleaning up its worktree) if it's merged. */
+/**
+ * Record the merge status of the thread's PR, or move the thread on if it's merged: to Follow-up, waking its
+ * claude, if it has after-merge checkpoints left, else to Done (cleaning up its worktree).
+ */
 export async function checkPr(board: Board, thread: Thread) {
 	const project = board.project(thread.project);
 	if (thread.column !== 'pr' || !thread.pr || !project) return;
@@ -145,11 +150,22 @@ export async function checkPr(board: Board, thread: Thread) {
 		}
 	}
 	board.setMerge(({ [thread.id]: _, ...rest }) => rest);
-	const unblocked = unblockedNote(board.state(), thread.id, 'done');
-	board.setColumn(thread.id, 'done');
+	const todos = board.state().threads.find(t => t.id === thread.id)?.todos ?? [];
+	const followUp = followUps(todos).length;
+	const column = followUp ? 'followup' : 'done';
+	const unblocked = unblockedNote(board.state(), thread.id, column);
+	board.setColumn(thread.id, column);
 	const unstacked = await unstackChildren(project, board.store, thread, true).catch(() => undefined);
-	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → Done`, left, unblocked, unstacked].filter(Boolean).join('; '));
-	await syncWorktree(board, { ...thread, local: undefined, column: 'done' }).catch(err => board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
+	const moved = followUp ? `Follow-up (${followUp} after-merge checkpoint${followUp === 1 ? '' : 's'})` : 'Done';
+	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → ${moved}`, left, unblocked, unstacked].filter(Boolean).join('; '));
+	const fail = (err: unknown) => board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+	// Follow-up keeps the worktree (or makes it again, after Local) for its claude to carry on in.
+	await syncWorktree(board, { ...thread, local: undefined, column }).catch(fail);
+	if (!followUp) return;
+	// Through its inbox: an open claude hears it once its turn ends, and a closed one is woken to hear it now.
+	await applyRequest(board.store, { id: 'merged', op: 'send', thread: thread.id, from: USER_SENDER, text: followUpPrompt(todos, thread.pr) });
+	const latest = board.state().threads.find(t => t.id === thread.id);
+	if (latest) await wakeToHear(board, latest).catch(fail);
 }
 
 const REVIEW_DONE: Record<string, string> = { approve: 'Approved', 'request-changes': 'Requested changes on', comment: 'Commented on' };

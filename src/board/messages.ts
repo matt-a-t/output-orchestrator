@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { Request, Response } from '../requests.js';
-import { USER_SENDER, type Message, type State } from '../state.js';
+import { USER_SENDER, type Message, type State, type Thread } from '../state.js';
 import type { Status } from '../status.js';
 import { applyRequest, markDelivered, messagesPrompt, senderLabel, undelivered } from '../threads.js';
 import { pasteInto, threadWindowName, windowNames } from '../tmux.js';
@@ -18,7 +18,16 @@ export async function messageRequest(board: Board, request: Extract<Request, { o
 	if (request.from === USER_SENDER) return { id: request.id, ok: false, message: 'Only the board sends as the user' };
 	const response = await applyRequest(board.store, request);
 	const thread = board.state().threads.find(t => t.id === request.thread);
-	if (!response.ok || !request.wake || !thread || (await windowNames()).includes(threadWindowName(thread.id))) return response;
+	if (!response.ok || !request.wake || !thread || !(await wakeToHear(board, thread))) return response;
+	return { ...response, message: `Sent to #${thread.id}; waking its claude to hear it` };
+}
+
+/**
+ * Resume the thread's claude if it's closed, to hear its waiting messages now; returns whether it's waking.
+ * An open one hears them once its turn ends (see useMessageDelivery).
+ */
+export async function wakeToHear(board: Board, thread: Thread): Promise<boolean> {
+	if ((await windowNames()).includes(threadWindowName(thread.id))) return false;
 	// Delivered by the prompt, so its claude's start doesn't brief it with them too; back to waiting if it doesn't wake.
 	const sent = undelivered(thread.inbox);
 	const isSent = (m: Message) => sent.some(s => s.ts === m.ts && s.text === m.text);
@@ -29,7 +38,7 @@ export async function messageRequest(board: Board, request: Extract<Request, { o
 		}));
 	setDelivered(true);
 	void wakeThread(board, thread, messagesPrompt(board.state(), sent)).then(woke => woke || setDelivered(false));
-	return { ...response, message: `Sent to #${thread.id}; waking its claude to hear it` };
+	return true;
 }
 
 /**
