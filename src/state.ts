@@ -70,6 +70,13 @@ export const UNVERIFIED_SENDER = 'unverified';
 const MessageSchema = z.object({ from: z.string(), text: z.string(), ts: z.string(), delivered: z.boolean() });
 export type Message = z.infer<typeof MessageSchema>;
 
+/** How soon a thread wants doing: each column shows high first and low last, in J/K order within each. */
+export const PRIORITIES = ['high', 'normal', 'low'] as const;
+export type Priority = (typeof PRIORITIES)[number];
+// How cards and `oo thread list` mark them: a red ▲ for high, a grey ▽ for low.
+export const PRIORITY_MARKS: Record<Priority, string> = { high: '▲', normal: '', low: '▽' };
+export const PRIORITY_COLORS: Record<Priority, string | undefined> = { high: 'red', normal: undefined, low: 'gray' };
+
 export const TODO_MARKS: Record<TodoStatus, string> = { pending: '○', active: '▸', review: '●', done: '✓' };
 
 const ThreadSchema = z.preprocess(
@@ -85,6 +92,8 @@ const ThreadSchema = z.preprocess(
 		// In Local: the branch is checked out in the project's own checkout, and claude works there (one per project).
 		local: z.boolean().optional(),
 		color: z.enum(COLORS).optional(),
+		// Left out for normal, which most threads are.
+		priority: z.enum(PRIORITIES).optional(),
 		// Claude's session ID for the thread's latest run, reported by the SessionStart hook; used to resume.
 		sessionId: z.string().optional(),
 		transcriptPath: z.string().optional(),

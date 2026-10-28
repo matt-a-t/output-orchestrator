@@ -18,9 +18,9 @@ import { fetchReviews, ReviewList, type Review } from './board/reviewList.js';
 import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
-import { COLORS, COLUMNS, type Column, type Project, type Thread } from './state.js';
+import { COLORS, COLUMNS, PRIORITIES, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
-import { applyRequest, blockers, matchesSearch, setColumn as moveTo } from './threads.js';
+import { applyRequest, blockers, byPriority, matchesSearch, priorityOf, setColumn as moveTo, withPriority } from './threads.js';
 import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
 
 export function App() {
@@ -79,7 +79,7 @@ export function App() {
 
 	const visible = (t: Thread, f = filter, q = search.query, archived = showArchived) =>
 		(archived || t.column !== 'archived') && (!f || t.project === f) && matchesSearch(t, q);
-	const columnThreads = (column: Column, f = filter, q = search.query) => state.threads.filter(t => t.column === column && visible(t, f, q));
+	const columnThreads = (column: Column, f = filter, q = search.query) => byPriority(state.threads.filter(t => t.column === column && visible(t, f, q)));
 
 	const colThreads = columnThreads(shownColumns[cursor.col]!);
 	const row = Math.min(cursor.row, Math.max(0, colThreads.length - 1));
@@ -97,6 +97,10 @@ export function App() {
 	const reorder = (thread: Thread, delta: number) => {
 		const neighbour = colThreads[row + delta];
 		if (!neighbour) return;
+		// The column keeps priorities together, so J/K only moves a thread among its own.
+		if (priorityOf(neighbour) !== priorityOf(thread)) {
+			return setMessage(`⚠ #${thread.id} is at the ${delta < 0 ? 'top' : 'bottom'} of its ${priorityOf(thread)} priority threads — ! changes its priority`);
+		}
 		setState(s => {
 			const threads = [...s.threads];
 			const a = threads.findIndex(t => t.id === thread.id);
@@ -105,6 +109,15 @@ export function App() {
 			return { ...s, threads };
 		});
 		setCursor({ col: cursor.col, row: row + delta });
+	};
+
+	/** !: the next priority (normal, high, low), keeping the cursor on the thread as it moves up or down the column. */
+	const cyclePriority = (thread: Thread) => {
+		const priority = PRIORITIES[(PRIORITIES.indexOf(priorityOf(thread)) + 2) % PRIORITIES.length]!;
+		updateThread(thread.id, withPriority(priority));
+		const column = byPriority(colThreads.map(t => (t.id === thread.id ? { ...t, ...withPriority(priority) } : t)));
+		setCursor({ col: cursor.col, row: column.findIndex(t => t.id === thread.id) });
+		setMessage(`#${thread.id} is ${priority} priority`);
 	};
 
 	const run = async (fn: () => Promise<void>, label = 'waiting for popup') => {
@@ -297,6 +310,7 @@ export function App() {
 			if (selected.column === 'done' || selected.column === 'archived') return setMessage(`⚠ #${selected.id} is finished, so nothing blocks it`);
 			return setPicking(selected.id);
 		}
+		if (input === '!') return cyclePriority(selected);
 		if (input === 'C') {
 			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
 			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });

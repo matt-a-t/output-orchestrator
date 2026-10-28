@@ -4,17 +4,18 @@ import { editPlan } from './editor.js';
 import { hasWorktree, renameBranch, worktreePath } from './git.js';
 import { FieldText, EDITING_HELP, FIELD_HELP, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
-import { COLORS, COLUMN_LABELS, LOCAL_LABEL, type State, type Thread } from './state.js';
+import { COLORS, COLUMN_LABELS, LOCAL_LABEL, PRIORITIES, PRIORITY_COLORS, type Priority, type State, type Thread } from './state.js';
+import { priorityOf, withPriority } from './threads.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
-const FIELDS = ['title', 'ticket', 'project', 'color', 'base', 'plan'] as const;
+const FIELDS = ['title', 'ticket', 'project', 'color', 'priority', 'base', 'plan'] as const;
 type Field = (typeof FIELDS)[number];
-const FIELD_LABELS: Record<Field, string> = { title: 'title', ticket: 'ticket', project: 'project', color: 'colour', base: 'base', plan: 'plan' };
+const FIELD_LABELS: Record<Field, string> = { title: 'title', ticket: 'ticket', project: 'project', color: 'colour', priority: 'priority', base: 'base', plan: 'plan' };
 // undefined means the project's colour.
 const COLOR_CHOICES = [undefined, ...COLORS];
 
-// The ticket is edited as its key.
-type Draft = Pick<Thread, 'title' | 'project' | 'color' | 'plan'> & { base: string; ticket: string };
+// The ticket is edited as its key, and normal priority is spelled out.
+type Draft = Pick<Thread, 'title' | 'project' | 'color' | 'plan'> & { base: string; ticket: string; priority: Priority };
 
 type Props = {
 	state: State;
@@ -30,7 +31,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 	const thread = state.threads.find(t => t.id === threadId);
 	const [draft, setDraft] = useState<Draft | null>(
 		thread
-			? { title: thread.title, ticket: thread.ticket?.key ?? '', project: thread.project, color: thread.color, plan: thread.plan, base: thread.base ?? '' }
+			? { title: thread.title, ticket: thread.ticket?.key ?? '', project: thread.project, color: thread.color, priority: priorityOf(thread), plan: thread.plan, base: thread.base ?? '' }
 			: null,
 	);
 	const [field, setField] = useState(0);
@@ -56,7 +57,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			if (project?.tracker === 'none') return setMessage(`✗ ${draft.project} has no ticket tracker; set one on the projects screen (P)`);
 			return setMessage(`✗ Not a ${project?.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${draft.ticket.trim()}`);
 		}
-		const fields = { ...draft, title, base: draft.base.trim() || undefined };
+		const fields = { ...draft, title, base: draft.base.trim() || undefined, ...withPriority(draft.priority) };
 		if (key === thread.ticket?.key) {
 			updateThread(thread.id, { ...fields, ticket: thread.ticket });
 			return onClose(`Saved #${thread.id}`);
@@ -109,9 +110,10 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			setField(next.field);
 			return setEdit(next.edit);
 		}
-		if (!delta || (name !== 'project' && name !== 'color')) return;
+		if (!delta || (name !== 'project' && name !== 'color' && name !== 'priority')) return;
 		const step = <T,>(choices: readonly T[], current: T) => choices[loop(choices.indexOf(current), delta, choices.length)]!;
 		if (name === 'color') return setDraft({ ...draft, color: step(COLOR_CHOICES, draft.color) });
+		if (name === 'priority') return setDraft({ ...draft, priority: step(PRIORITIES, draft.priority) });
 		return setDraft({ ...draft, project: step(state.projects.map(p => p.name), draft.project) });
 	});
 
@@ -129,6 +131,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 	const value = (name: Field, active: boolean) => {
 		const choice = (text: string, color?: string) => <Text color={color}>{active ? `‹ ${text} ›` : text}</Text>;
 		if (name === 'project') return choice(draft.project, project?.color);
+		if (name === 'priority') return choice(draft.priority, PRIORITY_COLORS[draft.priority]);
 		if (name === 'color') return draft.color ? choice(draft.color, draft.color) : choice(`project's (${project?.color ?? '?'})`, project?.color);
 		if (name === 'plan') {
 			if (!draft.plan) return <Text dimColor>{active ? '⏎/l to write one' : 'none'}</Text>;
@@ -200,7 +203,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			<Text dimColor>
 				{typeof edit === 'number'
 					? EDITING_HELP
-					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' ? 'h/l change' : FIELDS[field] === 'plan' ? '⏎/l opens $EDITOR' : FIELD_HELP}  ${formHelp('save')}`}
+					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' || FIELDS[field] === 'priority' ? 'h/l change' : FIELDS[field] === 'plan' ? '⏎/l opens $EDITOR' : FIELD_HELP}  ${formHelp('save')}`}
 			</Text>
 		</Box>
 	);

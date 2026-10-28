@@ -5,8 +5,8 @@ import { Box, Text, useInput } from 'ink';
 import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from '../fieldText.js';
 import { runNewThreadHook } from '../hooks.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadSubmit } from '../newThreadForm.js';
-import type { Project, Thread } from '../state.js';
-import { addThread, createWorktree } from '../threads.js';
+import { PRIORITY_COLORS, type Project, type Thread } from '../state.js';
+import { addThread, createWorktree, withPriority } from '../threads.js';
 import { fetchTicket, recentTickets, ticketUrl, type Ticket } from '../tickets.js';
 import type { Board } from './board.js';
 import { launchClaude } from './claude.js';
@@ -66,6 +66,7 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
 	const tickets = recent?.project === form.project ? recent.tickets : null;
 	const value = (field: NewThreadField, active: boolean) => {
 		if (field === 'project') return <Text color={project?.color}>{active ? `‹ ${form.project} ›` : form.project}</Text>;
+		if (field === 'priority') return <Text color={PRIORITY_COLORS[form.priority]}>{active ? `‹ ${form.priority} ›` : form.priority}</Text>;
 		const edit = active ? form.edit : null;
 		if (field === 'ticket') {
 			return (
@@ -85,7 +86,7 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
 	const help =
 		typeof form.edit === 'number'
 			? EDITING_HELP
-			: `${form.field === 'project' ? 'h/l change' : form.field === 'ticket' ? `${FIELD_HELP}  h/l recent` : FIELD_HELP}  ${formHelp('create')}`;
+			: `${form.field === 'project' || form.field === 'priority' ? 'h/l change' : form.field === 'ticket' ? `${FIELD_HELP}  h/l recent` : FIELD_HELP}  ${formHelp('create')}`;
 	return (
 		<Box flexDirection="column" borderStyle="round" borderColor={project?.color} paddingX={1}>
 			<Text bold>New thread</Text>
@@ -127,10 +128,10 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
  * project's new thread hook and start its claude in the background on the initial prompt, if there
  * is one. With a prompt, the worktree comes first so the hook runs in it.
  */
-const submitNewThread = (board: Board, { project: name, ticketKey, ticket: known, title, prompt }: NewThreadSubmit) =>
+const submitNewThread = (board: Board, { project: name, ticketKey, ticket: known, title, prompt, priority }: NewThreadSubmit) =>
 	board.run(async () => {
 		const project = board.project(name)!;
-		const thread = await threadFromForm(board, project, title, ticketKey, known);
+		const thread = await threadFromForm(board, project, { title, ...withPriority(priority) }, ticketKey, known);
 		if (!thread) return;
 		const change = prompt && !thread.cwd ? await createWorktree(project, thread) : undefined;
 		if (change?.patch) board.updateThread(thread.id, change.patch);
@@ -141,22 +142,26 @@ const submitNewThread = (board: Board, { project: name, ticketKey, ticket: known
 		if (ran || prompt) board.setMessage([done, ran, prompt && 'started claude on your prompt'].filter(Boolean).join(' · '));
 	}, ticketKey ? `reading ${ticketKey}` : 'creating thread');
 
-async function threadFromForm(board: Board, project: Project, title: string, ticketKey?: string, known?: Ticket): Promise<Thread | undefined> {
-	if (!ticketKey) return createThread(board, project.name, title);
+async function threadFromForm(board: Board, project: Project, fields: NewFields, ticketKey?: string, known?: Ticket): Promise<Thread | undefined> {
+	const { title } = fields;
+	if (!ticketKey) return createThread(board, project.name, fields);
 	const ticket = await fetchTicket(project, ticketKey).catch((err: unknown) => {
 		board.setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
 		return known;
 	});
 	// Its description stays on the ticket, not the plan: anyone can file an issue, and claude follows plans.
-	if (ticket) return createThread(board, project.name, title || ticket.summary, { ticket: { ...ticket, key: ticketKey } });
+	if (ticket) return createThread(board, project.name, { ...fields, title: title || ticket.summary, ticket: { ...ticket, key: ticketKey } });
 	// Without the ticket there's nothing to title the thread after.
 	if (!title) return void board.setMessage(`✗ Couldn't read ${ticketKey}, so it needs a title — press n to try again`);
 	const url = await ticketUrl(project, ticketKey).catch(() => '');
-	return createThread(board, project.name, title, { ticket: { key: ticketKey, url } });
+	return createThread(board, project.name, { ...fields, ticket: { key: ticketKey, url } });
 }
 
-function createThread(board: Board, project: string, title: string, fields: Partial<Pick<Thread, 'ticket'>> = {}) {
-	const { thread } = addThread(board.state(), { project, title, ...fields });
+// What the form sets on the new thread besides its project.
+type NewFields = Pick<Thread, 'title' | 'priority'> & Partial<Pick<Thread, 'ticket'>>;
+
+function createThread(board: Board, project: string, fields: NewFields) {
+	const { thread } = addThread(board.state(), { project, ...fields });
 	board.setState(s => ({ ...s, threads: [...s.threads, thread] }));
 	board.showAtEnd('planned');
 	const { ticket } = thread;

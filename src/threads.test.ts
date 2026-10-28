@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Thread } from './state.js';
-import { matchesSearch } from './threads.js';
+import { byPriority, matchesSearch, withPriority } from './threads.js';
 
 const thread: Thread = {
 	id: '12',
@@ -25,4 +25,17 @@ test('the search matches the id, title, plan, ticket, branch and PR, ignoring ca
 test('an empty search matches every thread', () => {
 	assert.ok(matchesSearch(thread, ''));
 	assert.ok(matchesSearch(thread, '  '));
+});
+
+test('a column shows high priority first and low last, in J/K order within each', () => {
+	const threads = (['low', undefined, 'high', 'normal', 'low', 'high'] as const).map((priority, i) => ({ ...thread, id: String(i), priority }));
+	assert.deepEqual(
+		byPriority(threads).map(t => t.id),
+		['2', '5', '1', '3', '0', '4'],
+	);
+});
+
+test('normal priority is left out of the thread', () => {
+	assert.deepEqual(withPriority('normal'), { priority: undefined });
+	assert.deepEqual(withPriority('high'), { priority: 'high' });
 });

@@ -8,7 +8,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 |---|---|
 | `h`/`l` `j`/`k` | move (arrows too) |
 | `H`/`L` | move the thread a column (`H` brings an archived one back to Done) |
-| `J`/`K` | reorder within its column |
+| `J`/`K` | reorder within its column, among the threads of its priority |
 | `⏎` | open (or resume) its claude |
 | `w` / `W` | wake it / every thread closed mid-work ("keep going") |
 | `u` | rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude) |
@@ -18,11 +18,12 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `B` | blocked by another thread: move to it and `⏎` (again unpicks it, `⏎` on the thread itself clears them all, `esc` cancels; `oo thread block` from the shell) |
 | `F` | straight to Done |
 | `x` | archive |
+| `!` | cycle its priority: normal → high (`▲`, top of its column) → low (`▽`, bottom); `oo thread priority` from the shell |
 | `C` | cycle its colour |
 | `p` | filter by project |
 | `/` | search the id, title, plan, ticket, branch and PR as you type; `⏎` keeps it, `esc` drops it |
 | `esc` | clear the search, then the project filter |
-| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K` and `C`) |
+| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K`, `!` and `C`) |
 | `i` | import a thread started outside oo |
 | `P` | projects (their hooks and wake prompt) |
 | `?` | all keys |
@@ -67,7 +68,7 @@ once you start editing one, vim-style, so letters are keys until then.
 | Key | |
 |---|---|
 | `j`/`k` `↑`/`↓` `tab` | move between fields (`shift-tab` back too) |
-| `h`/`l` `←`/`→` | on a choice field: change it (project, colour, …). On the new thread's ticket: pick one of your recent tickets |
+| `h`/`l` `←`/`→` | on a choice field: change it (project, colour, priority, …). On the new thread's ticket: pick one of your recent tickets |
 | `i` / `I` | edit a text field, cursor at the end / at the start |
 | `dd` | clear it and edit |
 | `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). On the thread's plan: open `$EDITOR` |
