@@ -21,6 +21,8 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['⚡', 'red', 'PR has conflicts'],
 	['✉', 'cyan', 'messages from other threads, told when claude stops'],
 	['⧗', 'red', 'blocked by another thread (B)'],
+	['▲', 'red', 'high priority (!)'],
+	['▽', 'gray', 'low priority (!)'],
 ];
 
 // The columns and the import list start below the title bar, a header and a rule.
@@ -68,6 +70,12 @@ export function Card({ thread: t, selected, project, live, status, resumable, st
 				<Text color={badgeColor}>{badge} </Text>
 				<Text bold>#{t.id} </Text>
 				<Text color={color}>{project?.abbrev || t.project}</Text>
+				{t.priority === 'high' ? (
+					<Text color="red" bold>
+						{' '}▲
+					</Text>
+				) : null}
+				{t.priority === 'low' ? <Text color="gray"> ▽</Text> : null}
 				{unreviewed && !working ? (
 					<Text color="magenta" bold>
 						{' '}±

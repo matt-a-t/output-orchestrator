@@ -56,7 +56,9 @@ running.
 
 A **thread** is one piece of work: a git worktree, a branch, possibly a PR, and the claude runs
 that worked on it. Its columns are **Planned → Active → Polish → PR → Done**. `H` / `L` move the
-selected thread between columns, and `J` / `K` reorder it within one.
+selected thread between columns, and `J` / `K` reorder it within one. `!` gives it a priority: high
+threads (`▲`) sit at the top of their column and low ones (`▽`) at the bottom, and `J` / `K` reorder
+threads among those of the same priority.
 
 Leaving Planned (or opening a thread) gives it its own worktree and branch (`av-123-<title>` from its ticket, or `oo/<title>` without one),
 under `~/.local/share/output-orchestrator/worktrees/`, and claude runs there. If a thread in

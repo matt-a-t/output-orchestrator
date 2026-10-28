@@ -8,7 +8,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		keys: [
 			['h/l j/k', 'move (arrows too)'],
 			['H/L', 'move the thread a column (H: archived → Done)'],
-			['J/K', 'reorder within its column'],
+			['J/K', 'reorder within its column (among threads of its priority)'],
 			['⏎', 'open (or resume) its claude'],
 			['w / W', 'wake it ("keep going", or start it on its thread) / every thread closed mid-work'],
 			['u', 'rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude)'],
@@ -18,6 +18,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['B', 'blocked by another thread (move to it, ⏎ picks)'],
 			['F', 'straight to Done'],
 			['x', 'archive'],
+			['!', 'cycle its priority (normal, high, low); high sorts to the top of its column, low to the bottom'],
 			['C', 'cycle its colour'],
 			['p', 'filter by project'],
 			['/', 'search (⏎ keeps it, esc drops it)'],

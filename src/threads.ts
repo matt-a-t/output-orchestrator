@@ -4,7 +4,7 @@ import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeW
 import { prState, retargetPr } from './github.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
-import { COLUMN_LABELS, newThreadId, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { COLUMN_LABELS, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
 /** Where the thread's work happens, if it has anywhere yet. */
@@ -103,6 +103,18 @@ export function todoRows(todos: Todo[], rows: number): { start: number; end: num
 		const arrows = (window.start > 0 ? 1 : 0) + (window.end < todos.length ? 1 : 0);
 		if (shown <= 1 || window.end - window.start + arrows <= rows) return window;
 	}
+}
+
+/** The thread's priority, normal when it has none. */
+export const priorityOf = (t: Thread): Priority => t.priority ?? 'normal';
+
+/** The patch that gives a thread `priority`: normal is left out. */
+export const withPriority = (priority: Priority): Pick<Thread, 'priority'> => ({ priority: priority === 'normal' ? undefined : priority });
+
+/** The threads in the order a column shows them: high priority first and low last, keeping their order within each. */
+export function byPriority(threads: Thread[]): Thread[] {
+	const rank = (t: Thread) => PRIORITIES.indexOf(priorityOf(t));
+	return threads.toSorted((a, b) => rank(a) - rank(b));
 }
 
 /** Whether the board's `/` search matches the thread, ignoring case; an empty search matches every thread. */
