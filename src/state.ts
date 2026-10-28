@@ -35,6 +35,8 @@ export const HOOK_LABELS: Record<ProjectHook, string> = {
 export const TRACKERS = ['none', 'github', 'jira'] as const;
 export type Tracker = (typeof TRACKERS)[number];
 
+export const DEFAULT_CLOSE_IDLE_AFTER = 30;
+
 const ProjectSchema = z.object({
 	name: z.string(),
 	// Shown on board cards in place of the name, when set.
@@ -46,6 +48,8 @@ const ProjectSchema = z.object({
 	color: z.enum(COLORS),
 	// What w / W paste into a woken claude; empty means DEFAULT_WAKE_PROMPT.
 	wakePrompt: z.string().default(''),
+	// Minutes a thread's claude can sit stopped before the board closes its window (see useIdleClose); 0 never does.
+	closeIdleAfter: z.number().int().min(0).default(DEFAULT_CLOSE_IDLE_AFTER),
 	hooks: z.partialRecord(z.enum(HOOK_EVENTS), z.string()).default({}),
 	// Where the project's tickets live (see tickets.ts); jira needs the site and the key prefix.
 	tracker: z.enum(TRACKERS).default('none'),
@@ -188,7 +192,7 @@ export function isHome(project: Project, home = homedir()): boolean {
 export function withHome(state: State, home = homedir()): State {
 	if (state.projects.some(p => isHome(p, home))) return state;
 	const name = state.projects.some(p => p.name === 'home') ? '~' : 'home';
-	const project: Project = { name, abbrev: '', path: home, worktrees: false, color: 'white', wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' };
+	const project: Project = { name, abbrev: '', path: home, worktrees: false, color: 'white', wakePrompt: '', closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER, hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' };
 	return { ...state, projects: [...state.projects, project] };
 }
 

@@ -9,6 +9,7 @@ import type { Board } from './board/board.js';
 import { runBinding } from './board/bindings.js';
 import { Columns, newColumnsLayout } from './board/columns.js';
 import { Footer } from './board/footer.js';
+import { useIdleClose } from './board/idle.js';
 import { ImportList, ImportProject } from './board/importPicker.js';
 import { KeysView } from './board/keysView.js';
 import { usePendingLocal } from './board/local.js';
@@ -53,7 +54,7 @@ export function App() {
 	const [showKeys, setShowKeys] = useState(false);
 	// The thread form (e), replacing the board while it's open.
 	const [editing, setEditing] = useState<string | null>(null);
-	const { statuses, statusesRef, sessionStarts } = useStatuses(stateRef, setState);
+	const { statuses, statusesRef, sessionStarts, statusSince } = useStatuses(stateRef, setState);
 	const { liveWindowsRef, refreshWindows } = useLiveWindows();
 	const unreviewed = useUnreviewed(stateRef);
 	useRestoreCarried(stateRef);
@@ -162,6 +163,7 @@ export function App() {
 		setColumn,
 		project: projectByName,
 		statuses: () => statusesRef.current,
+		statusSince,
 		liveWindows: () => liveWindowsRef.current,
 		sessionStarts,
 		refreshWindows,
@@ -181,6 +183,7 @@ export function App() {
 	useRequests(board);
 	usePendingLocal(board, statuses);
 	useMessageDelivery(board, state, statuses);
+	useIdleClose(board);
 	usePrPoll(stateRef, setMerge, thread => checkPr(board, thread));
 
 	/** Open the new-thread form on the filtered or highlighted project. */

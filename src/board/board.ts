@@ -21,6 +21,8 @@ export type Board = {
 	setColumn: (id: string, column: Column, patch?: Partial<Thread>) => void;
 	project: (name: string) => Project | undefined;
 	statuses: () => Record<string, Status>;
+	// When each thread's status last changed (ms), so quiet claudes can be closed after a while.
+	statusSince: Map<string, number>;
 	liveWindows: () => Set<string>;
 	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
 	sessionStarts: Map<string, number>;

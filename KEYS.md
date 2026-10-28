@@ -25,7 +25,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `esc` | clear the search, then the project filter |
 | `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K`, `!` and `C`) |
 | `i` | import a thread started outside oo |
-| `P` | projects (their hooks and wake prompt) |
+| `P` | projects (their hooks, wake prompt and when idle claudes close) |
 | `?` | all keys |
 | `q` | quit, leaving thread windows open |
 | `Q` | quit and close every thread window (claude resumes next time) |

@@ -4,7 +4,7 @@ import { execa } from 'execa';
 import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
-import { COLORS, isHome, isRepo, loadState, projectProblem, saveState } from './state.js';
+import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, isHome, isRepo, loadState, projectProblem, saveState } from './state.js';
 import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { COMMIT_FORM, commitFormCommand, type CommitForm } from './commitForm.js';
@@ -53,6 +53,7 @@ function projectCommand(args: string[]): number {
 			worktrees: isRepo(path),
 			color: COLORS[state.projects.length % COLORS.length]!,
 			wakePrompt: '',
+			closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER,
 			hooks: {},
 			tracker: 'none' as const,
 			jiraSite: '',
