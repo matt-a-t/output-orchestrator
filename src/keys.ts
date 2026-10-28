@@ -63,7 +63,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		title: 'In a form (n, e, P, commit)',
 		keys: [
 			['j/k ↑/↓ tab', 'move between fields'],
-			['h/l ←/→', 'change a choice (project, colour, recent ticket…)'],
+			['h/l ←/→', 'change a choice (project, colour, priority, recent ticket…)'],
 			['i / I', 'edit, cursor at the end / start'],
 			['dd', 'clear the field and edit'],
 			['⏎', 'edit the field; editing: save it and edit the next'],

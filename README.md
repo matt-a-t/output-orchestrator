@@ -40,7 +40,7 @@ oo                               # open the board
 ```
 
 On the board, `n` opens the new thread form: a project, a ticket if the project has a tracker, a
-title and an initial prompt. Its fields are edited vim-style: `i` to type into one, ⏎ on to the
+title, an initial prompt and a priority (normal unless you change it). Its fields are edited vim-style: `i` to type into one, ⏎ on to the
 next, `a` to create it and `q` or esc to cancel. The thread starts in Planned, and `e` adds a plan if you want one.
 With an initial prompt, its claude starts straight away in the background, in plan mode, on that
 prompt; without one, Enter opens its claude when you're ready. `Ctrl-b b` (or `Alt-b`) brings you back to the
@@ -73,7 +73,7 @@ restart), Enter resumes the thread where it left off. If the window was closed w
 still working, `w` resumes it in the background and tells it to keep going without you leaving
 the board, and `W` does the same for every thread like that, after asking first. The project's
 wake prompt (`P`) changes what it's told. `e` opens a thread's own screen. Its title,
-ticket, project, colour and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
+ticket, project, colour, priority and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
 the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
 already has a branch or directory can't change project.
 

@@ -73,6 +73,8 @@ export type Message = z.infer<typeof MessageSchema>;
 /** How soon a thread wants doing: each column shows high first and low last, in J/K order within each. */
 export const PRIORITIES = ['high', 'normal', 'low'] as const;
 export type Priority = (typeof PRIORITIES)[number];
+// As the card marks them: a red ▲ for high, a grey ▽ for low.
+export const PRIORITY_COLORS: Record<Priority, string | undefined> = { high: 'red', normal: undefined, low: 'gray' };
 
 export const TODO_MARKS: Record<TodoStatus, string> = { pending: '○', active: '▸', review: '●', done: '✓' };
 

@@ -68,7 +68,7 @@ once you start editing one, vim-style, so letters are keys until then.
 | Key | |
 |---|---|
 | `j`/`k` `↑`/`↓` `tab` | move between fields (`shift-tab` back too) |
-| `h`/`l` `←`/`→` | on a choice field: change it (project, colour, …). On the new thread's ticket: pick one of your recent tickets |
+| `h`/`l` `←`/`→` | on a choice field: change it (project, colour, priority, …). On the new thread's ticket: pick one of your recent tickets |
 | `i` / `I` | edit a text field, cursor at the end / at the start |
 | `dd` | clear it and edit |
 | `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). On the thread's plan: open `$EDITOR` |
