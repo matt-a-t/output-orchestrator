@@ -4,12 +4,13 @@ import { dirname, join } from 'node:path';
 import { execaSync } from 'execa';
 import { z } from 'zod';
 
-export const COLUMNS = ['planned', 'active', 'polish', 'pr', 'done'] as const;
+export const COLUMNS = ['planned', 'active', 'polish', 'pr', 'followup', 'done'] as const;
 export const COLUMN_LABELS: Record<Column, string> = {
 	planned: 'PLANNED',
 	active: 'ACTIVE',
 	polish: 'POLISH',
 	pr: 'PR',
+	followup: 'FOLLOW-UP',
 	done: 'DONE',
 	archived: 'ARCHIVED',
 };
@@ -55,10 +56,14 @@ export type Project = z.infer<typeof ProjectSchema>;
 
 export const DEFAULT_WAKE_PROMPT = 'You were interrupted (your session was closed). Pick up where you left off and keep going.';
 
-/** A thread's checkpoints: each is worked on (active), handed over (review), then approved and committed (done). */
+/**
+ * A thread's checkpoints: each is worked on (active), handed over (review), then approved and committed (done).
+ * Ones `afterMerge` (deploying, queries against prod, verifying it, updating docs) wait for the PR to merge,
+ * which moves the thread to Follow-up and wakes its claude for them.
+ */
 export const TODO_STATUSES = ['pending', 'active', 'review', 'done'] as const;
 export type TodoStatus = (typeof TODO_STATUSES)[number];
-const TodoSchema = z.object({ subject: z.string(), status: z.enum(TODO_STATUSES) });
+const TodoSchema = z.object({ subject: z.string(), status: z.enum(TODO_STATUSES), afterMerge: z.boolean().optional() });
 export type Todo = z.infer<typeof TodoSchema>;
 /**
  * A message from another thread's claude, held until it's put to this thread's claude. `from` is the
@@ -119,7 +124,8 @@ const ThreadSchema = z.preprocess(
 				outsider: z.boolean().optional(),
 			})
 			.optional(),
-		// Opened on moving to PR; polled so the thread moves to Done once it's merged.
+		// Opened on moving to PR; polled so the thread moves on once it's merged: to Follow-up if it has
+		// after-merge checkpoints left, else to Done.
 		pr: z.object({ number: z.number(), url: z.string() }).optional(),
 		// Checkpoints to review and commit, kept across claude runs (see `oo thread todo`).
 		todos: z.array(TodoSchema).optional(),

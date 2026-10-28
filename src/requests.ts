@@ -6,6 +6,7 @@ import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { JsonlReader } from './jsonl.js';
+import type { TodoItem } from './threads.js';
 import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Priority, type Thread, type TodoStatus } from './state.js';
 
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
@@ -21,7 +22,7 @@ export type Request =
 	| { id: string; op: 'priority'; thread: string; priority: Priority }
 	// Save (or with null, clear) the messages the commit and PR forms open with; one left out stays as it is.
 	| { id: string; op: 'draft'; thread: string; commit?: string | null; pr?: { title: string; body: string } | null }
-	| { id: string; op: 'todos'; thread: string; subjects: string[] }
+	| { id: string; op: 'todos'; thread: string; items: TodoItem[] }
 	// `item` counts from 1, as `oo thread show` lists them.
 	| { id: string; op: 'todo'; thread: string; item: number; status: TodoStatus }
 	// `from` is the sending thread's id, or UNVERIFIED_SENDER (see Message); `wake` (board-only) resumes a closed claude to hear it.

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, blockers, inDir, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store } from './threads.js';
+import { applyRequest, approvedTodo, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
@@ -28,7 +28,9 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread priority [id] <${PRIORITIES.join('|')}>
                               high threads sit at the top of their column on the board, low ones at the bottom
   oo thread todo [id] set --file <path>|-
-                              replace the thread's checkpoints, one per line (items already on it keep their status)
+                              replace the thread's checkpoints, one per line (items already on it keep their status).
+                              Start a line "after merge:" for one that waits for the PR to merge (deploying, prod queries, docs);
+                              the merge moves the thread to followup instead of done and wakes its claude for them
   oo thread todo [id] <n> <${TODO_STATUSES.join('|')}>
                               set checkpoint n's status (numbered as \`oo thread show\` lists them)
   oo thread send <id> [--wake] (<message> | --file <path>|-)
@@ -187,7 +189,7 @@ function details(state: State, t: Thread): string {
 	if (t.sessionId) lines.push(`session: ${t.sessionId}`);
 	const unread = undelivered(t.inbox).length;
 	if (unread) lines.push(`inbox:   ${unread} not yet delivered (oo thread inbox)`);
-	if (t.todos?.length) lines.push(`todos:   ${todoProgress(t.todos)} done`, ...t.todos.map(todo => `  ${TODO_MARKS[todo.status]} ${todo.subject}`));
+	if (t.todos?.length) lines.push(`todos:   ${todoProgress(t.todos)} done`, ...t.todos.map(todo => `  ${TODO_MARKS[todo.status]} ${todoSubject(todo)}`));
 	const content = t.ticket && ticketContent(t.ticket);
 	if (content) lines.push('', content);
 	if (t.plan) lines.push('', t.plan);
@@ -334,9 +336,9 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.at(-1) === 'set') {
 			const file = flag('file');
 			if (positional.length > 2 || file === undefined) throw new UsageError('oo thread todo [id] set --file <path>|-');
-			const subjects = todoLines(readInput(ctx, file));
+			const items = todoLines(readInput(ctx, file));
 			const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === 2 ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
-			return report(await change({ op: 'todos', thread, subjects }, ctx));
+			return report(await change({ op: 'todos', thread, items }, ctx));
 		}
 		if (positional.length < 2 || positional.length > 3) throw new UsageError('oo thread todo [id] <n> <status>');
 		const [item, status] = positional.slice(-2) as [string, string];
@@ -382,13 +384,20 @@ function senderId(state: State, ctx: Context): string {
 	}
 }
 
-/** One checkpoint per line, without list markers or checkboxes. */
-function todoLines(text: string): string[] {
+/** One checkpoint per line, without list markers or checkboxes; an "after merge:" prefix marks one that waits for the merge. */
+function todoLines(text: string): TodoItem[] {
 	return text
 		.split('\n')
 		.map(line => line.replace(/^\s*(?:[-*]|\d+[.)])?\s*(?:\[[ xX]\]\s*)?/, '').trim())
-		.filter(Boolean);
+		.filter(Boolean)
+		.map(line => {
+			const subject = line.replace(/^after merge\s*:\s*/i, '');
+			return subject === line ? { subject } : { subject, afterMerge: true };
+		});
 }
+
+/** How a checkpoint is listed for people and claudes: after-merge ones say so. */
+const todoSubject = (todo: Todo) => `${todo.afterMerge ? '(after merge) ' : ''}${todo.subject}`;
 
 function report(response: Response): number {
 	if (!response.ok) return fail(response.message);
@@ -432,25 +441,41 @@ export async function planApproved(input: any, ctx: Context): Promise<string | u
 
 // The checkpoints carry across claude runs, so the work can stop for review at each one.
 const TODOS_PROMPT = `Before starting, save the plan's checkpoints with \`oo thread todo set --file - <<'EOF'\` (one per line, each a step the user can review and commit on its own).
+Start a line with "after merge:" for work that can only happen once the PR has merged: database queries or data fixes against shared or production systems, the deploy itself, verifying it in production, updating docs or filing tickets. List them in the order they have to happen around the deploy; a step that must run before the code goes out comes before the deploy step, or before the merge if merging deploys. The board keeps them back until the PR merges, then moves the thread to Follow-up and wakes you for them.
 Mark one active (\`oo thread todo <n> active\`) when you start it and review when it's ready, then stop and let the user review it; approving the step on the board commits it and marks it done.
 Just before marking one review, save its commit message with \`oo thread draft commit --message <message>\` (and, for the last one, the PR's with \`oo thread draft pr --title <title> --body-file - <<'EOF'\`), so the board's forms open with them.`;
 
-/** What a thread's claude is told as it starts: where the thread's checkpoints stand. */
-export function todoBriefing(todos: Todo[]): string | undefined {
+/** What a thread's claude is told as it starts: where the thread's checkpoints stand, and whether its PR has merged (`isMerged`). */
+export function todoBriefing(todos: Todo[], isMerged = false): string | undefined {
 	if (!todos.length || todosDone(todos)) return;
-	const list = todos.map((t, i) => `  ${i + 1}. [${t.status}] ${t.subject}`).join('\n');
-	return `This thread's checkpoints (${todoProgress(todos)} done):\n${list}\nOnes in review are waiting for the user to approve them on the board; otherwise carry on from the first one that isn't done. Keep their status current with \`oo thread todo <n> <status>\`.`;
+	const list = todos.map((t, i) => `  ${i + 1}. [${t.status}] ${todoSubject(t)}`).join('\n');
+	const next = nextTodo(todos, isMerged) === -1 ? '.' : "; otherwise carry on from the first one that isn't done.";
+	const waiting = !isMerged && followUps(todos).length ? ' After-merge ones wait until the PR has merged: the board wakes you for them then.' : '';
+	return `This thread's checkpoints (${todoProgress(todos)} done):\n${list}\nOnes in review are waiting for the user to approve them on the board${next}${waiting} Keep their status current with \`oo thread todo <n> <status>\`.`;
+}
+
+/** What a thread's claude is woken with when its PR merges with after-merge checkpoints left (see checkPr). */
+export function followUpPrompt(todos: Todo[], pr: { number: number }): string {
+	const list = todos.flatMap((t, i) => (t.afterMerge && t.status !== 'done' ? [`  ${i + 1}. ${t.subject}`] : [])).join('\n');
+	return [
+		`PR #${pr.number} has merged, so this thread is in Follow-up for its after-merge checkpoints:\n${list}`,
+		"Work through them in order as before: mark each active, then review when it's done, and stop for the user to approve it.",
+		'These act on live systems: show the user any query or command against shared or production systems, and wait for their go-ahead before running it.',
+		"Don't commit anything: the branch has merged, so a code change now belongs in a new thread (`oo thread add`).",
+	].join('\n');
 }
 
 /**
  * What claude is told once its step is approved, and committed unless there's no `commitSubject` (a
  * checkpoint approved with no changes): which checkpoint that was (`ticked`, -1 for none), the user's
- * comments from the commit form and what to do next. `todos` are the checkpoints after ticking it off. Undefined after the last one with no comments: claude has
- * already stopped, so there's nothing to tell it.
+ * comments from the commit form and what to do next. `todos` are the checkpoints after ticking it off, and
+ * `isMerged` whether the PR has merged, which after-merge ones wait for. Undefined after the last one with
+ * no comments and nothing left waiting: claude has already stopped, so there's nothing to tell it.
  */
-export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: string, notes = ''): string | undefined {
-	const next = todos.findIndex(t => t.status !== 'done');
-	if (next === -1 && !notes) return;
+export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: string, notes = '', isMerged = false): string | undefined {
+	const next = nextTodo(todos, isMerged);
+	const waiting = !isMerged && followUps(todos).length > 0;
+	if (next === -1 && !notes && !waiting) return;
 	const done =
 		commitSubject === undefined
 			? `The user approved your step "${todos[ticked]?.subject}" with no changes to commit.`
@@ -458,7 +483,11 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: st
 	const then =
 		next !== -1
 			? `Move on to the next checkpoint: ${next + 1}. ${todos[next]!.subject}. Mark it active with \`oo thread todo ${next + 1} active\`.`
-			: 'That was the last step: open its PR (`oo thread pr`) only when the user asks.';
+			: waiting
+				? 'That was the last step before the merge: open its PR (`oo thread pr`) only when the user asks. The after-merge checkpoints wait until it has merged, when the board wakes you for them.'
+				: isMerged
+					? 'That was the last after-merge step: stop, and the user moves the thread to Done.'
+					: 'That was the last step: open its PR (`oo thread pr`) only when the user asks.';
 	const comments = notes && `The user's comments, to handle before ${next === -1 ? 'you stop' : 'moving on'}: "${notes}".`;
 	return [done, comments, then].filter(Boolean).join(' ');
 }
@@ -508,7 +537,7 @@ export async function sessionStarted(input: any, ctx: Context): Promise<string |
 	const messages = undelivered(thread.inbox);
 	// Briefly, since claude waits on this hook to start; a board busy with something slow applies it later.
 	if (messages.length) await change({ op: 'delivered', thread: id, count: messages.length }, { ...ctx, timeoutMs: 5_000 });
-	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? []), messages.length ? messagesPrompt(state, messages) : undefined, relatedBriefing(state, thread)].filter(Boolean);
+	const parts = [localBriefing(state, thread), todoBriefing(thread.todos ?? [], merged(thread)), messages.length ? messagesPrompt(state, messages) : undefined, relatedBriefing(state, thread)].filter(Boolean);
 	return parts.length ? parts.join('\n') : undefined;
 }
 

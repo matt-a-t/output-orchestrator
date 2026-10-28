@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
-import { approvedPrompt, approveTodo, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
+import { approvedPrompt, approveTodo, followUpPrompt, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todoRows, todosDone, todoWindow, withDrafts } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
@@ -291,6 +291,20 @@ test('todo set replaces the checkpoints, keeping the status of ones already ther
 	]);
 });
 
+test('an "after merge:" line is a checkpoint that waits for the merge, and show says so', async t => {
+	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos: [{ subject: 'Run the backfill', status: 'done' }] }]);
+	const output = capture(t);
+	const ctx = { ...context(dir, '/work/one', { OO_THREAD_ID: '1' }), stdin: () => 'Add the column\n- After merge: Run the backfill\nafter merge:Verify in prod\n' };
+	assert.equal(await threadCommand(['todo', 'set', '--file', '-'], ctx), 0);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos, [
+		{ subject: 'Add the column', status: 'pending' },
+		{ subject: 'Run the backfill', status: 'done', afterMerge: true },
+		{ subject: 'Verify in prod', status: 'pending', afterMerge: true },
+	]);
+	await threadCommand(['show'], ctx);
+	assert.match(output.out(), /○ Add the column\n {2}✓ \(after merge\) Run the backfill\n {2}○ \(after merge\) Verify in prod/);
+});
+
 test('todo <n> <status> sets one checkpoint\'s status, with or without a thread id', async t => {
 	const todos = [{ subject: 'a', status: 'pending' as const }, { subject: 'b', status: 'pending' as const }];
 	const { dir, project } = fixture([{ cwd: '/work/one', column: 'active', todos }]);
@@ -427,6 +441,33 @@ test('a stopped claude is told which step was committed and what comes next, and
 		'The user approved your step "a" with no changes to commit. Move on to the next checkpoint: 2. b. Mark it active with `oo thread todo 2 active`.',
 	);
 	assert.equal(approvedPrompt([todo('a', 'done')], 0), undefined);
+});
+
+test('after-merge checkpoints wait for the merge: claude stops before them, then is told to stop after the last', () => {
+	const todos = [
+		{ subject: 'a', status: 'done' as const },
+		{ subject: 'deploy', status: 'pending' as const, afterMerge: true },
+		{ subject: 'verify', status: 'pending' as const, afterMerge: true },
+	];
+	assert.match(approvedPrompt(todos, 0, 'Add a')!, /That was the last step before the merge: open its PR .* the board wakes you for them\.$/);
+	assert.match(approvedPrompt(todos, 0, undefined, '', true)!, /Move on to the next checkpoint: 2\. deploy\./);
+	const finished = todos.map(t => ({ ...t, status: 'done' as const }));
+	assert.equal(approvedPrompt(finished, 2, undefined, '', true), undefined);
+	assert.match(approvedPrompt(finished, 2, undefined, 'note it', true)!, /That was the last after-merge step: stop, and the user moves the thread to Done\.$/);
+	assert.match(followUpPrompt(todos, { number: 7 }), /^PR #7 has merged.*\n {2}2\. deploy\n {2}3\. verify\n/);
+});
+
+test('the briefing keeps after-merge checkpoints back until the thread is in Follow-up', async () => {
+	const todos = [
+		{ subject: 'a', status: 'done' as const },
+		{ subject: 'verify', status: 'pending' as const, afterMerge: true },
+	];
+	const { dir } = fixture([{ cwd: '/work/one', column: 'pr', todos }, { cwd: '/work/two', column: 'followup', todos }]);
+	const open = (await sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' })))!;
+	assert.match(open, /2\. \[pending\] \(after merge\) verify/);
+	assert.match(open, /on the board\. After-merge ones wait until the PR has merged/);
+	const landed = (await sessionStarted({ cwd: '/work/two' }, context(dir, '/', { OO_THREAD_ID: '2' })))!;
+	assert.match(landed, /otherwise carry on from the first one that isn't done\. Keep/);
 });
 
 test('a project with worktrees off runs its threads in its directory, with no PR', async t => {
@@ -610,7 +651,7 @@ test('a thread can only be blocked by an unfinished thread other than itself, wi
 	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.blockedBy, undefined);
 });
 
-test('a blocker reaching Done or archived unblocks the threads waiting on it', async t => {
+test('a blocker reaching Follow-up, Done or archived unblocks the threads waiting on it', async t => {
 	const { dir, project } = fixture([{ cwd: '/work/one', blockedBy: ['2', '3'] }, { cwd: '/work/two' }, { cwd: '/work/three' }]);
 	const output = capture(t);
 	const ctx = context(dir, project);
@@ -618,7 +659,7 @@ test('a blocker reaching Done or archived unblocks the threads waiting on it', a
 	assert.equal(await threadCommand(['move', '2', 'archived'], ctx), 0);
 	assert.match(output.out(), /Unblocked #1/);
 	assert.deepEqual(blockedBy(), ['3']);
-	assert.equal(await threadCommand(['move', '3', 'done'], ctx), 0);
+	assert.equal(await threadCommand(['move', '3', 'followup'], ctx), 0);
 	assert.equal(blockedBy(), undefined);
 });
 

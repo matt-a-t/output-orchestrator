@@ -12,7 +12,7 @@ import { commit, stageAll } from './git.js';
 import { deltaCommand, noStyling } from './delta.js';
 import { diffPaneCommand, writeCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
-import { approvedTodo, noRepo, setTodoStatus, threadDir } from './threads.js';
+import { approvedTodo, merged, noRepo, setTodoStatus, threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
 	BOARD_WINDOW,
@@ -193,7 +193,7 @@ async function commitCommand([id]: string[]): Promise<number> {
 	if (ticked) console.log(ticked);
 	// Ticked here rather than reloaded: a running board may not have saved its tick yet.
 	const todos = item === -1 ? (thread.todos ?? []) : setTodoStatus(thread.todos ?? [], item, 'done');
-	const prompt = approvedPrompt(todos, item, form.message, form.notes);
+	const prompt = approvedPrompt(todos, item, form.message, form.notes, merged(thread));
 	if (!prompt) return 0;
 	if (waiting && (await windowNames()).includes(window)) {
 		await pasteInto(window, prompt);

@@ -5,7 +5,7 @@ import { commit, currentRef, forcePushBranch, rebaseInProgress, rebaseOnto, reba
 import { openChanges, reviewDiff, showDiff, writeCommit } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { approvedPrompt } from '../threadCommand.js';
-import { applyRequest, approvedTodo, conflictPrompt, setTodoStatus, withDrafts } from '../threads.js';
+import { applyRequest, approvedTodo, conflictPrompt, merged, setTodoStatus, withDrafts } from '../threads.js';
 import { pasteInto, progressPopup, threadWindowName, windowNames } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -60,7 +60,7 @@ async function finishStep(board: Board, thread: Thread, waiting: boolean, commit
 	const ticked = item === -1 ? todos : setTodoStatus(todos, item, 'done');
 	// The draft was for this step, so the next one can't reuse it.
 	board.updateThread(thread.id, { todos: ticked, drafts: withDrafts(stored?.drafts, { commit: null }) });
-	const prompt = approvedPrompt(ticked, item, commitSubject, notes);
+	const prompt = approvedPrompt(ticked, item, commitSubject, notes, merged(thread));
 	const window = threadWindowName(thread.id);
 	const open = (await windowNames()).includes(window);
 	const told = !!prompt && waiting && open;
