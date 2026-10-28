@@ -35,7 +35,7 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 
 | Key | |
 |---|---|
-| `d` / `D` | step / whole thread diff |
+| `d` / `D` | step / whole thread diff (`d` with no changes: mark the step done) |
 | `s` / `M-d` | claude with a shell / live diff beside it |
 | `c` | comment on the diff in vim |
 | `o` | changed hunks as a vim quickfix list |

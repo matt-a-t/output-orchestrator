@@ -403,6 +403,12 @@ test('a stopped claude is told which step was committed and what comes next, and
 		/\(commit: Add a\)\. The user's comments, to handle before moving on: "rename x"\. Move on to the next checkpoint: 2\./,
 	);
 	assert.match(approvedPrompt([todo('a', 'done')], 0, 'Add a', 'rename x')!, /to handle before you stop: "rename x"\. That was the last step: open its PR/);
+	// Approved with no changes, so nothing was committed.
+	assert.equal(
+		approvedPrompt([todo('a', 'done'), todo('b', 'pending')], 0),
+		'The user approved your step "a" with no changes to commit. Move on to the next checkpoint: 2. b. Mark it active with `oo thread todo 2 active`.',
+	);
+	assert.equal(approvedPrompt([todo('a', 'done')], 0), undefined);
 });
 
 test('a project with worktrees off runs its threads in its directory, with no PR', async t => {
