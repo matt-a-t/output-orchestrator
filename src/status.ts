@@ -119,6 +119,10 @@ ${THREAD_USAGE}
   the thread to PR, from Local too. Commit everything first. You know the change best, so write the description
   yourself and pass it with \`--body-file - <<'EOF'\` (and \`--title\` if the thread's title won't do); leave both out
   to use the PR draft you saved, or without one, to have claude draft them from the diff. The ticket prefix and link are added for you, and no thread ids, as with commits.
+- **Don't count on staying open between turns.** Once you've sat stopped for a while (30 minutes by
+  default), the board closes your window and resumes you when there's more to do: an approved step or
+  the user's diff comments wake you, and messages wait for your next start. A shell you leave running in the background keeps you open, but a
+  background subagent doesn't, so wait for one to finish before ending your turn.
 - **Offer Local when the user wants to try the change.** If they want to test or try it themselves, offer to
   put the thread in Local and run \`oo thread local in\` once they agree; \`oo thread local out\` brings it back.
   Uncommitted changes move with the thread, so there's no need to commit first. This claude is closed and resumed

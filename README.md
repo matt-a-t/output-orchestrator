@@ -72,7 +72,17 @@ Enter opens or jumps to the thread's `claude` window. If the window was closed (
 restart), Enter resumes the thread where it left off. If the window was closed while claude was
 still working, `w` resumes it in the background and tells it to keep going without you leaving
 the board, and `W` does the same for every thread like that, after asking first. The project's
-wake prompt (`P`) changes what it's told. `e` opens a thread's own screen. Its title,
+wake prompt (`P`) changes what it's told.
+
+A claude that has sat stopped (or opened and never prompted) for a while gets its window closed, so
+a board of finished turns isn't a tmux bar full of idle claudes. The project's **close idle** setting
+(`P`) says how long: 30 minutes by default, or never. A window you're looking at, one with a shell or
+diff open beside claude, one whose claude still has a shell running (a background command, say), and
+one with messages waiting to be pasted in are left open. Its card then shows ↻, and Enter or `w`
+resumes it with its history. Approving a step or sending diff comments (`c`) to a closed claude wakes
+it in the background to hear them.
+
+`e` opens a thread's own screen. Its title,
 ticket, project, colour, priority and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
 the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
 already has a branch or directory can't change project.
@@ -132,8 +142,8 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   Press `a` while claude is still writing to commit whatever it writes without opening the form
   (`a` again goes back). The thread's claude is then told the step was committed, given your
   comments, and told to move on to the next checkpoint, or to stop if that was the last one: right
-  away if it's at its prompt (stopped ✓, or just reopened), otherwise as a message in its inbox,
-  put to it when its turn ends or when it next starts.
+  away if it's at its prompt (stopped ✓, or just reopened), as a message in its inbox put to it
+  when its turn ends if it's busy, or by waking it in the background if its window is closed.
 - A step that's done without changing anything (an investigation, say) has no diff to approve, so
   `d` on it offers to mark its checkpoint done instead (y to confirm). Nothing is committed, and
   claude is told just as if you'd approved a commit.
@@ -144,7 +154,7 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   moves the thread to Follow-up instead of Done (see [PRs, Follow-up and Done](#prs-follow-up-and-done)).
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
-  feedback (`:cq` cancels).
+  feedback (`:cq` cancels), waking it first if its window is closed.
 - `o` opens the changed hunks in vim as a quickfix list.
 
 Confirmations (quit, archive, resuming a busy thread) all take `y`. Any other key cancels.

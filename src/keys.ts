@@ -25,7 +25,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['esc', 'clear the search, then the project'],
 			['A', 'show / hide archived threads'],
 			['i', 'import a thread started outside oo'],
-			['P', 'projects (their hooks and wake prompt)'],
+			['P', 'projects (their hooks, wake prompt and when idle claudes close)'],
 			['?', 'these keys'],
 			['q', 'quit, leaving thread windows open'],
 			['Q', 'quit and close every thread window'],
