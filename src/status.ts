@@ -51,7 +51,7 @@ description: Read and change the output-orchestrator (oo) board of threads with 
 
 # The oo board
 
-The user tracks work as threads on a kanban board (Planned → Active → Polish → PR → Done).
+The user tracks work as threads on a kanban board (Planned → Active → Polish → PR → Follow-up → Done).
 A thread can also be put in Local (it stays in its column, outlined in yellow), which checks its branch out in the project's own checkout
 (one per project) so the user can try it in their own dev setup; claude then works there until it comes back to its worktree.
 Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
@@ -75,6 +75,11 @@ ${THREAD_USAGE}
   Mark one \`active\` as you start it and \`review\` when it's ready, then stop for the user to review it;
   approving the step on the board commits it, marks it \`done\` and tells you to move on, passing on any comments the user adds; after the last one you only hear back if they left comments. The list stays on the thread across claude
   runs and shows on its card, so keep it current.
+- **Mark what has to wait for the merge.** Start a checkpoint's line with \`after merge:\` when it can only
+  happen once the PR has merged: database queries or data fixes against shared or production systems, the deploy,
+  verifying in production, updating docs or tickets. Order them as they have to happen around the deploy. Stop
+  before them; the merge moves the thread to Follow-up and the board wakes you for them. Show the user any query
+  or command against a shared or production system and wait for their go-ahead, and don't commit in Follow-up.
 - **Write the commit message before handing a step over.** Just before marking a checkpoint \`review\`, save
   its commit message with \`oo thread draft commit --message <message>\`: one short imperative subject under
   60 characters, in the style of \`git log\`'s recent subjects, no body or trailing period. The board's commit
@@ -98,7 +103,7 @@ ${THREAD_USAGE}
   back-and-forth, hand the coordination to the user. \`--wake\` is the user's, not yours, and don't do the other thread's work here.
 - **Record what you're waiting on.** If this thread's work can't go on until another thread's lands, run
   \`oo thread block <that id>\`; \`oo thread show\` lists what's still blocking this thread, and the block drops
-  once the other thread is Done.
+  once the other thread has merged (Follow-up or Done).
 - **Threads' ids are local to this board.** \`#12\` means nothing on another machine, so don't put a thread
   id in commits, branches or PRs. Refer to the thread's ticket (\`oo thread show\` lists it) instead.
 - **Read before you plan.** \`oo thread show\` has this thread's plan; \`oo thread list\` shows what else is

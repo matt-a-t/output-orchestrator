@@ -6,9 +6,10 @@ const TODO_COLORS: Record<TodoStatus, string> = { pending: 'gray', active: 'yell
 
 /**
  * The highlighted thread's progress through claude's task list, with the current step in view, in
- * `lines` rows below its header; the rest are summed up as "N more".
+ * `lines` rows below its header; the rest are summed up as "N more". After-merge steps are marked ⤳,
+ * and dimmed until the PR has merged (`merged`).
  */
-export function TodoList({ todos, lines }: { todos: Todo[]; lines: number }) {
+export function TodoList({ todos, lines, merged }: { todos: Todo[]; lines: number; merged: boolean }) {
 	const { start, end } = todoRows(todos, lines);
 	// Step numbers are right-aligned so the subjects line up past step 9.
 	const width = String(todos.length).length;
@@ -33,7 +34,8 @@ export function TodoList({ todos, lines }: { todos: Todo[]; lines: number }) {
 						{String(start + i + 1).padStart(width)}.
 					</Text>{' '}
 					<Text color={TODO_COLORS[todo.status]}>{TODO_MARKS[todo.status]}</Text>{' '}
-					<Text bold={todo.status === 'active' || todo.status === 'review'} dimColor={todo.status === 'done'}>
+					{todo.afterMerge ? <Text color="blue">⤳ </Text> : null}
+					<Text bold={todo.status === 'active' || todo.status === 'review'} dimColor={todo.status === 'done' || (todo.afterMerge && !merged)}>
 						{todo.subject}
 					</Text>
 				</Text>

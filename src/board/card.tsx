@@ -2,7 +2,7 @@ import { Box, Text } from 'ink';
 import type { PrStatus } from '../github.js';
 import { PRIORITY_COLORS, PRIORITY_MARKS, type Column, type Project, type Thread } from '../state.js';
 import type { Status } from '../status.js';
-import { todosDone, undelivered } from '../threads.js';
+import { followUps, preMergeDone, todosDone, undelivered } from '../threads.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
@@ -21,6 +21,7 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['⚡', 'red', 'PR has conflicts'],
 	['✉', 'cyan', 'messages from other threads, told when claude stops'],
 	['⧗', 'red', 'blocked by another thread (B)'],
+	['⤳', 'blue', 'after-merge checkpoints left'],
 	['▲', 'red', 'high priority (!)'],
 	['▽', 'gray', 'low priority (!)'],
 ];
@@ -97,11 +98,23 @@ export function Card({ thread: t, selected, project, live, status, resumable, st
 						{' '}✉{undelivered(t.inbox).length}
 					</Text>
 				) : null}
-				{/* Every step approved: ready to move on to Polish and a PR. */}
-				{t.column === 'active' && todosDone(t.todos) ? (
+				{/* Every step before the merge approved: ready to move on to Polish and a PR. */}
+				{t.column === 'active' && preMergeDone(t.todos) ? (
 					<Text color="green" bold>
 						{' '}✓ polish
 					</Text>
+				) : null}
+				{/* Merged with steps still to do (deploying, checking prod), or with them all done and ready for Done. */}
+				{t.column === 'followup' ? (
+					followUps(t.todos).length ? (
+						<Text color="blue" bold>
+							{' '}⤳{followUps(t.todos).length}
+						</Text>
+					) : todosDone(t.todos) ? (
+						<Text color="green" bold>
+							{' '}✓ done
+						</Text>
+					) : null
 				) : null}
 				{/* Finished threads get one line each so more of them fit. */}
 				{oneLine ? ' ' : null}

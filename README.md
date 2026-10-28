@@ -2,7 +2,7 @@
 
 `oo` is a kanban board in your terminal for running several Claude Code threads at once. Each
 thread gets its own git worktree, branch and real `claude` running in a tmux window. You move
-it from Planned through Active and Polish to PR and Done, and review and approve claude's changes
+it from Planned through Active and Polish to PR, Follow-up and Done, and review and approve claude's changes
 from the board as you go.
 
 <!-- TODO: screenshot or asciinema of the board -->
@@ -55,7 +55,7 @@ running.
 ### Threads and columns
 
 A **thread** is one piece of work: a git worktree, a branch, possibly a PR, and the claude runs
-that worked on it. Its columns are **Planned → Active → Polish → PR → Done**. `H` / `L` move the
+that worked on it. Its columns are **Planned → Active → Polish → PR → Follow-up → Done**. `H` / `L` move the
 selected thread between columns, and `J` / `K` reorder it within one. `!` gives it a priority: high
 threads (`▲`) sit at the top of their column and low ones (`▽`) at the bottom, and `J` / `K` reorder
 threads among those of the same priority. `oo thread priority [id] <high|normal|low>` sets it from the shell.
@@ -79,7 +79,7 @@ already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved, ✉ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`). Each card shows the thread number and project abbreviation (or name, if it has none),
+approved, ✉ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up). Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath (after its ticket key, if it has one).
 
 ### Tickets
@@ -137,6 +137,11 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
 - A step that's done without changing anything (an investigation, say) has no diff to approve, so
   `d` on it offers to mark its checkpoint done instead (y to confirm). Nothing is committed, and
   claude is told just as if you'd approved a commit.
+- Some checkpoints can only happen once the PR has merged: running a query or data fix against
+  production, the deploy itself, checking it in prod, updating docs. claude marks these by starting
+  the line with `after merge:` in `oo thread todo set` (it's told to when its plan is approved), and
+  they show with a blue ⤳ in the todo list, dimmed until then. claude stops before them, and the merge
+  moves the thread to Follow-up instead of Done (see [PRs, Follow-up and Done](#prs-follow-up-and-done)).
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels).
@@ -174,7 +179,7 @@ to try its change. If the thread's claude is working, the move waits until its t
 When a thread can't go on until another one lands, `B` records that: move the cursor to the thread it waits on and
 press `⏎` (`esc` cancels). The card gets a red ⧗#12 and a dimmed title, and the details below it list the blockers.
 A thread can wait on several. Picking one again takes it off, and `⏎` on the thread itself clears them all. A
-block goes away by itself once its blocker reaches Done (a merged PR included) or is archived, and the move's
+block goes away by itself once its blocker merges (reaching Follow-up or Done) or is archived, and the move's
 message says which threads it unblocked. Moving a blocked thread into Active warns, but doesn't stop you.
 
 A blocker in the same project is one to build on, so the thread's branch stacks on the blocker's branch: one with
@@ -222,7 +227,7 @@ alone. `OO_THREAD_ID`, `OO_THREAD_TITLE`, `OO_PROJECT` and `OO_BRANCH` are set f
 `OO_THREAD_TITLE`, `OO_PROMPT` and `OO_BRANCH` can carry ticket text someone else wrote, so quote
 them (`"$OO_THREAD_TITLE"`) and never `eval` them or splice them unquoted into another command.
 
-### PRs and Done
+### PRs, Follow-up and Done
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
 `gh pr create`. A thread that builds on another's branch (see [Blocked threads](#blocked-threads)) opens its
@@ -240,6 +245,13 @@ thread goes straight to Done. `b` opens the selected thread's PR in your browser
 Windows' default browser). The board checks open PRs every minute and moves merged ones to Done. One in
 Local comes out of it on the way, with the checkout put back on the default branch and the merge pulled in;
 if the checkout has uncommitted changes, it stays in PR until they're dealt with.
+
+A merged thread with `after merge:` checkpoints left goes to **Follow-up** instead. It keeps its worktree,
+and its claude is told the PR merged and which steps are left: right away if it's closed (resumed in the
+background), otherwise once its turn ends. It works through them like any other checkpoints, showing you any
+query or command against shared or production systems before running it and committing nothing. Its card
+shows ⤳ with how many are left, then ✓ done, and you move it on to Done yourself (`L` or `F`). Anything can
+wait in Follow-up: `L` from PR moves a thread there by hand once its PR has merged.
 
 GitHub won't let you approve your own PR, so on someone else's the viewer has `a` approve,
 `x` request changes and `c` comment instead of `m`. The last two open the PR's diff in vim, like
