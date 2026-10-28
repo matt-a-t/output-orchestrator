@@ -46,26 +46,29 @@ export function useRestoreCarried(stateRef: RefObject<State>) {
 /**
  * Fold claude hook events (see status.ts) into per-thread status and the latest claude session ID.
  * `sessionStarts` counts how many times each thread's claude has started this run, so waking can wait for the one it starts.
+ * `statusSince` is when each thread's status last changed (ms), from the events' own times, so it holds across a board restart.
  */
 export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 	const [statuses, setStatuses] = useState<Record<string, Status>>({});
 	const statusesRef = useRef(statuses);
 	statusesRef.current = statuses;
 	const sessionStarts = useRef(new Map<string, number>());
+	const statusSince = useRef(new Map<string, number>());
 	useEffect(() => {
 		const reader = new EventReader();
+		// Folded into here as they're read, rather than in a state update, so statusSince sees each change.
+		const latest: Record<string, Status> = {};
 		const poll = () => {
 			const dirs = new Map(stateRef.current.threads.map(t => [t.id, threadDir(stateRef.current, t)]));
 			const events = reader.read().filter(e => fromThreadDir(e, dirs.get(e.thread)));
 			if (events.length === 0) return;
-			setStatuses(prev => {
-				const next = { ...prev };
-				for (const e of events) {
-					const status = nextStatus(next[e.thread], e);
-					if (status) next[e.thread] = status;
-				}
-				return next;
-			});
+			for (const e of events) {
+				const status = nextStatus(latest[e.thread], e);
+				if (!status || status === latest[e.thread]) continue;
+				latest[e.thread] = status;
+				statusSince.current.set(e.thread, Date.parse(e.ts) || Date.now());
+			}
+			setStatuses({ ...latest });
 			const started = new Map<string, { sessionId: string; transcriptPath?: string }>();
 			for (const e of events) {
 				if (e.event === 'SessionStart') sessionStarts.current.set(e.thread, (sessionStarts.current.get(e.thread) ?? 0) + 1);
@@ -87,7 +90,7 @@ export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 		watchFile(EVENTS_FILE, { interval: 500 }, poll);
 		return () => unwatchFile(EVENTS_FILE, poll);
 	}, []);
-	return { statuses, statusesRef, sessionStarts: sessionStarts.current };
+	return { statuses, statusesRef, sessionStarts: sessionStarts.current, statusSince: statusSince.current };
 }
 
 /** The open tmux windows; badges only mean something while the thread's window is open. */

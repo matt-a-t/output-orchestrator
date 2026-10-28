@@ -12,6 +12,7 @@ const project = (name: string, tracker: Project['tracker'] = 'none'): Project =>
 	worktrees: true,
 	color: 'cyan',
 	wakePrompt: '',
+	closeIdleAfter: 30,
 	hooks: {},
 	tracker,
 	jiraSite: '',

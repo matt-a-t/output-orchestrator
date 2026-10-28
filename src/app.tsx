@@ -53,7 +53,7 @@ export function App() {
 	const [showKeys, setShowKeys] = useState(false);
 	// The thread form (e), replacing the board while it's open.
 	const [editing, setEditing] = useState<string | null>(null);
-	const { statuses, statusesRef, sessionStarts } = useStatuses(stateRef, setState);
+	const { statuses, statusesRef, sessionStarts, statusSince } = useStatuses(stateRef, setState);
 	const { liveWindowsRef, refreshWindows } = useLiveWindows();
 	const unreviewed = useUnreviewed(stateRef);
 	useRestoreCarried(stateRef);
@@ -162,6 +162,7 @@ export function App() {
 		setColumn,
 		project: projectByName,
 		statuses: () => statusesRef.current,
+		statusSince,
 		liveWindows: () => liveWindowsRef.current,
 		sessionStarts,
 		refreshWindows,

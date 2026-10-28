@@ -5,9 +5,9 @@ import { Box, Text, useInput } from 'ink';
 import { hasWorktree, worktreePath } from './git.js';
 import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
-import { COLORS, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
+import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
+const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'closeIdleAfter', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
 type Field = (typeof FIELDS)[number];
 const FIELD_LABELS: Record<Field, string> = {
 	name: 'name',
@@ -16,15 +16,18 @@ const FIELD_LABELS: Record<Field, string> = {
 	path: 'path',
 	worktrees: 'worktrees',
 	wakePrompt: 'wake prompt',
+	closeIdleAfter: 'close idle',
 	tracker: 'tickets',
 	jiraSite: 'jira site',
 	jiraProject: 'jira project',
 	...HOOK_LABELS,
 };
 // Changed with ←/→ through a fixed list rather than typed.
-type Choice = 'color' | 'worktrees' | 'tracker';
-const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, worktrees: [true, false], tracker: TRACKERS };
-const choiceLabel = (value: Project[Choice]) => (value === true ? 'on' : value === false ? 'off' : value);
+type Choice = 'color' | 'worktrees' | 'closeIdleAfter' | 'tracker';
+const CLOSE_IDLE_CHOICES = [0, 10, 30, 60, 120, 240];
+const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, worktrees: [true, false], closeIdleAfter: CLOSE_IDLE_CHOICES, tracker: TRACKERS };
+const choiceLabel = (value: Project[Choice]) =>
+	value === true ? 'on' : value === false ? 'off' : value === 0 ? 'never' : typeof value === 'number' ? `after ${value} min` : value;
 const isChoice = (field: Field): field is Choice => field in CHOICES;
 // Where each hook runs, for its hint.
 const HOOK_WHERE: Record<ProjectHook, string> = {
@@ -39,6 +42,7 @@ const HOOK_WHERE: Record<ProjectHook, string> = {
 const FIELD_HINTS: Partial<Record<Field, string>> = {
 	worktrees: 'off: threads run in the project directory itself, several at once, with no branch, diffs or PR; changing it affects new threads only  ',
 	wakePrompt: 'pasted into a resumed claude by w / W on the board; empty uses the default  ',
+	closeIdleAfter: "close a thread's claude window once it's sat stopped this long (not one you're in, with a split open or a shell still running); w or ⏎ resumes it  ",
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
 	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
@@ -150,7 +154,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0, edit: null });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER, hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0, edit: null });
 		}
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0, edit: null });
