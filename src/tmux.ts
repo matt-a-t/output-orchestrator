@@ -68,6 +68,61 @@ export async function killWindow(name: string): Promise<void> {
 	if ((await windowNames()).includes(name)) await execa('tmux', ['kill-window', '-t', `:${name}`]);
 }
 
+/** A window as closing quiet claudes needs it: whether it's on screen, has more than claude's pane, and claude's pane's process. */
+export type WindowInfo = { name: string; viewed: boolean; split: boolean; pid: number };
+
+/** `list-panes -s` output (name, active, clients attached, pane pid, split role) as one WindowInfo per window. */
+export function parseWindowInfo(stdout: string): WindowInfo[] {
+	const windows = new Map<string, WindowInfo>();
+	for (const line of stdout.split('\n').filter(Boolean)) {
+		const [name = '', active, attached, pid, role] = line.split('\t');
+		const seen = windows.get(name);
+		// A pane the user split off by hand counts too: there's something there besides claude.
+		if (seen) seen.split = true;
+		const info = seen ?? { name, viewed: active === '1' && attached !== '0', split: false, pid: 0 };
+		if (!role) info.pid = Number(pid);
+		windows.set(name, info);
+	}
+	return [...windows.values()];
+}
+
+export async function windowInfo(): Promise<WindowInfo[]> {
+	const format = '#{window_name}\t#{window_active}\t#{session_attached}\t#{pane_pid}\t#{@oo-split}';
+	const { stdout } = await execa('tmux', ['list-panes', '-s', '-F', format]);
+	return parseWindowInfo(stdout);
+}
+
+/** Every process as `pid ppid args`, for claudeShellRunning. */
+export async function processList(): Promise<string> {
+	return (await execa('ps', ['-eo', 'pid=,ppid=,args='])).stdout;
+}
+
+/**
+ * Whether a shell claude's Bash tool started (one it left running in the background, say) is still going
+ * under `pid`, in `ps` output. Those source claude's shell snapshot; its MCP servers don't.
+ */
+export function claudeShellRunning(ps: string, pid: number): boolean {
+	const children = new Map<number, number[]>();
+	const args = new Map<number, string>();
+	for (const line of ps.split('\n')) {
+		const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
+		if (!match) continue;
+		const [child, parent] = [Number(match[1]), Number(match[2])];
+		children.set(parent, [...(children.get(parent) ?? []), child]);
+		args.set(child, match[3]!);
+	}
+	const todo = [...(children.get(pid) ?? [])];
+	const seen = new Set<number>();
+	while (todo.length) {
+		const p = todo.pop()!;
+		if (seen.has(p)) continue;
+		seen.add(p);
+		if (args.get(p)?.includes('/.claude/shell-snapshots/')) return true;
+		todo.push(...(children.get(p) ?? []));
+	}
+	return false;
+}
+
 /** Whether a window is one the board opened (a thread's or a project hook's), so not the board's own or the user's. */
 export function isOoWindow(name: string): boolean {
 	return name.startsWith('oo-') && name !== BOARD_WINDOW;
