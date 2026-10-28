@@ -30,9 +30,33 @@ export function todosDone(todos: Todo[] = []): boolean {
 	return todos.length > 0 && todos.every(t => t.status === 'done');
 }
 
+/** Whether every checkpoint that comes before the merge is done: the thread's ready for Polish and a PR. */
+export function preMergeDone(todos: Todo[] = []): boolean {
+	const before = todos.filter(t => !t.afterMerge);
+	return before.length > 0 && before.every(t => t.status === 'done');
+}
+
+/** Whether the thread's PR has merged, so its after-merge checkpoints can be worked on. */
+export const merged = (t: Pick<Thread, 'column'>) => t.column === 'followup' || t.column === 'done';
+
+/** The first checkpoint to work on, -1 for none: after-merge ones wait until `isMerged`. */
+export function nextTodo(todos: Todo[], isMerged: boolean): number {
+	return todos.findIndex(t => t.status !== 'done' && (isMerged || !t.afterMerge));
+}
+
+/** The after-merge checkpoints not yet done. */
+export const followUps = (todos: Todo[] = []) => todos.filter(t => t.afterMerge && t.status !== 'done');
+
+/** A checkpoint as `oo thread todo set` gives it: its subject, and whether it waits for the merge. */
+export type TodoItem = { subject: string; afterMerge?: boolean };
+
 /** The new list, keeping the status of items that were already on it. */
-export function replaceTodos(todos: Todo[], subjects: string[]): Todo[] {
-	return subjects.map(subject => ({ subject, status: todos.find(t => t.subject === subject)?.status ?? 'pending' }));
+export function replaceTodos(todos: Todo[], items: TodoItem[]): Todo[] {
+	return items.map(({ subject, afterMerge }) => ({
+		subject,
+		status: todos.find(t => t.subject === subject)?.status ?? 'pending',
+		...(afterMerge && { afterMerge }),
+	}));
 }
 
 /** The messages not yet put to the thread's claude. */
@@ -138,9 +162,12 @@ export function addThread(
 	return { state: { ...state, threads: [...state.threads, thread] }, thread };
 }
 
-const finished = (t: Thread) => t.column === 'done' || t.column === 'archived';
+// Its code is in by Follow-up, so what waited on it can go ahead.
+const finished = (t: Thread) => t.column === 'followup' || t.column === 'done' || t.column === 'archived';
+/** Whether reaching `column` lets what waited on the thread go ahead: it's merged (Follow-up, Done) or archived. */
+export const ends = (column: Column) => column === 'followup' || column === 'done' || column === 'archived';
 
-/** The threads `thread` still waits on: ones in its blockedBy that exist and aren't Done or archived. */
+/** The threads `thread` still waits on: ones in its blockedBy that exist and aren't merged or archived. */
 export function blockers(state: State, thread: Thread): Thread[] {
 	return (thread.blockedBy ?? []).flatMap(id => state.threads.find(t => t.id === id && !finished(t)) ?? []);
 }
@@ -230,21 +257,21 @@ function tell(store: Store, id: string, text: string) {
 	store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === id ? { ...t, inbox: [...(t.inbox ?? []), message] } : t)) }));
 }
 
-/** The threads that moving `id` to Done or archiving it stops being blocked. */
+/** The threads that moving `id` to Follow-up or Done, or archiving it, stops being blocked. */
 export function unblockedBy(state: State, id: string): Thread[] {
 	return state.threads.filter(t => !finished(t) && t.blockedBy?.includes(id));
 }
 
-/** Move the thread to the bottom of the column. Reaching Done or archived unblocks whatever waited on it. */
+/** Move the thread to the bottom of the column. Reaching Follow-up, Done or archived unblocks whatever waited on it. */
 export function setColumn(state: State, id: string, column: Column, patch: Partial<Thread> = {}): State {
 	const thread = state.threads.find(t => t.id === id);
 	if (!thread) return state;
-	const ends = column === 'done' || column === 'archived';
-	const moved = { ...thread, ...patch, column, ...(ends && { blockedBy: undefined }), updatedAt: new Date().toISOString() };
+	const unblocks = ends(column);
+	const moved = { ...thread, ...patch, column, ...(unblocks && { blockedBy: undefined }), updatedAt: new Date().toISOString() };
 	const others = state.threads
 		.filter(t => t.id !== id)
 		.map(t => {
-			if (!ends || !t.blockedBy?.includes(id)) return t;
+			if (!unblocks || !t.blockedBy?.includes(id)) return t;
 			const rest = t.blockedBy.filter(b => b !== id);
 			return { ...t, blockedBy: rest.length ? rest : undefined };
 		});
@@ -252,9 +279,9 @@ export function setColumn(state: State, id: string, column: Column, patch: Parti
 	return { ...state, threads: [...others, moved] };
 }
 
-/** What a move to Done or archived adds to its message: the threads it unblocked. */
+/** What a move to Follow-up, Done or archived adds to its message: the threads it unblocked. */
 export function unblockedNote(state: State, id: string, column: Column): string | undefined {
-	if (column !== 'done' && column !== 'archived') return;
+	if (!ends(column)) return;
 	const freed = unblockedBy(state, id);
 	if (freed.length) return `Unblocked ${freed.map(t => `#${t.id}`).join(', ')}`;
 }
@@ -279,12 +306,12 @@ export async function archiveProblem(thread: Thread): Promise<string | undefined
 	}
 }
 
-/** Why the thread can't move to Done, if it can't: its PR is still open (merging moves it there itself). */
-export async function doneProblem(project: Project, thread: Thread): Promise<string | undefined> {
+/** Why the thread can't move to Follow-up or Done (`column`), if it can't: its PR is still open (merging moves it on itself). */
+export async function doneProblem(project: Project, thread: Thread, column: Column = 'done'): Promise<string | undefined> {
 	if (!thread.pr) return;
 	const state = await prState(project.path, thread.pr).catch(() => undefined);
 	if (!state) return `⚠ Couldn't check whether #${thread.id}'s PR #${thread.pr.number} is still open — try again`;
-	if (state === 'OPEN') return `⚠ #${thread.id}'s PR #${thread.pr.number} is still open — merge or close it before moving to Done`;
+	if (state === 'OPEN') return `⚠ #${thread.id}'s PR #${thread.pr.number} is still open — merge or close it before moving to ${COLUMN_LABELS[column]}`;
 }
 
 /** What to record on the thread after touching its worktree, and what to tell the user. */
@@ -305,7 +332,7 @@ export async function createWorktree(project: Project, thread: Thread): Promise<
 	return { path, patch, message: message || undefined };
 }
 
-/** Keep the worktree in step with the column: there from Active on, removed (branch kept) once Done/archived. */
+/** Keep the worktree in step with the column: there from Active through Follow-up, removed (branch kept) once Done/archived. */
 export async function syncWorktree(project: Project, thread: Thread): Promise<WorktreeChange> {
 	// Imported threads stay where they were started.
 	if (thread.column === 'planned' || thread.cwd) return {};
@@ -398,7 +425,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 			return { id, ok: false, message: `#${thread.id} has no todo ${request.item} (it has ${current.length})` };
 		}
 		const todos =
-			request.op === 'todos' ? replaceTodos(current, request.subjects) : setTodoStatus(current, request.item - 1, request.status);
+			request.op === 'todos' ? replaceTodos(current, request.items) : setTodoStatus(current, request.item - 1, request.status);
 		const now = new Date().toISOString();
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, todos, updatedAt: now } : t)) }));
 		const what = request.op === 'todos' ? 'todos' : `todo ${request.item} (${request.status})`;
@@ -450,13 +477,12 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		moveProblem(state, thread, request.column) ??
 		boardOnlyMove(thread, request.column) ??
 		(request.column === 'archived' ? await archiveProblem(thread) : undefined) ??
-		(request.column === 'done' ? await doneProblem(project, thread) : undefined);
+		(merged(request) ? await doneProblem(project, thread, request.column) : undefined);
 	if (problem) return { id, ok: false, message: problem };
 	const moved = { ...thread, column: request.column };
 	const unblocked = unblockedNote(state, thread.id, request.column);
 	store.update(s => setColumn(s, thread.id, request.column));
-	const ends = request.column === 'done' || request.column === 'archived';
-	const unstacked = ends ? await unstackChildren(project, store, thread, request.column === 'done') : undefined;
+	const unstacked = ends(request.column) ? await unstackChildren(project, store, thread, merged(request)) : undefined;
 	const { patch, message } = await syncWorktree(project, moved);
 	if (patch) store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch } : t)) }));
 	const ran = await runColumnHook(project, thread.column, { ...moved, ...patch });

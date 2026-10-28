@@ -82,7 +82,7 @@ test("a thread's own writes reach the board: drafts, a multi-line commit message
 	const responses = [
 		await send({ op: 'draft', thread: '1', commit }),
 		await send({ op: 'draft', thread: '1', pr: { title: 'Fix the thing', body: 'What\nand why' } }),
-		await send({ op: 'todos', thread: '1', subjects: ['First step', 'Second step'] }),
+		await send({ op: 'todos', thread: '1', items: [{ subject: 'First step' }, { subject: 'Second step' }] }),
 		await send({ op: 'todo', thread: '1', item: 1, status: 'review' }),
 	];
 	assert.deepEqual(

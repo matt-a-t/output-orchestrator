@@ -1,7 +1,7 @@
 // Moving a thread between columns, and out of them (Done, archived).
 
 import { COLUMNS, type Thread } from '../state.js';
-import { archiveProblem, doneProblem, moveProblem, moveWarning, unblockedNote, unstackChildren } from '../threads.js';
+import { archiveProblem, doneProblem, merged, moveProblem, moveWarning, unblockedNote, unstackChildren } from '../threads.js';
 import { threadWindowName } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -29,16 +29,17 @@ export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS
 		board.setColumn(thread.id, column);
 		board.showAtEnd(column);
 		const project = board.project(thread.project);
-		const unstacked = column === 'done' && project ? await unstackChildren(project, board.store, thread, true) : undefined;
+		const unstacked = merged({ column }) && project ? await unstackChildren(project, board.store, thread, true) : undefined;
 		const note = [unblocked, unstacked].filter(Boolean).join(' · ');
 		if (note) board.setMessage(note);
 		await syncWorktree(board, { ...thread, column }, thread.column);
 		if (restart) await restartClaude(board, { ...thread, column }, column === 'planned' ? 'plan' : 'auto');
 	};
 	const project = board.project(thread.project);
-	if (column !== 'done' || !thread.pr || !project) return void board.run(move, 'updating worktree');
+	// Follow-up and Done are for merged work, so not while its PR is open.
+	if (!merged({ column }) || !thread.pr || !project) return void board.run(move, 'updating worktree');
 	board.run(async () => {
-		const problem = await doneProblem(project, thread);
+		const problem = await doneProblem(project, thread, column);
 		if (problem) return board.setMessage(problem);
 		await move();
 	}, 'checking PR');

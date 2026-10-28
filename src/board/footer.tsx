@@ -4,6 +4,7 @@ import { mergeLabel, type PrStatus } from '../github.js';
 import type { Thread } from '../state.js';
 import { LEGEND } from './card.js';
 import { TodoList } from './todoList.js';
+import { merged as isMerged } from '../threads.js';
 
 // Rows inside the thread's details window, which stays this tall so the board above doesn't jump.
 const INFO_HEIGHT = 8;
@@ -65,7 +66,7 @@ export function Footer({ thread, merge, blockers, busy, message, confirming, wid
 						blocked by #{b.id} {b.title}
 					</Text>
 				))}
-				{thread?.todos?.length ? <TodoList todos={thread.todos} lines={todoLines} /> : null}
+				{thread?.todos?.length ? <TodoList todos={thread.todos} lines={todoLines} merged={isMerged(thread)} /> : null}
 			</Box>
 			{children}
 			{busy ? (
