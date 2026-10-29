@@ -18,7 +18,7 @@ Works on macOS, Linux and WSL.
 | git | any recent | worktrees and branches | usually already there |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | | the threads themselves | `npm i -g @anthropic-ai/claude-code` |
 | [GitHub CLI](https://cli.github.com) | | opening PRs and noticing when they merge; run `gh auth login` once | `brew install gh` / [cli.github.com](https://github.com/cli/cli#installation) |
-| [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `M-d`) | `brew install git-delta` / `apt install git-delta` |
+| [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `v`) | `brew install git-delta` / `apt install git-delta` |
 | vim | | commenting on diffs (`c`) and the changed-hunks list (`o`) | usually already there |
 
 `oo` checks for these when it starts. It won't start without tmux, git and claude, and it warns
@@ -119,13 +119,16 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
 ### Reviewing and approving
 
 - `d` shows the diff since the last commit (the current **step**), and `D` the whole thread
-  against the branch it came from. Both go through `delta` in `less`, under a `git diff --stat` of
-  the changed files and how much each changed, and `n` / `N` jump between files and hunks.
-  delta's styles come from your git config. With its defaults, file headers and hunk headers
+  against the branch it came from. Both open in oo's diff viewer, in three tabs that `h` / `l` (or
+  `1` `2` `3`) move between: claude's last response, the changed files and how much each changed
+  (`j` / `k` and ⏎ open one), and the diff through `delta`, a file at a time. There `]` / `[` go to
+  the next / previous file, `n` / `N` (or `}` / `{`) between hunks, and `+` / `-` show more or less context around
+  the changes, up to the whole file. `j` / `k`, `ctrl-d` / `ctrl-u`, `g` / `G` and the mouse wheel
+  scroll, and `/` searches every file: `n` / `N` then go between matches until `esc` ends the search. delta's styles come from your git config. With its defaults, file headers and hunk headers
   look much alike, so this `~/.gitconfig` section is recommended: it makes file headers a solid
   bar and hunk headers dim. `S` in any diff (or `oo delta`) adds it for you: it shows your
-  current `[delta]` keys and a preview first, and only adds keys you haven't set. Leave `navigate`, `file-modified-label` and `hunk-label` at their
-  defaults, because `n` / `N` look for them.
+  current `[delta]` keys and a preview first, and only adds keys you haven't set. Leave `hunk-label` at its
+  default, because `n` / `N` look for it.
 
   ```ini
   [delta]
@@ -159,18 +162,12 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
 
 Confirmations (quit, archive, resuming a busy thread) all take `y`. Any other key cancels.
 
-### Working beside claude
+### A shell beside claude
 
-`s` opens a shell and `M-d` (alt-d) a diff to the right of the thread's claude window (starting
-claude if it isn't running) and jumps there. The diff is the step's, or the thread's when the
-step has none, and `t` switches between them. `r` refreshes it as claude makes changes, and `q`
-closes it. `a` commits everything uncommitted, like approving from `d`:
-claude drafts the message (`a` again while it writes takes it as it is) and it opens in the same
-commit form (esc or an empty message cancels, leaving the changes staged), and claude is
-given your comments and told to move on, as from `d`. Pressing the
-other key swaps what's on the right, and either key jumps back to it later. From inside a
-thread's window, `M-s` / `M-d` do the same, and other `Alt` keys move between panes and threads,
-scroll and go back to the board (see [KEYS.md](KEYS.md)).
+`s` opens a shell to the right of the thread's claude window (starting claude if it isn't running)
+and jumps there; `s` again jumps back to it later. From inside a thread's window, `M-s` does the same,
+and other `Alt` keys move between panes and threads, scroll and go back to the board (see
+[KEYS.md](KEYS.md)).
 
 ### Local: trying a thread in your usual setup
 
@@ -249,7 +246,8 @@ A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
 running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's
 claude can open the PR when you ask it to. `v` shows the PR as GitHub has it: title, merge state,
-checks, reviews and description above its diff (through delta, with `n`/`N` between hunks like `d`).
+checks, reviews and description in the viewer's first tab, then its files and diff like `d` (`+` / `-`
+fetch the PR's commits first to show more context).
 `m` there merges it, using a merge commit, squash or rebase, whichever the repo allows first, and the
 thread goes straight to Done. `b` opens the selected thread's PR in your browser (`$BROWSER` if set; under WSL,
 Windows' default browser). The board checks open PRs every minute and moves merged ones to Done. One in

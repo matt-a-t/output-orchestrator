@@ -36,7 +36,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		title: 'Reviewing',
 		keys: [
 			['d / D', 'step / whole thread diff'],
-			['s / M-d', 'claude + a shell / live diff beside it'],
+			['s', 'claude + a shell beside it'],
 			['c', 'comment on the diff in vim'],
 			['o', 'changed hunks as a vim quickfix list'],
 			['v', 'view the PR (m merges it)'],
@@ -47,10 +47,12 @@ export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'In a diff',
 		keys: [
-			['n/N', 'next / previous file or hunk (the stat is on top)'],
-			['a', 'approve the step (d) / commit (beside claude)'],
-			['t', 'uncommitted / whole thread (beside claude)'],
-			['r', 'refresh (beside claude)'],
+			['h/l 1 2 3', "tabs: claude's response (v: the PR) / files / diff"],
+			['j/k C-d/C-u g/G', 'scroll (files tab: pick a file, ⏎ opens it)'],
+			[']/[ n/N }/{', 'next / previous file, hunk'],
+			['+/-', 'more / less context, up to the whole file'],
+			['/', 'search every file (n/N: matches, esc ends it)'],
+			['a', 'approve the step (d)'],
 			['m', 'merge your PR (v)'],
 			['a / x / c', "approve / request changes / comment (v, someone else's PR)"],
 			['o', 'open the PR in your browser (v)'],
@@ -79,7 +81,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		keys: [
 			['M-h / M-l', 'claude / the pane beside it'],
 			['M-j / M-k', 'next / previous thread'],
-			['M-s / M-d', 'shell / live diff beside claude'],
+			['M-s', 'shell beside claude'],
 			['M-u', 'scroll up (tmux copy mode, q leaves)'],
 			['M-z', 'zoom the pane'],
 			['M-q / M-b', 'back to the board'],

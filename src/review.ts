@@ -3,64 +3,61 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
-import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
+import { diffArgs, hunkLocations, type DiffKind } from './git.js';
 import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogin, type PrDetails, type ReviewComment, type ReviewEvent } from './github.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
+import { lastAssistantText } from './transcripts.js';
+import { viewerShellCommand, type ViewKey } from './viewer.js';
 import { clientWidth, CLOSED, confirmPopup, popup, shellQuote, type PopupOptions, type ProgressPopup } from './tmux.js';
 
-// less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
-// 83) sets up delta's styles (`oo delta`) and comes back to the diff.
-const DIFF_KEYS = '#command\nS quit S\n';
-const APPROVE_KEYS = `${DIFF_KEYS}a quit A\n`;
+// What the viewer (`oo view`) exits with for the key that closed it: a approves, S sets up delta's styles
+// (`oo delta`) and comes back to the diff.
 const APPROVE_STATUS = 65;
 const DELTA_STATUS = 83;
-// The same trick gives the diff beside claude r to refresh it ('R' is 82), t to switch between the
-// step and thread diffs ('T' is 84) and a to commit.
-const PANE_KEYS = `${APPROVE_KEYS}r quit R\nt quit T\n`;
-const REFRESH_STATUS = 82;
-const TOGGLE_STATUS = 84;
-// The PR viewer's o opens the browser ('O' is 79; b and w stay less's page back). On your own PR m
-// merges ('M' is 77); on someone else's a approves, x requests changes ('X' is 88) and c comments ('C' is 67).
-const PR_KEYS = `${DIFF_KEYS}o quit O\n`;
-const OWN_PR_KEYS = `${PR_KEYS}m quit M\n`;
-const REVIEW_PR_KEYS = `${PR_KEYS}a quit A\nx quit X\nc quit C\n`;
-const MERGE_STATUS = 77;
+// The PR viewer's o opens the browser, m merges your own PR, and on someone else's x requests changes and c comments.
 const BROWSER_STATUS = 79;
+const MERGE_STATUS = 77;
+const REQUEST_CHANGES_STATUS = 88;
+const COMMENT_STATUS = 67;
 const REVIEW_STATUSES: Record<number, [ReviewEvent, string]> = {
 	[APPROVE_STATUS]: ['approve', 'approving'],
-	88: ['request-changes', 'requesting changes on'],
-	67: ['comment', 'on'],
+	[REQUEST_CHANGES_STATUS]: ['request-changes', 'requesting changes on'],
+	[COMMENT_STATUS]: ['comment', 'on'],
 };
 // `oo delta`, then a pause so its answer stays up until you're back in the diff.
 const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
-// What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
-const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 // The PR viewer and the popups it opens are framed and coloured magenta so they can't be mistaken for
 // the worktree's diffs: a heavy border, a banner on top, a prompt at the bottom and magenta file headers.
 const PR_FRAME: PopupOptions = { border: 'heavy', borderStyle: 'fg=magenta' };
-const PR_DELTA = "--file-style='bold magenta' --file-decoration-style='magenta ul ol' --hunk-header-decoration-style='magenta box'";
+const PR_DELTA = ['--file-style=bold magenta', '--file-decoration-style=magenta ul ol', '--hunk-header-decoration-style=magenta box'];
 // vim for files holding other people's text (diffs, PRs), with modelines off so none of it can set options.
 const VIM = "vim --cmd 'set nomodeline'";
 
 /**
- * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
- * can be approved from there with `a`, and `S` sets up delta's styles. delta's paging would swallow less's exit
- * status, so it's piped into less here instead.
+ * Show a diff of the worktree in the viewer (`oo view`): claude's last response, the changed files and
+ * the diff a file at a time. Step diffs can be approved from there with `a`, and `S` sets up delta's
+ * styles, coming back to where you were.
  */
 export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Promise<'empty' | 'closed' | 'approved'> {
 	const args = await diffArgs(cwd, kind, thread);
 	if (!args) return 'empty';
 	const approvable = kind === 'step';
 	const label = kind === 'step' ? 'step diff' : `thread diff vs ${args.at(-1)}`;
-	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}S styling  q close `;
-	const command = `${statThenDiff(gitCommand(args))} | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : lesskey('diff', DIFF_KEYS))}`;
-	for (;;) {
-		const status = await popup(command, { cwd, title });
-		if (status !== DELTA_STATUS) return status === APPROVE_STATUS ? 'approved' : 'closed';
-		// Back to the diff, restyled if you added them.
-		await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+	const keys: ViewKey[] = [...(approvable ? [{ key: 'a', status: APPROVE_STATUS, hint: 'approve' }] : []), { key: 'S', status: DELTA_STATUS, hint: 'styling' }];
+	const response = thread.transcriptPath && lastAssistantText(thread.transcriptPath);
+	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
+	const command = viewerShellCommand(dir, { cwd, args, intro: { label: 'Claude', text: response || "No response from claude yet." }, keys });
+	try {
+		for (;;) {
+			const status = await popup(command, { cwd, title: ` ${label} ` });
+			if (status !== DELTA_STATUS) return status === APPROVE_STATUS ? 'approved' : 'closed';
+			// Back to the diff, restyled if you added them.
+			await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
 	}
 }
 
@@ -75,17 +72,34 @@ export type PrAction = { action: 'merge' } | { action: 'review'; event: ReviewEv
 export async function showPr(cwd: string, number: number): Promise<'closed' | PrAction> {
 	const [details, diff, me] = await Promise.all([prDetails(cwd, number), prDiff(cwd, number), viewerLogin(cwd)]);
 	const own = details.author.login === me;
-	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
-	const header = join(dir, 'header');
+	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
 	const patch = join(dir, 'pr.diff');
+	writeFileSync(patch, diff ? diff + '\n' : '');
+	const keys: ViewKey[] = [
+		...(own
+			? [{ key: 'm', status: MERGE_STATUS, hint: 'merge' }]
+			: [
+					{ key: 'a', status: APPROVE_STATUS, hint: 'approve' },
+					{ key: 'x', status: REQUEST_CHANGES_STATUS, hint: 'request changes' },
+					{ key: 'c', status: COMMENT_STATUS, hint: 'comment' },
+				]),
+		{ key: 'o', status: BROWSER_STATUS, hint: 'browser' },
+		{ key: 'S', status: DELTA_STATUS, hint: 'styling' },
+	];
 	// The popup is 90% of the client, less its border.
-	writeFileSync(header, prHeader(details, Math.floor((await clientWidth()) * 0.9) - 2));
-	writeFileSync(patch, diff + '\n');
-	const stat = diff ? `git apply --stat --summary ${shellQuote(patch)}; echo; delta --paging=never --navigate ${PR_DELTA} < ${shellQuote(patch)}` : "echo 'No changes'";
-	const keys = own ? lesskey('own-pr', OWN_PR_KEYS) : lesskey('review-pr', REVIEW_PR_KEYS);
-	const hints = `n/N hunk  ${own ? 'm merge' : 'a approve  x request changes  c comment'}  o browser  S styling  q close`;
-	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(keys, [lessPrompt(`PR #${number} — ${hints}`), '--use-color', '--color=PWm'])}`;
-	const title = ` PR #${number} — ${hints} `;
+	const header = prHeader(details, Math.floor((await clientWidth()) * 0.9) - 2);
+	const command = viewerShellCommand(dir, {
+		cwd,
+		patch,
+		// +/- need the PR's commits, which may not be here yet.
+		fetch: { args: ['origin', `pull/${number}/head`, `refs/heads/${details.baseRefName}`], diff: ['diff', '--merge-base', `origin/${details.baseRefName}`, details.headRefOid] },
+		intro: { label: 'PR', text: header },
+		keys,
+		delta: PR_DELTA,
+		accent: 'magenta',
+	});
+	// Not the PR's title: tmux would run #() in it.
+	const title = ` PR #${number} `;
 	try {
 		for (;;) {
 			const status = await popup(command, { cwd, title, ...PR_FRAME });
@@ -223,89 +237,6 @@ export function prHeader(pr: PrDetails, width = 80): string {
 	]
 		.filter((line, i) => line || i > 3)
 		.join('\n');
-}
-
-/**
- * A shell command for the diff beside claude: the step's, or the thread's if the step has none.
- * `t` switches between the two, `r` re-runs it to keep up with claude's edits, and `a` commits
- * everything uncommitted (`oo commit`: claude drafts the message, you edit it).
- */
-export async function diffPaneCommand(cwd: string, thread: Thread): Promise<string[]> {
-	const step = ['diff', ...(await diffRevs(cwd, 'step', thread))];
-	const whole = ['diff', ...(await diffRevs(cwd, 'thread', thread))];
-	const keys = lesskey('pane', PANE_KEYS);
-	const keysHint = (other: string) => `t ${other}  a commit  r refresh  S styling  q close`;
-	const show = (fn: string, label: string, other: string) =>
-		`${statThenDiff(fn)} | ${lessCommand(keys, [lessPrompt(`${label} — n/N hunk  ${keysHint(other)}`)])}`;
-	const ooCommit = [...OO_COMMAND, 'commit', thread.id].map(shellQuote).join(' ');
-	const script = [
-		`step() { ${gitCommand(step)} "$@"; }`,
-		`thread() { ${gitCommand(whole)} "$@"; }`,
-		'git add --all --intent-to-add',
-		'mode=step; step --quiet && mode=thread',
-		'while :; do',
-		'git add --all --intent-to-add',
-		`if ! $mode --quiet; then`,
-		`  if [ $mode = step ]; then ${show('step', 'uncommitted', 'whole thread')}; else ${show('thread', `thread vs ${whole.at(-1)}`, 'uncommitted')}; fi`,
-		'  status=$?',
-		'else',
-		`  clear; [ $mode = step ] && printf %s ${shellQuote(`No uncommitted changes — ${keysHint('whole thread')}`)} || printf %s ${shellQuote(`No changes in the thread — ${keysHint('uncommitted')}`)}`,
-		'  read -rsn1 key; clear',
-		`  case $key in t) status=${TOGGLE_STATUS};; a) status=${APPROVE_STATUS};; r) status=${REFRESH_STATUS};; S) status=${DELTA_STATUS};; *) status=0;; esac`,
-		'fi',
-		'case $status in',
-		`  ${TOGGLE_STATUS}) [ $mode = step ] && mode=thread || mode=step;;`,
-		// oo commit has its own popups.
-		`  ${APPROVE_STATUS}) out=$(${ooCommit} 2>&1); [ -n "$out" ] && tmux display-message "$out";;`,
-		`  ${REFRESH_STATUS}) ;;`,
-		`  ${DELTA_STATUS}) clear; ${OO_DELTA}; clear;;`,
-		'  *) break;;',
-		'esac',
-		'done',
-	].join('\n');
-	return ['bash', '-c', script];
-}
-
-/**
- * The diff's stat (each changed file and how much it changed, sized to the terminal), then the
- * diff through delta. The stat stays out of delta so it isn't restyled; n/N skip it.
- */
-function statThenDiff(git: string): string {
-	// Header styles come from the user's [delta] git config (`oo delta` sets up the README's recommended one).
-	return `{ ${git} --stat="$(tput cols)" --compact-summary --color=always; echo; ${git} | delta --paging=never --navigate; }`;
-}
-
-function gitCommand(args: string[]): string {
-	return `git ${args.map(shellQuote).join(' ')}`;
-}
-
-/** less over delta's output, with n/N jumping between files and hunks, and any `extra` options. */
-function lessCommand(keys?: string, extra: string[] = []): string {
-	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
-	// Matches aren't highlighted (-G) so delta's header styles show through, and -j4 lands a jump on
-	// the 4th row so the end of the hunk before shows above it.
-	const less = [
-		'less',
-		'-R',
-		'-G',
-		'-j4',
-		`--pattern=${NAVIGATE_PATTERN}`,
-		'+g',
-		...(keys ? [`--lesskey-src=${keys}`] : []),
-		...extra,
-	];
-	return less.map(shellQuote).join(' ');
-}
-
-/** A label for less's (short, the s) prompt, so it stays in view; these characters are special there. */
-function lessPrompt(label: string): string {
-	return `--prompt=s${label.replace(/[?:.%\\]/g, '\\$&')}`;
-}
-
-function lesskey(name: string, keys: string): string {
-	const file = join(tmpdir(), `oo-${name}.lesskey`);
-	writeFileSync(file, keys);
-	return file;
 }
 
 /**

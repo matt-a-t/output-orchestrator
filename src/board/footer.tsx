@@ -9,7 +9,7 @@ import { merged as isMerged } from '../threads.js';
 // Rows inside the thread's details window, which stays this tall so the board above doesn't jump.
 const INFO_HEIGHT = 8;
 
-const HELP = 'h/l j/k move  ⏎ open  n new  d diff  s/M-d shell/diff beside claude  q quit';
+const HELP = 'h/l j/k move  ⏎ open  n new  d diff  s shell beside claude  q quit';
 
 type Props = {
 	// The highlighted thread, unless something covers the board.

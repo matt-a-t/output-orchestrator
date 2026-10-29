@@ -254,8 +254,8 @@ function cycleThreads(step: 1 | -1): string[] {
 /**
  * Bind `prefix b`, `prefix C-b` (for when ctrl is still held), `M-b` and `M-q` (no prefix) to
  * jump back to the board, and in thread windows: `M-h` / `M-l` to move between claude and the pane
- * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` / `M-d` to open a shell / diff
- * beside claude (via `split`, the command prefix that runs `oo split`), `M-u` to scroll up (copy
+ * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` to open a shell beside claude
+ * (via `split`, the command prefix that runs `oo split`), `M-u` to scroll up (copy
  * mode) and `M-z` to zoom the pane. Not `M-v` (claude's image paste) or `M-[` (the start of
  * arrow keys' escape codes). Keys the user has bound to something themselves are left alone.
  */
@@ -278,7 +278,6 @@ export async function bindBoardKeys(split: string): Promise<void> {
 		['root', 'M-j', inThreads('M-j', cycleThreads(1))],
 		['root', 'M-k', inThreads('M-k', cycleThreads(-1))],
 		['root', 'M-s', inThreads('M-s', beside('shell'))],
-		['root', 'M-d', inThreads('M-d', beside('diff'))],
 		['root', 'M-u', inThreads('M-u', ['copy-mode', '-u'])],
 		['root', 'M-z', inThreads('M-z', ['resize-pane', '-Z'])],
 	];
@@ -289,6 +288,10 @@ export async function bindBoardKeys(split: string): Promise<void> {
 		const taken = existing.exitCode === 0 && !ours;
 		if (!taken) await execa('tmux', ['bind-key', '-T', table, key, ...command]);
 	}
+	// M-d opened a diff beside claude before the viewer replaced it; a server started back then still has it.
+	const old = await execa('tmux', ['list-keys', '-T', 'root', 'M-d'], { reject: false });
+	// Quoted again by list-keys, so look for the end of the split command instead of all of it.
+	if (old.exitCode === 0 && /split\W* diff #\{/.test(old.stdout)) await execa('tmux', ['unbind-key', '-T', 'root', 'M-d']);
 }
 
 /** One tmux command as a string, quoting arguments that need it (for if-shell). */

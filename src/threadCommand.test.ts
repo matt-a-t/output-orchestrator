@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
-import { approvedPrompt, approveTodo, followUpPrompt, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
+import { approvedPrompt, followUpPrompt, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todoRows, todosDone, todoWindow, withDrafts } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
@@ -399,23 +399,6 @@ test('todosDone needs a list with every item done', () => {
 	assert.equal(todosDone([]), false);
 	assert.equal(todosDone([{ subject: 'a', status: 'done' }, { subject: 'b', status: 'review' }]), false);
 	assert.equal(todosDone([{ subject: 'a', status: 'done' }, { subject: 'b', status: 'done' }]), true);
-});
-
-test('committing outside the board ticks off the checkpoint in review', async () => {
-	const todos = [{ subject: 'a', status: 'review' as const }, { subject: 'b', status: 'pending' as const }];
-	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos }, { cwd: '/work/two', column: 'active' }]);
-	assert.equal(await approveTodo('1', context(dir, '/')), '✓ a');
-	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.todos!.map(t => t.status), ['done', 'pending']);
-	// Nothing in review or active: nothing to tick off.
-	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
-	assert.equal(await approveTodo('2', context(dir, '/')), undefined);
-});
-
-test('committing outside the board drops the commit draft it used, keeping the PR one', async () => {
-	const pr = { title: 't', body: 'b' };
-	const { dir } = fixture([{ cwd: '/work/one', column: 'active', drafts: { commit: 'Add a', pr } }]);
-	assert.equal(await approveTodo('1', context(dir, '/')), undefined);
-	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.drafts, { pr });
 });
 
 test('a stopped claude is told which step was committed and what comes next, and nothing after the last', () => {

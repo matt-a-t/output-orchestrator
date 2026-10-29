@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
-import { applyRequest, approvedTodo, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
+import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
@@ -490,20 +490,6 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: st
 					: 'That was the last step: open its PR (`oo thread pr`) only when the user asks.';
 	const comments = notes && `The user's comments, to handle before ${next === -1 ? 'you stop' : 'moving on'}: "${notes}".`;
 	return [done, comments, then].filter(Boolean).join(' ');
-}
-
-/**
- * After a step of the thread is committed outside the board (`oo commit`): tick off its checkpoint and
- * drop the commit draft it used, as approving it on the board does.
- */
-export async function approveTodo(thread: string, ctx: Context = defaultContext()): Promise<string | undefined> {
-	const stored = loadState(join(ctx.dir, 'state.json')).threads.find(t => t.id === thread);
-	if (stored?.drafts?.commit) await change({ op: 'draft', thread, commit: null }, ctx);
-	const todos = stored?.todos ?? [];
-	const item = approvedTodo(todos);
-	if (item === -1) return;
-	const response = await change({ op: 'todo', thread, item: item + 1, status: 'done' }, ctx);
-	return response.ok ? `✓ ${todos[item]!.subject}` : `✗ ${response.message}`;
 }
 
 /** What a thread's claude is told as it starts in Local, which the move into it restarts claude for. Imported threads don't move. */
