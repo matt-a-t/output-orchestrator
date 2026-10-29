@@ -1,7 +1,8 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { sanitize } from './sanitize.js';
 
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 
@@ -97,6 +98,37 @@ export async function listOutsideThreads(cwd: string, limit = 20): Promise<Outsi
 		if (threads.length === limit) break;
 	}
 	return threads;
+}
+
+/**
+ * The text of claude's last message in a transcript, sanitized: its text blocks, which the transcript
+ * keeps one per entry under the message's id. undefined if it has none (or there's no transcript).
+ */
+export function lastAssistantText(transcriptPath: string): string | undefined {
+	let text: string;
+	try {
+		text = readFileSync(transcriptPath, 'utf8');
+	} catch {
+		return;
+	}
+	const entries: { id?: string; text: string }[] = [];
+	for (const line of text.split('\n')) {
+		if (!line) continue;
+		let entry;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (entry.type !== 'assistant' || entry.isSidechain) continue;
+		const content = entry.message?.content;
+		const blocks = Array.isArray(content) ? content.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text as string) : [];
+		if (blocks.length) entries.push({ id: entry.message?.id, text: blocks.join('\n\n') });
+	}
+	const last = entries.at(-1);
+	if (!last) return;
+	const parts = last.id ? entries.filter(e => e.id === last.id).map(e => e.text) : [last.text];
+	return sanitize(parts.join('\n\n')).trim() || undefined;
 }
 
 /** Whether the transcript was written to recently enough that its claude may still be running. */
