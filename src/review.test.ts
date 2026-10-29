@@ -23,6 +23,7 @@ const pr: PrDetails = {
 	statusCheckRollup: [],
 	headRefName: 'foo',
 	baseRefName: 'main',
+	headRefOid: 'a'.repeat(40),
 	additions: 3,
 	deletions: 1,
 };

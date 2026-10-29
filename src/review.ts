@@ -23,17 +23,15 @@ const DELTA_STATUS = 83;
 const PANE_KEYS = `${APPROVE_KEYS}r quit R\nt quit T\n`;
 const REFRESH_STATUS = 82;
 const TOGGLE_STATUS = 84;
-// The PR viewer's o opens the browser ('O' is 79; b and w stay less's page back). On your own PR m
-// merges ('M' is 77); on someone else's a approves, x requests changes ('X' is 88) and c comments ('C' is 67).
-const PR_KEYS = `${DIFF_KEYS}o quit O\n`;
-const OWN_PR_KEYS = `${PR_KEYS}m quit M\n`;
-const REVIEW_PR_KEYS = `${PR_KEYS}a quit A\nx quit X\nc quit C\n`;
-const MERGE_STATUS = 77;
+// The PR viewer's o opens the browser, m merges your own PR, and on someone else's x requests changes and c comments.
 const BROWSER_STATUS = 79;
+const MERGE_STATUS = 77;
+const REQUEST_CHANGES_STATUS = 88;
+const COMMENT_STATUS = 67;
 const REVIEW_STATUSES: Record<number, [ReviewEvent, string]> = {
 	[APPROVE_STATUS]: ['approve', 'approving'],
-	88: ['request-changes', 'requesting changes on'],
-	67: ['comment', 'on'],
+	[REQUEST_CHANGES_STATUS]: ['request-changes', 'requesting changes on'],
+	[COMMENT_STATUS]: ['comment', 'on'],
 };
 // `oo delta`, then a pause so its answer stays up until you're back in the diff.
 const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
@@ -42,7 +40,7 @@ const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 // The PR viewer and the popups it opens are framed and coloured magenta so they can't be mistaken for
 // the worktree's diffs: a heavy border, a banner on top, a prompt at the bottom and magenta file headers.
 const PR_FRAME: PopupOptions = { border: 'heavy', borderStyle: 'fg=magenta' };
-const PR_DELTA = "--file-style='bold magenta' --file-decoration-style='magenta ul ol' --hunk-header-decoration-style='magenta box'";
+const PR_DELTA = ['--file-style=bold magenta', '--file-decoration-style=magenta ul ol', '--hunk-header-decoration-style=magenta box'];
 // vim for files holding other people's text (diffs, PRs), with modelines off so none of it can set options.
 const VIM = "vim --cmd 'set nomodeline'";
 
@@ -83,17 +81,34 @@ export type PrAction = { action: 'merge' } | { action: 'review'; event: ReviewEv
 export async function showPr(cwd: string, number: number): Promise<'closed' | PrAction> {
 	const [details, diff, me] = await Promise.all([prDetails(cwd, number), prDiff(cwd, number), viewerLogin(cwd)]);
 	const own = details.author.login === me;
-	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
-	const header = join(dir, 'header');
+	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
 	const patch = join(dir, 'pr.diff');
+	writeFileSync(patch, diff ? diff + '\n' : '');
+	const keys: ViewKey[] = [
+		...(own
+			? [{ key: 'm', status: MERGE_STATUS, hint: 'merge' }]
+			: [
+					{ key: 'a', status: APPROVE_STATUS, hint: 'approve' },
+					{ key: 'x', status: REQUEST_CHANGES_STATUS, hint: 'request changes' },
+					{ key: 'c', status: COMMENT_STATUS, hint: 'comment' },
+				]),
+		{ key: 'o', status: BROWSER_STATUS, hint: 'browser' },
+		{ key: 'S', status: DELTA_STATUS, hint: 'styling' },
+	];
 	// The popup is 90% of the client, less its border.
-	writeFileSync(header, prHeader(details, Math.floor((await clientWidth()) * 0.9) - 2));
-	writeFileSync(patch, diff + '\n');
-	const stat = diff ? `git apply --stat --summary ${shellQuote(patch)}; echo; delta --paging=never --navigate ${PR_DELTA} < ${shellQuote(patch)}` : "echo 'No changes'";
-	const keys = own ? lesskey('own-pr', OWN_PR_KEYS) : lesskey('review-pr', REVIEW_PR_KEYS);
-	const hints = `n/N hunk  ${own ? 'm merge' : 'a approve  x request changes  c comment'}  o browser  S styling  q close`;
-	const command = `{ cat ${shellQuote(header)}; ${stat}; } | ${lessCommand(keys, [lessPrompt(`PR #${number} — ${hints}`), '--use-color', '--color=PWm'])}`;
-	const title = ` PR #${number} — ${hints} `;
+	const header = prHeader(details, Math.floor((await clientWidth()) * 0.9) - 2);
+	const command = viewerShellCommand(dir, {
+		cwd,
+		patch,
+		// +/- need the PR's commits, which may not be here yet.
+		fetch: { args: ['origin', `pull/${number}/head`, `refs/heads/${details.baseRefName}`], diff: ['diff', '--merge-base', `origin/${details.baseRefName}`, details.headRefOid] },
+		intro: { label: 'PR', text: header },
+		keys,
+		delta: PR_DELTA,
+		accent: 'magenta',
+	});
+	// Not the PR's title: tmux would run #() in it.
+	const title = ` PR #${number} `;
 	try {
 		for (;;) {
 			const status = await popup(command, { cwd, title, ...PR_FRAME });

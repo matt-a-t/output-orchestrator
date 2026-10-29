@@ -148,11 +148,12 @@ export type PrDetails = PrStatus & {
 	statusCheckRollup: PrCheck[];
 	headRefName: string;
 	baseRefName: string;
+	headRefOid: string;
 	additions: number;
 	deletions: number;
 };
 
-const DETAIL_FIELDS = 'number,title,body,url,author,isDraft,state,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup,headRefName,baseRefName,additions,deletions';
+const DETAIL_FIELDS = 'number,title,body,url,author,isDraft,state,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup,headRefName,baseRefName,headRefOid,additions,deletions';
 
 /** What the PR viewer shows above the diff. */
 export async function prDetails(cwd: string, number: number): Promise<PrDetails> {

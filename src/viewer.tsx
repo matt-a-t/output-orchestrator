@@ -31,8 +31,14 @@ export type ViewKey = { key: string; status: number; hint: string };
 /** What `oo view` shows, written by the caller to spec.json in the viewer's directory. */
 export type ViewSpec = {
 	cwd: string;
-	// `git diff` and its revisions, as diffArgs gives them.
-	args: string[];
+	// The diff: `git diff` and its revisions (as diffArgs gives them), or a patch file, e.g. a PR's.
+	args?: string[];
+	patch?: string;
+	// For a patch, the `git fetch` arguments that get what it's a diff of and the `git diff` ones for it then, so +/- can re-run it.
+	fetch?: { args: string[]; diff: string[] };
+	// More delta options (the PR viewer's magenta headers) and the colour of the tab bar's current tab.
+	delta?: string[];
+	accent?: string;
 	// Tab 1: its name in the tab bar and its text.
 	intro: { label: string; text: string };
 	keys: ViewKey[];
@@ -60,18 +66,32 @@ const LEAD = 3;
 const WHEEL_ROWS = 3;
 
 /** One file's diff through delta, `width` columns wide, as lines; the diff as it is if delta isn't installed. */
-async function deltaLines(text: string, width: number): Promise<string[]> {
-	const delta = await execa('delta', ['--paging=never', '--navigate', `--width=${width}`], { input: text, reject: false });
+async function deltaLines(text: string, width: number, options: string[] = []): Promise<string[]> {
+	const delta = await execa('delta', ['--paging=never', '--navigate', `--width=${width}`, ...options], { input: text, reject: false });
 	const out = delta.exitCode === 0 ? delta.stdout : text;
 	return out.replace(/\n$/, '').split('\n');
 }
 
-/** A file's diff with `context` lines of context: the one already read at the default, else git's. */
+let fetched: Promise<string[] | undefined> | undefined;
+
+/** The `git diff` arguments +/- re-run: the spec's, or a patch's once what it's a diff of is fetched; undefined if that fails. */
+function contextArgs(spec: ViewSpec): Promise<string[] | undefined> {
+	if (spec.args || !spec.fetch) return Promise.resolve(spec.args);
+	const { args, diff } = spec.fetch;
+	return (fetched ??= execa('git', ['-C', spec.cwd, 'fetch', '--quiet', '--no-tags', '--no-write-fetch-head', ...args]).then(
+		() => diff,
+		() => undefined,
+	));
+}
+
+/** A file's diff with `context` lines of context: the one already read at the default (or if git can't make another), else git's. */
 async function fileDiff(spec: ViewSpec, file: FilePatch, context: number): Promise<string> {
-	if (context === DEFAULT_CONTEXT) return file.text;
+	const args = context === DEFAULT_CONTEXT ? undefined : await contextArgs(spec);
+	if (!args) return file.text;
 	const paths = file.oldPath === file.path ? [file.path] : [file.oldPath, file.path];
-	const { stdout } = await execa('git', ['-C', spec.cwd, ...gitDiff(spec.args, context), '--', ...paths]);
-	return stdout + '\n';
+	const { stdout } = await execa('git', ['-C', spec.cwd, ...gitDiff(args, context), '--', ...paths]);
+	// Empty once the PR has merged, for one.
+	return stdout ? stdout + '\n' : file.text;
 }
 
 function gitDiff(args: string[], context: number): string[] {
@@ -107,7 +127,7 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		const key = cacheKey(i, ctx);
 		const cached = rendered.get(key);
 		if (cached) return cached;
-		const lines = await deltaLines(await fileDiff(spec, files[i]!, ctx), columns);
+		const lines = await deltaLines(await fileDiff(spec, files[i]!, ctx), columns, spec.delta);
 		const plain = plainLines(lines);
 		const result = { lines, plain, hunks: hunkRows(plain) };
 		setRendered(map => new Map(map).set(key, result));
@@ -229,18 +249,24 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		if (input === '+' || input === '=' || input === '-') {
 			const next = stepContext(context, input === '-' ? -1 : 1);
 			if (next === context) return setMessage(input === '-' ? 'Least context' : 'Already the whole file');
-			// Rows move with the context, so matches found before are stale.
-			setMatches(undefined);
-			setMatch(undefined);
-			setContexts(map => new Map(map).set(file, next));
-			setFileTops(map => new Map(map).set(file, 0));
+			if (!spec.args) setMessage('fetching the PR…');
+			const on = file;
+			return void contextArgs(spec).then(args => {
+				if (!args) return setMessage("✗ Couldn't fetch the PR, so there's no more context");
+				setMessage('');
+				// Rows move with the context, so matches found before are stale.
+				setMatches(undefined);
+				setMatch(undefined);
+				setContexts(map => new Map(map).set(on, next));
+				setFileTops(map => new Map(map).set(on, 0));
+			});
 		}
 	});
 
 	const tabBar = (
 		<Text wrap="truncate">
 			{[spec.intro.label, ...TABS.slice(1)].map((label, i) => (
-				<Text key={i} inverse={i === tab} bold={i === tab}>
+				<Text key={i} inverse={i === tab && !spec.accent} backgroundColor={i === tab ? spec.accent : undefined} bold={i === tab}>
 					{` ${i + 1} ${label} `}
 				</Text>
 			))}
@@ -348,8 +374,8 @@ export async function viewCommand([dir]: string[]): Promise<number> {
 	const spec = JSON.parse(readFileSync(join(dir, 'spec.json'), 'utf8')) as ViewSpec;
 	const placeFile = join(dir, 'place.json');
 	const place = existsSync(placeFile) ? (JSON.parse(readFileSync(placeFile, 'utf8')) as Place) : undefined;
-	const { stdout } = await execa('git', ['-C', spec.cwd, ...gitDiff(spec.args, DEFAULT_CONTEXT)]);
-	const files = splitPatch(stdout);
+	const diff = spec.args ? (await execa('git', ['-C', spec.cwd, ...gitDiff(spec.args, DEFAULT_CONTEXT)])).stdout : readFileSync(spec.patch!, 'utf8');
+	const files = splitPatch(diff);
 	let status = 0;
 	const app = render(
 		<Viewer
