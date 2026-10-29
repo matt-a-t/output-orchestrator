@@ -2,7 +2,7 @@
 
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { DEFAULT_WAKE_PROMPT, type Thread } from '../state.js';
+import { DEFAULT_WAKE_PROMPT, hidden, type Thread } from '../state.js';
 import { CLAUDE_SETTINGS_FILE } from '../status.js';
 import { threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
@@ -147,7 +147,7 @@ export function wake(board: Board, thread: Thread) {
 
 /** W: wake every one of `threads` (those shown) that was closed mid-work, once asked. */
 export function wakeStalled(board: Board, threads: Thread[]) {
-	const woken = threads.filter(t => t.column !== 'done' && t.column !== 'archived' && stalled(board, t));
+	const woken = threads.filter(t => t.column !== 'done' && !hidden(t.column) && stalled(board, t));
 	if (woken.length === 0) return board.setMessage('No interrupted threads');
 	const ids = (threads: Thread[]) => threads.map(t => `#${t.id}`).join(', ');
 	return board.ask(`Wake ${ids(woken)}?`, async () => {

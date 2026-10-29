@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
-import { COLUMN_LABELS, COLUMNS, DATA_DIR, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
@@ -14,7 +14,7 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
   oo thread list [--json] [--project <name>] [--column <column>]
   oo thread show [id] [--json]
   oo thread move [id] <column>
-                              columns: ${[...COLUMNS, 'archived'].join(', ')}
+                              columns: ${ALL_COLUMNS.join(', ')}
                               Moving to pr is oo thread pr; a thread in Local can't move until it's back.
   oo thread pr [id] [--title <title>] [--body-file <path>|-]
                               push the thread's branch, open its PR (unless it has one) and move it to PR, from Local too.
@@ -60,8 +60,6 @@ export const defaultContext = (): Context => ({
 	dir: DATA_DIR,
 	stdin: () => readFileSync(0, 'utf8'),
 });
-
-const ALL_COLUMNS: readonly Column[] = [...COLUMNS, 'archived'];
 
 /** A failure to report as its message alone. */
 class CommandError extends Error {}
@@ -249,7 +247,7 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		// That removes the worktree and closes the thread's claude, which is likely the one asking. A thread
 		// with its own directory (imported, or in a project without worktrees) keeps both.
 		const ownDir = state.threads.find(t => t.id === thread)?.cwd;
-		if ((column === 'done' || column === 'archived') && !ownDir && threadAt(state, ctx.cwd)?.id === thread) {
+		if ((column === 'done' || hidden(column)) && !ownDir && threadAt(state, ctx.cwd)?.id === thread) {
 			return fail(`Moving #${thread} to ${COLUMN_LABELS[column]} from its own directory would close its claude — do it from the board`);
 		}
 		const response = await change({ op: 'move', thread, column }, ctx);
@@ -500,7 +498,7 @@ function localBriefing(state: State, t: Thread): string | undefined {
 
 /** What a thread's claude is told as it starts about the project's other open threads, so it knows who it can tell about its work. */
 function relatedBriefing(state: State, t: Thread): string | undefined {
-	const open = state.threads.filter(o => o.id !== t.id && o.project === t.project && o.column !== 'done' && o.column !== 'archived');
+	const open = state.threads.filter(o => o.id !== t.id && o.project === t.project && o.column !== 'done' && !hidden(o.column));
 	if (!open.length) return;
 	const shown = open.slice(0, 8).map(o => `#${o.id} ${o.title} (${COLUMN_LABELS[o.column]})`);
 	const more = open.length > shown.length ? `, and ${open.length - shown.length} more (oo thread list)` : '';

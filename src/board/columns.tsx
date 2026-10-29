@@ -20,7 +20,7 @@ export const newColumnsLayout = (): ColumnsLayout => ({ height: 0, scrollOffsets
 
 type Props = {
 	board: Board;
-	// The columns shown (COLUMNS, and ARCHIVED while A shows it), and each one's threads with the filter applied.
+	// The columns shown (COLUMNS, with IDEAS and ARCHIVED while I and A show them), and each one's threads with the filter applied.
 	shown: readonly Column[];
 	columns: Thread[][];
 	// Its row is within the column.

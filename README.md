@@ -60,6 +60,12 @@ selected thread between columns, and `J` / `K` reorder it within one. `!` gives 
 threads (`▲`) sit at the top of their column and low ones (`▽`) at the bottom, and `J` / `K` reorder
 threads among those of the same priority. `oo thread priority [id] <high|normal|low>` sets it from the shell.
 
+Planned makes a good idea box, and **IDEAS** is where to keep the ones worth saving but not planned yet:
+`H` on a Planned thread shelves it there, out of sight until `I` shows an IDEAS column before Planned, and
+`L` brings it back. Unlike archiving, it isn't finished with: threads waiting on it keep waiting. Like
+archiving, its claude window closes and its worktree goes if it had one (the branch stays), so it can't be
+in Local or have uncommitted changes. `x` archives an idea you're done with.
+
 Leaving Planned (or opening a thread) gives it its own worktree and branch (`av-123-<title>` from its ticket, or `oo/<title>` without one),
 under `~/.local/share/output-orchestrator/worktrees/`, and claude runs there. If a thread in
 Planned has claude make a plan and you approve it, the plan is saved to the thread and the thread

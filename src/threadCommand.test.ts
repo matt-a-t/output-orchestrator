@@ -594,6 +594,7 @@ test('a starting claude is told the project\'s other open threads it could messa
 		{ cwd: '/work/two', title: 'api', column: 'polish' },
 		{ cwd: '/work/three', column: 'done' },
 		{ cwd: '/work/four', project: 'other' },
+		{ cwd: '/work/five', column: 'ideas' },
 	]);
 	const briefing = (await sessionStarted({ cwd: '/work/one' }, context(dir, '/', { OO_THREAD_ID: '1' })))!;
 	assert.match(briefing, /Other open threads in p: #2 api \(POLISH\)\. If your work changes something.*oo thread send <id>/);
@@ -644,6 +645,19 @@ test('a blocker reaching Follow-up, Done or archived unblocks the threads waitin
 	assert.deepEqual(blockedBy(), ['3']);
 	assert.equal(await threadCommand(['move', '3', 'followup'], ctx), 0);
 	assert.equal(blockedBy(), undefined);
+});
+
+test('a blocker shelved in IDEAS still blocks, and moves there like archiving', async t => {
+	const { dir, project } = fixture([{ cwd: '/work/one', blockedBy: ['2'] }, { cwd: '/work/two' }, { cwd: '/work/three', local: true }]);
+	const output = capture(t);
+	const ctx = context(dir, project);
+	assert.equal(await threadCommand(['move', '2', 'ideas'], ctx), 0);
+	assert.match(output.out(), /Moved #2 to IDEAS/);
+	const state = loadState(join(dir, 'state.json'));
+	assert.equal(state.threads.find(t => t.id === '2')!.column, 'ideas');
+	assert.deepEqual(state.threads.find(t => t.id === '1')!.blockedBy, ['2']);
+	assert.equal(await threadCommand(['move', '3', 'ideas'], ctx), 1);
+	assert.match(output.err(), /Local/);
 });
 
 test('a thread waiting on a finished one shows as not blocked', async t => {

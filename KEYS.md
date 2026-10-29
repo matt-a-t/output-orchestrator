@@ -7,7 +7,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | Key | |
 |---|---|
 | `h`/`l` `j`/`k` | move (arrows too) |
-| `H`/`L` | move the thread a column (`H` brings an archived one back to Done) |
+| `H`/`L` | move the thread a column (`H` on a Planned one shelves it in IDEAS, `L` brings it back; `H` brings an archived one back to Done) |
 | `J`/`K` | reorder within its column, among the threads of its priority |
 | `⏎` | open (or resume) its claude |
 | `w` / `W` | wake it / every thread closed mid-work ("keep going") |
@@ -18,12 +18,13 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `t` | into / out of Local (`oo thread local` from the shell) |
 | `B` | blocked by another thread: move to it and `⏎` (again unpicks it, `⏎` on the thread itself clears them all, `esc` cancels; `oo thread block` from the shell) |
 | `F` | straight to Done |
-| `x` | archive |
+| `x` | archive (an IDEAS one too) |
 | `!` | cycle its priority: normal → high (`▲`, top of its column) → low (`▽`, bottom); `oo thread priority` from the shell |
 | `C` | cycle its colour |
 | `p` | filter by project |
 | `/` | search the id, title, plan, ticket, branch and PR as you type; `⏎` keeps it, `esc` drops it |
 | `esc` | clear the search, then the project filter |
+| `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `b`, `J`/`K`, `!` and `C`) |
 | `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K`, `!` and `C`) |
 | `i` | import a thread started outside oo |
 | `P` | projects (their hooks, wake prompt and when idle claudes close) |
