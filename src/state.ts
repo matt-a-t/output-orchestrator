@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 export const COLUMNS = ['planned', 'active', 'polish', 'pr', 'followup', 'done'] as const;
 export const COLUMN_LABELS: Record<Column, string> = {
+	ideas: 'IDEAS',
 	planned: 'PLANNED',
 	active: 'ACTIVE',
 	polish: 'POLISH',
@@ -17,8 +18,12 @@ export const COLUMN_LABELS: Record<Column, string> = {
 export const LOCAL_LABEL = 'LOCAL';
 export const COLORS = ['cyan', 'magenta', 'yellow', 'green', 'blue', 'red', 'white'] as const;
 
-const ColumnSchema = z.enum([...COLUMNS, 'archived']);
+// IDEAS (before Planned) shelves a thread worth keeping but not planned yet, ARCHIVED (after Done) one that's
+// finished with. Both are hidden until I / A shows them, and their threads have no worktree or window.
+export const ALL_COLUMNS = ['ideas', ...COLUMNS, 'archived'] as const;
+const ColumnSchema = z.enum(ALL_COLUMNS);
 export type Column = z.infer<typeof ColumnSchema>;
+export const hidden = (column: Column) => column === 'ideas' || column === 'archived';
 
 /** Shell commands a project runs when things happen on the board (see hooks.ts). */
 export const HOOK_EVENTS = ['newThread', 'worktreeCreated', 'enterLocal', 'leaveLocal', 'enterPolish', 'leavePolish'] as const;

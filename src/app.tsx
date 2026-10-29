@@ -39,11 +39,12 @@ export function App() {
 	);
 	const searchRef = useRef(search.query);
 	searchRef.current = search.query;
-	// A shows an ARCHIVED column after Done; the search covers it too.
+	// I shows an IDEAS column before Planned, and A an ARCHIVED one after Done; the search covers them too.
+	const [showIdeas, setShowIdeas] = useState(false);
 	const [showArchived, setShowArchived] = useState(false);
-	const showArchivedRef = useRef(showArchived);
-	showArchivedRef.current = showArchived;
-	const shownColumns: readonly Column[] = showArchived ? [...COLUMNS, 'archived'] : COLUMNS;
+	const shownColumns: readonly Column[] = [...(showIdeas ? ['ideas' as const] : []), ...COLUMNS, ...(showArchived ? ['archived' as const] : [])];
+	const shownColumnsRef = useRef(shownColumns);
+	shownColumnsRef.current = shownColumns;
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
 	// Asking which project to import from (i with no filter), over the bottom of the board.
@@ -82,8 +83,8 @@ export function App() {
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
 
-	const visible = (t: Thread, f = filter, q = search.query, archived = showArchived) =>
-		(archived || t.column !== 'archived') && (!f || t.project === f) && matchesSearch(t, q);
+	const visible = (t: Thread, f = filter, q = search.query, columns = shownColumns) =>
+		columns.includes(t.column) && (!f || t.project === f) && matchesSearch(t, q);
 	const columnThreads = (column: Column, f = filter, q = search.query) => byPriority(state.threads.filter(t => t.column === column && visible(t, f, q)));
 
 	const colThreads = columnThreads(shownColumns[cursor.col]!);
@@ -177,11 +178,12 @@ export function App() {
 		setBusy,
 		run,
 		ask,
-		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current, searchRef.current, showArchivedRef.current)),
+		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current, searchRef.current, shownColumnsRef.current)),
+		shownColumns: () => shownColumnsRef.current,
 		showAtEnd: column =>
 			setCursor({
-				col: COLUMNS.indexOf(column as (typeof COLUMNS)[number]),
-				row: stateRef.current.threads.filter(t => t.column === column && visible(t, filterRef.current, searchRef.current, showArchivedRef.current)).length,
+				col: shownColumnsRef.current.indexOf(column),
+				row: stateRef.current.threads.filter(t => t.column === column && visible(t, filterRef.current, searchRef.current, shownColumnsRef.current)).length,
 			}),
 	};
 	useRequests(board);
@@ -226,7 +228,7 @@ export function App() {
 
 	/** Jump to the column/row a thread is shown at, clearing the filter and search if they hide it. */
 	const showThread = (thread: Thread) => {
-		if (thread.column === 'archived' && !showArchived) return false;
+		if (!shownColumns.includes(thread.column)) return false;
 		const shown = filter && filter !== thread.project ? null : filter;
 		const query = matchesSearch(thread, search.query) ? search.query : '';
 		setFilter(shown);
@@ -299,8 +301,14 @@ export function App() {
 		if (input === 'A') {
 			setShowArchived(!showArchived);
 			// Out of the ARCHIVED column as it goes, into Done.
-			if (showArchived && cursor.col >= COLUMNS.length) setCursor({ col: COLUMNS.indexOf('done'), row: 0 });
+			if (showArchived && shownColumns[cursor.col] === 'archived') setCursor({ col: cursor.col - 1, row: 0 });
 			return;
+		}
+		if (input === 'I') {
+			setShowIdeas(!showIdeas);
+			// The columns shift by one, so stay on the same one (or out of IDEAS, into Planned).
+			if (!showIdeas) return setCursor({ col: cursor.col + 1, row });
+			return setCursor(cursor.col === 0 ? { col: 0, row: 0 } : { col: cursor.col - 1, row });
 		}
 		if (input === 'i') return startImport();
 		if (input === 'p') {
@@ -334,6 +342,7 @@ export function App() {
 				<Text dimColor>
 					filter: {filter ?? 'all'}
 					{search.query ? ` · /${search.query}` : ''}
+					{showIdeas ? ' · +ideas' : ''}
 					{showArchived ? ' · +archived' : ''}
 				</Text>
 			</Box>

@@ -4,7 +4,7 @@ import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeW
 import { prState, retargetPr } from './github.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
-import { COLUMN_LABELS, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { COLUMN_LABELS, hidden, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
 /** Where the thread's work happens, if it has anywhere yet. */
@@ -297,12 +297,13 @@ export function moveWarning(state: State, thread: Thread, column: Column): strin
 	if (other) return `⚠ ${thread.project} already has an active thread: #${other.id} ${other.title}`;
 }
 
-/** Why the thread can't be archived, if it can't. */
-export async function archiveProblem(thread: Thread): Promise<string | undefined> {
-	if (thread.local) return `⚠ Bring #${thread.id} back from Local before archiving`;
-	// Archived threads are hidden, so don't leave uncommitted work behind in one.
+/** Why the thread can't move to a hidden column (IDEAS, ARCHIVED), if it can't. */
+export async function shelveProblem(thread: Thread, column: Column): Promise<string | undefined> {
+	const moving = column === 'archived' ? 'archiving' : `moving it to ${COLUMN_LABELS[column]}`;
+	if (thread.local) return `⚠ Bring #${thread.id} back from Local before ${moving}`;
+	// Its worktree goes, and the thread is hidden, so don't leave uncommitted work behind in one.
 	if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
-		return `⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them before archiving`;
+		return `⚠ #${thread.id} has uncommitted changes — approve them (d, then a) or discard them before ${moving}`;
 	}
 }
 
@@ -332,11 +333,11 @@ export async function createWorktree(project: Project, thread: Thread): Promise<
 	return { path, patch, message: message || undefined };
 }
 
-/** Keep the worktree in step with the column: there from Active through Follow-up, removed (branch kept) once Done/archived. */
+/** Keep the worktree in step with the column: there from Active through Follow-up, removed (branch kept) once Done, archived or in IDEAS. */
 export async function syncWorktree(project: Project, thread: Thread): Promise<WorktreeChange> {
 	// Imported threads stay where they were started.
 	if (thread.column === 'planned' || thread.cwd) return {};
-	if (thread.column !== 'done' && thread.column !== 'archived') return createWorktree(project, thread);
+	if (thread.column !== 'done' && !hidden(thread.column)) return createWorktree(project, thread);
 	if (hasWorktree(thread) && (await isDirty(worktreePath(thread)))) {
 		return { message: `⚠ Kept #${thread.id}'s worktree: it has uncommitted changes` };
 	}
@@ -476,7 +477,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const problem =
 		moveProblem(state, thread, request.column) ??
 		boardOnlyMove(thread, request.column) ??
-		(request.column === 'archived' ? await archiveProblem(thread) : undefined) ??
+		(hidden(request.column) ? await shelveProblem(thread, request.column) : undefined) ??
 		(merged(request) ? await doneProblem(project, thread, request.column) : undefined);
 	if (problem) return { id, ok: false, message: problem };
 	const moved = { ...thread, column: request.column };

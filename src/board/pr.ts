@@ -210,6 +210,6 @@ export function browsePr(board: Board, thread: Thread) {
 }
 
 export const prKeys: Binding[] = [
-	{ key: 'b', run: onThread(browsePr, { archived: true }) },
+	{ key: 'b', run: onThread(browsePr, { hidden: true }) },
 	{ key: 'v', run: onThread(viewThreadPr) },
 ];

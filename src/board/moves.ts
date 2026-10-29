@@ -1,7 +1,7 @@
-// Moving a thread between columns, and out of them (Done, archived).
+// Moving a thread between columns, and out of them (IDEAS, Done, archived).
 
 import { COLUMNS, type Thread } from '../state.js';
-import { archiveProblem, doneProblem, merged, moveProblem, moveWarning, unblockedNote, unstackChildren } from '../threads.js';
+import { doneProblem, merged, moveProblem, moveWarning, shelveProblem, unblockedNote, unstackChildren } from '../threads.js';
 import { threadWindowName } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -45,9 +45,11 @@ export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS
 	}, 'checking PR');
 }
 
-/** H / L: one column left or right. H on an archived thread brings it back to Done. */
+/** H / L: one column left or right. H on an archived thread brings it back to Done, and on a Planned one shelves it in IDEAS. */
 export function moveColumn(board: Board, thread: Thread, delta: number) {
 	if (thread.column === 'archived') return delta < 0 && moveThread(board, thread, 'done');
+	if (thread.column === 'ideas') return delta > 0 && moveThread(board, thread, 'planned');
+	if (thread.column === 'planned' && delta < 0) return shelveThread(board, thread);
 	const col = COLUMNS.indexOf(thread.column as (typeof COLUMNS)[number]) + delta;
 	if (col < 0 || col >= COLUMNS.length) return;
 	moveThread(board, thread, COLUMNS[col]!);
@@ -61,10 +63,24 @@ export function finishThread(board: Board, thread: Thread) {
 	board.ask(`Move #${thread.id} ${thread.title} to Done?${closes}`, () => moveThread(board, thread, 'done'));
 }
 
-/** x: archive the thread, once asked, unless it has uncommitted changes. */
-export const archiveThread = (board: Board, thread: Thread) =>
+/** H on a Planned thread: keep it in IDEAS, out of Planned. Like archiving, its claude window closes and its worktree goes (branch kept). */
+export const shelveThread = (board: Board, thread: Thread) =>
 	board.run(async () => {
-		const problem = await archiveProblem(thread);
+		const problem = await shelveProblem(thread, 'ideas');
+		if (problem) return board.setMessage(problem);
+		if (board.statuses()[thread.id] === 'working') return board.setMessage(`⚠ claude is still working on #${thread.id}`);
+		board.setColumn(thread.id, 'ideas');
+		const shown = board.shownColumns().includes('ideas');
+		if (shown) board.showAtEnd('ideas');
+		board.setMessage(`Moved #${thread.id} to IDEAS${shown ? '' : ' (I shows it)'}`);
+		await syncWorktree(board, { ...thread, column: 'ideas' }, thread.column);
+	}, 'checking for uncommitted changes');
+
+/** x: archive the thread (an IDEAS one too), once asked, unless it has uncommitted changes. */
+export const archiveThread = (board: Board, thread: Thread) =>
+	thread.column !== 'archived' &&
+	board.run(async () => {
+		const problem = await shelveProblem(thread, 'archived');
 		if (problem) return board.setMessage(problem);
 		board.ask(`Archive #${thread.id}?`, () =>
 			board.run(async () => {
@@ -80,8 +96,8 @@ export const archiveThread = (board: Board, thread: Thread) =>
 	}, 'checking for uncommitted changes');
 
 export const moveKeys: Binding[] = [
-	{ key: 'H', run: onThread((board, thread) => moveColumn(board, thread, -1), { archived: true }) },
-	{ key: 'L', run: onThread((board, thread) => moveColumn(board, thread, 1)) },
+	{ key: 'H', run: onThread((board, thread) => moveColumn(board, thread, -1), { hidden: true }) },
+	{ key: 'L', run: onThread((board, thread) => moveColumn(board, thread, 1), { hidden: true }) },
 	{ key: 'F', run: onThread(finishThread) },
-	{ key: 'x', run: onThread(archiveThread) },
+	{ key: 'x', run: onThread(archiveThread, { hidden: true }) },
 ];

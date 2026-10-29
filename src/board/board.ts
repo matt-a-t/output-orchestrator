@@ -38,18 +38,21 @@ export type Board = {
 	ask: (question: string, action: () => void) => void;
 	/** The threads on the board, with the filter applied. */
 	shown: () => Thread[];
+	/** The columns on the board: COLUMNS, with IDEAS and ARCHIVED while I and A show them. */
+	shownColumns: () => readonly Column[];
 	/** Put the cursor where a thread just added to the bottom of `column` lands. */
 	showAtEnd: (column: Column) => void;
 };
 
 /**
  * For a key binding that acts on the highlighted thread, and does nothing when there isn't one.
- * Archived threads have no worktree or window, so only bindings that say `archived` act on them.
+ * Threads in IDEAS or archived have no worktree or window, so only bindings that say `hidden` act on them.
  */
 export const onThread =
-	(run: (board: Board, thread: Thread) => unknown, { archived = false } = {}) =>
+	(run: (board: Board, thread: Thread) => unknown, { hidden = false } = {}) =>
 	(board: Board, thread: Thread | undefined) => {
 		if (!thread) return;
-		if (thread.column === 'archived' && !archived) return board.setMessage(`⚠ #${thread.id} is archived — H brings it back to Done`);
+		if (thread.column === 'archived' && !hidden) return board.setMessage(`⚠ #${thread.id} is archived — H brings it back to Done`);
+		if (thread.column === 'ideas' && !hidden) return board.setMessage(`⚠ #${thread.id} is in IDEAS — L brings it back to Planned`);
 		return run(board, thread);
 	};
