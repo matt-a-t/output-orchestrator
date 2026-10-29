@@ -71,6 +71,23 @@ export function fileLabel(file: FilePatch): string {
 	return file.status === 'renamed' ? `${file.oldPath} → ${file.path}` : file.path;
 }
 
+// Columns a tab takes besides its label: its sides and the space inside them.
+export const TAB_FRAME = 4;
+
+/** Tab labels shortened to fit `width` columns of framed tabs: the last one (a path) loses its start first, then the others their ends. */
+export function fitTabs(labels: string[], width: number): string[] {
+	const fitted = [...labels];
+	const over = () => fitted.reduce((n, l) => n + l.length + TAB_FRAME, 0) - width;
+	const shorten = (i: number, fromStart: boolean) => {
+		const keep = Math.max(1, fitted[i]!.length - over() - 1);
+		if (over() <= 0 || keep >= fitted[i]!.length) return;
+		fitted[i] = fromStart ? `…${fitted[i]!.slice(-keep)}` : `${fitted[i]!.slice(0, keep)}…`;
+	};
+	shorten(fitted.length - 1, true);
+	for (let i = fitted.length - 2; i >= 0; i--) shorten(i, false);
+	return fitted;
+}
+
 /** Lines of context to show around changes, from least to most; the last one shows the whole file. */
 export const CONTEXT_STEPS = [3, 10, 25, 99_999] as const;
 

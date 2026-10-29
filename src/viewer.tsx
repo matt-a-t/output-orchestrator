@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { execa } from 'execa';
 import { Box, measureElement, render, Text, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { mouse, mouseStdin, reportMouse } from './mouse.js';
@@ -15,12 +15,14 @@ import {
 	CONTEXT_STEPS,
 	fileLabel,
 	findMatches,
+	fitTabs,
 	hunkRows,
 	nextMatch,
 	nextRow,
 	plainLines,
 	splitPatch,
 	stepContext,
+	TAB_FRAME,
 	type FilePatch,
 	type Match,
 } from './viewerModel.js';
@@ -54,7 +56,7 @@ export function viewerShellCommand(dir: string, spec: ViewSpec): string {
 }
 
 const DEFAULT_CONTEXT = CONTEXT_STEPS[0];
-const TABS = ['', 'files', 'diff'];
+const TAB_COUNT = 3;
 const STATUS_LETTERS: Record<FilePatch['status'], [string, string]> = {
 	modified: ['M', 'blue'],
 	added: ['A', 'green'],
@@ -103,7 +105,8 @@ type Rendered = { lines: string[]; plain: string[]; hunks: number[] };
 function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePatch[]; place?: Place; onExit: (status: number, place: Place) => void }) {
 	const { exit } = useApp();
 	const { columns, rows } = useWindowSize();
-	const height = Math.max(1, rows - 2);
+	// Less the tabs' two rows and the footer.
+	const height = Math.max(1, rows - 3);
 	const [tab, setTab] = useState(place?.tab ?? (files.length ? 2 : 0));
 	const [file, setFile] = useState(Math.min(place?.file ?? 0, Math.max(0, files.length - 1)));
 	// Scroll of tab 1 and tab 2; tab 3's is per file.
@@ -184,6 +187,27 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		goToMatch(next, all[next.file]!.lines.length);
 	};
 
+	// The next / previous hunk, going on into the next / previous file past the last / first.
+	// From the hunk last jumped to while it's still on screen, since near the end the scroll can't put it at the top.
+	const lastHunk = useRef<Match | undefined>(undefined);
+	const jumpHunk = async (dir: 1 | -1) => {
+		const here = await renderFile(file);
+		const last = lastHunk.current;
+		const from = last && last.file === file && last.row >= top && last.row < top + height ? last.row : top + LEAD;
+		const row = nextRow(here.hunks, from, dir);
+		if (row !== undefined) {
+			lastHunk.current = { file, row };
+			return setTop(row - LEAD, 2, file, here.lines.length);
+		}
+		const to = file + dir;
+		if (to < 0 || to >= files.length) return setMessage(dir === 1 ? 'Last hunk' : 'First hunk');
+		const there = await renderFile(to);
+		pickFile(to);
+		const first = dir === 1 ? there.hunks[0] : there.hunks.at(-1);
+		lastHunk.current = first === undefined ? undefined : { file: to, row: first };
+		setTop(first === undefined ? 0 : first - LEAD, 2, to, there.lines.length);
+	};
+
 	const scroll = (by: number) => {
 		if (tab === 1) return pickFile(file + by);
 		setTop(top + by);
@@ -215,9 +239,16 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		setMessage('');
 		const action = spec.keys.find(k => k.key === input);
 		if (action) return close(action.status);
+		// esc ends a search first, giving n/N back to hunks.
+		if (key.escape && query) {
+			setQuery('');
+			setMatches(undefined);
+			setMatch(undefined);
+			return;
+		}
 		if (input === 'q' || key.escape) return close(0);
-		if (input === 'h' || key.leftArrow) return setTab((tab + TABS.length - 1) % TABS.length);
-		if (input === 'l' || key.rightArrow || (tab === 1 && key.return)) return setTab((tab + 1) % TABS.length);
+		if (input === 'h' || key.leftArrow) return setTab((tab + TAB_COUNT - 1) % TAB_COUNT);
+		if (input === 'l' || key.rightArrow || (tab === 1 && key.return)) return setTab((tab + 1) % TAB_COUNT);
 		if (['1', '2', '3'].includes(input)) return setTab(Number(input) - 1);
 		if (input === 'j' || key.downArrow) return scroll(1);
 		if (input === 'k' || key.upArrow) return scroll(-1);
@@ -228,8 +259,8 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		if (input === 'g' || key.home) return tab === 1 ? pickFile(0) : setTop(0);
 		if (input === 'G' || key.end) return tab === 1 ? pickFile(files.length - 1) : setTop(Infinity);
 		if (input === '/') return setSearch('');
-		if (input === 'n' || input === 'N') {
-			if (!query) return setMessage('/ to search');
+		// n/N go between search matches while there's a search, else between hunks like }/{.
+		if ((input === 'n' || input === 'N') && query) {
 			const dir = input === 'n' ? 1 : -1;
 			if (!matches) return void runSearch(query, dir, match);
 			const next = match ? nextMatch(matches, match.file, match.row, dir) : nextMatch(matches, file, top + LEAD - 1, dir);
@@ -241,11 +272,7 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		if (input === ']' || input === 'J') return pickFile(file + 1);
 		if (input === '[' || input === 'K') return pickFile(file - 1);
 		if (tab !== 2) return;
-		if (input === '}' || input === '{') {
-			const row = nextRow(current?.hunks ?? [], top + LEAD, input === '}' ? 1 : -1);
-			if (row === undefined) return setMessage(input === '}' ? 'Last hunk' : 'First hunk');
-			return setTop(row - LEAD);
-		}
+		if (['}', '{', 'n', 'N'].includes(input)) return void jumpHunk(input === '}' || input === 'n' ? 1 : -1);
 		if (input === '+' || input === '=' || input === '-') {
 			const next = stepContext(context, input === '-' ? -1 : 1);
 			if (next === context) return setMessage(input === '-' ? 'Least context' : 'Already the whole file');
@@ -263,20 +290,10 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		}
 	});
 
-	const tabBar = (
-		<Text wrap="truncate">
-			{[spec.intro.label, ...TABS.slice(1)].map((label, i) => (
-				<Text key={i} inverse={i === tab && !spec.accent} backgroundColor={i === tab ? spec.accent : undefined} bold={i === tab}>
-					{` ${i + 1} ${label} `}
-				</Text>
-			))}
-			<Text dimColor> h/l tabs</Text>
-		</Text>
-	);
-
+	// What goes with the diff, how many files it changes, and the one you're on.
 	const fileStat = (f: FilePatch) => (
 		<>
-			{f.binary ? <Text dimColor>binary</Text> : null}
+			{f.binary ? <Text dimColor> binary</Text> : null}
 			{f.added ? <Text color="green">{` +${f.added}`}</Text> : null}
 			{f.removed ? <Text color="red">{` −${f.removed}`}</Text> : null}
 		</>
@@ -333,16 +350,41 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		);
 	}
 
-	const hints = ['j/k scroll', 'j/k file  ⏎ open', 'j/k scroll  ]/[ file  }/{ hunk  +/- context'][tab];
+	const hints = ['j/k scroll', 'j/k file  ⏎ open', `j/k scroll  ]/[ file  ${query ? '}/{' : 'n/N'} hunk  +/- context`][tab];
+	const searchHint = query ? 'n/N match  esc end search' : '/ search';
 	const actions = spec.keys.map(k => `${k.key} ${k.hint}`).join('  ');
-	const where =
-		tab === 2 && files.length ? (
-			<Text>
-				<Text bold>{`${file + 1}/${files.length} ${fileLabel(files[file]!)}`}</Text>
-				{fileStat(files[file]!)}
-				<Text dimColor>{` · ${contextLabel(context)} · `}</Text>
-			</Text>
-		) : null;
+	// The file tab ends with the file's stat, which keeps its colours and its room.
+	const shown = files[file];
+	const statWidth = shown ? `${shown.binary ? ' binary' : ''}${shown.added ? ` +${shown.added}` : ''}${shown.removed ? ` −${shown.removed}` : ''}`.length : 0;
+	const tabLabels = fitTabs(
+		[spec.intro.label, `${files.length} file${files.length === 1 ? '' : 's'} changed`, shown ? `${file + 1}/${files.length} ${fileLabel(shown)}` : 'diff'],
+		columns - statWidth,
+	);
+	const extra = (i: number) => (i === 2 ? statWidth : 0);
+	// Framed on top and at the sides, the current one in colour and the others dim.
+	const tabRow = (draw: (label: string, i: number) => ReactNode) => (
+		<Text wrap="truncate">
+			{tabLabels.map((label, i) => (
+				<Text key={i} color={i === tab ? (spec.accent ?? 'cyan') : undefined} dimColor={i !== tab} bold={i === tab}>
+					{draw(label, i)}
+				</Text>
+			))}
+		</Text>
+	);
+	const tabBar = (
+		<>
+			{tabRow((label, i) => `╭${'─'.repeat(label.length + extra(i) + TAB_FRAME - 2)}╮`)}
+			{tabRow((label, i) => (
+				<>
+					{`│ ${label}`}
+					{i === 2 && shown ? fileStat(shown) : null}
+					{' │'}
+				</>
+			))}
+		</>
+	);
+
+	const where = tab === 2 && files.length ? <Text dimColor>{`${contextLabel(context)} · `}</Text> : null;
 	const footer =
 		search !== null ? (
 			<Text>/{search}█</Text>
@@ -350,7 +392,7 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 			<Text wrap="truncate">
 				{where}
 				{message ? <Text color="yellow">{message} · </Text> : null}
-				<Text dimColor>{`${hints}  / search  ${actions}  q close`}</Text>
+				<Text dimColor>{[hints, searchHint, actions, 'q close'].filter(Boolean).join('  ')}</Text>
 			</Text>
 		);
 

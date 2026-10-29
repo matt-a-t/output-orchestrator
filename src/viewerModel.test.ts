@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clampScroll, contextLabel, fileLabel, findMatches, hunkRows, nextMatch, nextRow, plainLines, splitPatch, stepContext } from './viewerModel.js';
+import { clampScroll, contextLabel, fileLabel, findMatches, fitTabs, hunkRows, nextMatch, nextRow, plainLines, splitPatch, stepContext } from './viewerModel.js';
 
 const DIFF = `diff --git a/src/greet.ts b/src/greet.ts
 index 3b18e51..a9c2f4d 100644
@@ -92,4 +92,12 @@ test('keeps the scroll within the text', () => {
 	assert.equal(clampScroll(50, 100, 20), 50);
 	assert.equal(clampScroll(95, 100, 20), 80);
 	assert.equal(clampScroll(5, 10, 20), 0);
+});
+
+test('shortens tab labels to fit, the path from its start first', () => {
+	assert.deepEqual(fitTabs(['Claude', '3 files changed', '1/3 src/a.ts'], 80), ['Claude', '3 files changed', '1/3 src/a.ts']);
+	// 10 + 19 + 4 = 33 columns besides the last label, which gets 7.
+	assert.deepEqual(fitTabs(['Claude', '3 files changed', '1/3 src/deep/path.ts'], 40), ['Claude', '3 files changed', '…ath.ts']);
+	const tight = fitTabs(['Claude', '3 files changed', '1/3 src/deep/path.ts'], 20);
+	assert.ok(tight.reduce((n, l) => n + l.length + 4, 0) <= 20, tight.join('|'));
 });

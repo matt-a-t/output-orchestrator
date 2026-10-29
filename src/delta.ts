@@ -13,7 +13,7 @@ export const RECOMMENDED: [string, string][] = [
 	['hunk-header-decoration-style', 'none'],
 ];
 
-// Keys that change the label HUNK_LABEL in viewerModel.ts looks for, so }/{ stop finding hunks.
+// Keys that change the label HUNK_LABEL in viewerModel.ts looks for, so n/N and }/{ stop finding hunks.
 const NAVIGATE_KEYS = ['hunk-label'];
 
 // Two files and three hunks, with function context in the hunk headers.
@@ -71,7 +71,7 @@ export function missing(config: Map<string, string>): [string, string][] {
 export function navigateWarnings(config: Map<string, string>): string[] {
 	const warnings: string[] = [];
 	for (const key of NAVIGATE_KEYS) {
-		if (config.has(key)) warnings.push(`${key} is set: }/{ look for delta's default hunk label, so they may skip hunks`);
+		if (config.has(key)) warnings.push(`${key} is set: n/N and }/{ look for delta's default hunk label, so they may skip hunks`);
 	}
 	if (config.has('features')) warnings.push(`features is set (${config.get('features')}): a feature's styles can override these`);
 	return warnings;

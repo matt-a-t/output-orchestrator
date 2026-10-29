@@ -48,7 +48,7 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 	const keys: ViewKey[] = [...(approvable ? [{ key: 'a', status: APPROVE_STATUS, hint: 'approve' }] : []), { key: 'S', status: DELTA_STATUS, hint: 'styling' }];
 	const response = thread.transcriptPath && lastAssistantText(thread.transcriptPath);
 	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
-	const command = viewerShellCommand(dir, { cwd, args, intro: { label: 'claude', text: response || "No response from claude yet." }, keys });
+	const command = viewerShellCommand(dir, { cwd, args, intro: { label: 'Claude', text: response || "No response from claude yet." }, keys });
 	try {
 		for (;;) {
 			const status = await popup(command, { cwd, title: ` ${label} ` });

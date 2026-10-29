@@ -122,13 +122,13 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   against the branch it came from. Both open in oo's diff viewer, in three tabs that `h` / `l` (or
   `1` `2` `3`) move between: claude's last response, the changed files and how much each changed
   (`j` / `k` and ⏎ open one), and the diff through `delta`, a file at a time. There `]` / `[` go to
-  the next / previous file, `}` / `{` between hunks, and `+` / `-` show more or less context around
+  the next / previous file, `n` / `N` (or `}` / `{`) between hunks, and `+` / `-` show more or less context around
   the changes, up to the whole file. `j` / `k`, `ctrl-d` / `ctrl-u`, `g` / `G` and the mouse wheel
-  scroll, and `/` searches every file (`n` / `N` for the next / previous match). delta's styles come from your git config. With its defaults, file headers and hunk headers
+  scroll, and `/` searches every file: `n` / `N` then go between matches until `esc` ends the search. delta's styles come from your git config. With its defaults, file headers and hunk headers
   look much alike, so this `~/.gitconfig` section is recommended: it makes file headers a solid
   bar and hunk headers dim. `S` in any diff (or `oo delta`) adds it for you: it shows your
   current `[delta]` keys and a preview first, and only adds keys you haven't set. Leave `hunk-label` at its
-  default, because `}` / `{` look for it.
+  default, because `n` / `N` look for it.
 
   ```ini
   [delta]

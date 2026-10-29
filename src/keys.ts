@@ -48,9 +48,9 @@ export const KEY_SECTIONS: KeySection[] = [
 		keys: [
 			['h/l 1 2 3', "tabs: claude's response (v: the PR) / files / diff"],
 			['j/k C-d/C-u g/G', 'scroll (files tab: pick a file, ⏎ opens it)'],
-			[']/[ }/{', 'next / previous file, hunk'],
+			[']/[ n/N }/{', 'next / previous file, hunk'],
 			['+/-', 'more / less context, up to the whole file'],
-			['/ n/N', 'search every file, next / previous match'],
+			['/', 'search every file (n/N: matches, esc ends it)'],
 			['a', 'approve the step (d)'],
 			['m', 'merge your PR (v)'],
 			['a / x / c', "approve / request changes / comment (v, someone else's PR)"],

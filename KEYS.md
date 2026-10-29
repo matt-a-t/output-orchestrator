@@ -57,15 +57,15 @@ description, checks and reviews), tab 2 the changed files, tab 3 the diff a file
 | `g` / `G` | top / bottom (first / last file) |
 | `⏎` | in the files tab: open that file's diff |
 | `]`/`[` `J`/`K` | next / previous file |
-| `}`/`{` | next / previous hunk |
+| `n`/`N` `}`/`{` | next / previous hunk, on into the next / previous file |
 | `+`/`-` | more / less context around the changes: 3, 10, 25 lines, then the whole file (in `v`, fetches the PR first) |
-| `/` | search every file (case-insensitive), then `n`/`N` for the next / previous match |
+| `/` | search every file (case-insensitive). `n`/`N` then go to the next / previous match until `esc` ends the search |
 | `a` | in `d`: approve the step |
 | `m` | in `v`, your PR: merge it (with a confirm that says what's in the way, if anything) |
 | `a` / `x` / `c` | in `v`, someone else's PR: approve (with a confirm) / request changes / comment (in vim on the diff: the main comment above it, `>>` notes become line comments) |
 | `o` | in `v`: open the PR in your browser |
 | `S` | set up delta's header styles (`oo delta` from the shell), then back to where you were |
-| `q` / `esc` | close |
+| `q` / `esc` | close (`esc` ends a search first) |
 | `>> note` | in `c`, or `x`/`c` in `v`: a comment on the diff line above it |
 | `:cq` | in `c`: send nothing (in `v`: back to the PR) |
 
