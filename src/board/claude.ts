@@ -2,7 +2,6 @@
 
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { diffPaneCommand } from '../review.js';
 import { DEFAULT_WAKE_PROMPT, type Thread } from '../state.js';
 import { CLAUDE_SETTINGS_FILE } from '../status.js';
 import { threadDir } from '../threads.js';
@@ -159,8 +158,8 @@ export function wakeStalled(board: Board, threads: Thread[]) {
 	});
 }
 
-/** Open claude with a shell or a live diff beside it, starting claude first if it isn't running. */
-export const openBeside = (board: Board, thread: Thread, role: 'shell' | 'diff') =>
+/** Open claude with a shell beside it, starting claude first if it isn't running. */
+export const openShell = (board: Board, thread: Thread) =>
 	inWorktree(
 		board,
 		thread,
@@ -171,17 +170,13 @@ export const openBeside = (board: Board, thread: Thread, role: 'shell' | 'diff')
 				// It may be waiting on "resume anyway?" instead.
 				if (!(await windowNames()).includes(window)) return;
 			}
-			const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
-			await openSplit(window, cwd, role, command, { OO_THREAD_ID: thread.id });
+			await openSplit(window, cwd, 'shell', [process.env.SHELL || 'bash'], { OO_THREAD_ID: thread.id });
 		},
-		{ git: role === 'diff' },
 	);
 
 export const claudeKeys: Binding[] = [
 	{ key: '⏎', run: onThread(openThread) },
 	{ key: 'w', run: onThread(wake) },
 	{ key: 'W', run: board => wakeStalled(board, board.shown()) },
-	{ key: 's', run: onThread((board, thread) => openBeside(board, thread, 'shell')) },
-	{ key: 'd', meta: true, run: onThread((board, thread) => openBeside(board, thread, 'diff')) },
-	{ key: 'D', meta: true, run: onThread((board, thread) => openBeside(board, thread, 'diff')) },
+	{ key: 's', run: onThread(openShell) },
 ];

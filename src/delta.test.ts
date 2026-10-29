@@ -21,8 +21,7 @@ test('only adds the keys you have not set', () => {
 test('warns about changed labels and features', () => {
 	assert.deepEqual(navigateWarnings(new Map([['navigate', 'false'], ['file-style', 'red']])), []);
 	const warnings = navigateWarnings(new Map([['hunk-label', '#'], ['file-modified-label', 'M'], ['features', 'decorations']]));
-	assert.equal(warnings.length, 3);
-	assert.match(warnings[0]!, /^file-modified-label is set/);
-	assert.match(warnings[1]!, /^hunk-label is set/);
-	assert.match(warnings[2]!, /^features is set \(decorations\)/);
+	assert.equal(warnings.length, 2);
+	assert.match(warnings[0]!, /^hunk-label is set/);
+	assert.match(warnings[1]!, /^features is set \(decorations\)/);
 });

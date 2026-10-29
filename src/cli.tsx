@@ -5,15 +5,13 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { claimBoard } from './requests.js';
 import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, isHome, isRepo, loadState, projectProblem, saveState } from './state.js';
-import { approvedPrompt, approveTodo, THREAD_USAGE, threadCommand } from './threadCommand.js';
+import { THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
-import { COMMIT_FORM, commitFormCommand, type CommitForm } from './commitForm.js';
-import { commit, stageAll } from './git.js';
+import { commitFormCommand } from './commitForm.js';
 import { deltaCommand, noStyling } from './delta.js';
 import { viewCommand } from './viewer.js';
-import { diffPaneCommand, writeCommit } from './review.js';
-import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
-import { approvedTodo, merged, noRepo, setTodoStatus, threadDir } from './threads.js';
+import { OO_COMMAND, writeClaudeSettings, writeOoSkill } from './status.js';
+import { threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
 	BOARD_WINDOW,
@@ -24,14 +22,11 @@ import {
 	labelWindow,
 	MIN_TMUX,
 	openSplit,
-	progressPopup,
-	pasteInto,
 	renameCurrentWindow,
 	selectExistingBoard,
 	shellQuote,
 	threadWindowName,
 	tmuxVersionOk,
-	windowNames,
 } from './tmux.js';
 
 const USAGE = `usage:
@@ -102,7 +97,7 @@ const REQUIRED = [
 ] as const;
 const OPTIONAL = [
 	['gh', 'moving a thread to PR', 'https://cli.github.com'],
-	['delta', 'reviewing diffs (d, D, M-d)', 'https://github.com/dandavison/delta'],
+	['delta', 'reviewing diffs (d, D, v)', 'https://github.com/dandavison/delta'],
 	['vim', 'commenting on diffs (o, c)', 'https://www.vim.org'],
 ] as const;
 
@@ -133,76 +128,16 @@ async function checkTools(warn: boolean): Promise<boolean> {
 	return problems.length === 0;
 }
 
-/** `oo split <shell|diff> <id>`, for M-s / M-d in a thread's window: what `s` / `M-d` do on the board. */
+/** `oo split shell <id>`, for M-s in a thread's window: what `s` does on the board. */
 async function splitCommand([role, id]: string[]): Promise<number> {
 	const state = loadState();
 	const thread = state.threads.find(t => t.id === id);
 	const cwd = thread && threadDir(state, thread);
-	if ((role !== 'shell' && role !== 'diff') || !thread || !cwd) {
-		console.error(thread ? `#${id} has no worktree` : `usage: oo split <shell|diff> <id>`);
+	if (role !== 'shell' || !thread || !cwd) {
+		console.error(thread && role === 'shell' ? `#${id} has no worktree` : 'usage: oo split shell <id>');
 		return 1;
 	}
-	const reason = role === 'diff' && noRepo(state, thread);
-	if (reason) {
-		console.error(`${reason} — there are no changes to diff`);
-		return 1;
-	}
-	const command = role === 'shell' ? [process.env.SHELL || 'bash'] : await diffPaneCommand(cwd, thread);
-	await openSplit(threadWindowName(id), cwd, role, command, { OO_THREAD_ID: id });
-	return 0;
-}
-
-/**
- * `oo commit <id>`, for `a` in the diff beside claude: stage everything, have claude draft
- * the message, edit it in the commit form (or take it with a) and commit, as approving a step on
- * the board does (telling a stopped claude to move on, with the form's comments, included).
- */
-async function commitCommand([id]: string[]): Promise<number> {
-	const state = loadState();
-	const thread = state.threads.find(t => t.id === id);
-	const cwd = thread && threadDir(state, thread);
-	if (!thread || !cwd) {
-		console.error(thread ? `#${id} has no worktree` : 'usage: oo commit <id>');
-		return 1;
-	}
-	const reason = noRepo(state, thread);
-	if (reason) {
-		console.error(`${reason} — there's no branch to commit to`);
-		return 1;
-	}
-	if (!(await stageAll(cwd))) {
-		console.log('Nothing to commit');
-		return 0;
-	}
-	const window = threadWindowName(id);
-	const waiting = threadStatus(id, cwd) === 'stopped' && (await windowNames()).includes(window);
-	let form: CommitForm | null;
-	const progress = progressPopup(' commit ', COMMIT_FORM);
-	try {
-		form = await writeCommit(progress, cwd, thread);
-		if (!form) {
-			console.log('Commit cancelled (changes left staged)');
-			return 1;
-		}
-		progress.status('committing');
-		await commit(cwd, `${form.message}\n`);
-	} finally {
-		await progress.close();
-	}
-	console.log(`Committed on ${thread.branch ?? cwd}: ${form.message}`);
-	const item = approvedTodo(thread.todos ?? []);
-	const ticked = await approveTodo(thread.id);
-	if (ticked) console.log(ticked);
-	// Ticked here rather than reloaded: a running board may not have saved its tick yet.
-	const todos = item === -1 ? (thread.todos ?? []) : setTodoStatus(thread.todos ?? [], item, 'done');
-	const prompt = approvedPrompt(todos, item, form.message, form.notes, merged(thread));
-	if (!prompt) return 0;
-	if (waiting && (await windowNames()).includes(window)) {
-		await pasteInto(window, prompt);
-		console.log(form.notes ? 'Told claude, with your comments' : 'Told claude');
-	} else if (form.notes) {
-		console.log(`Claude wasn't waiting, so your comments weren't sent: ${form.notes}`);
-	}
+	await openSplit(threadWindowName(id), cwd, role, [process.env.SHELL || 'bash'], { OO_THREAD_ID: id });
 	return 0;
 }
 
@@ -215,8 +150,6 @@ if (cmd === 'project') {
 	process.exit(await splitCommand(args));
 } else if (cmd === 'delta') {
 	process.exit(await deltaCommand());
-} else if (cmd === 'commit') {
-	process.exit(await commitCommand(args));
 } else if (cmd === 'view') {
 	process.exit(await viewCommand(args));
 } else if (cmd === 'commit-form') {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
-import { diffArgs, diffRevs, hunkLocations, type DiffKind } from './git.js';
+import { diffArgs, hunkLocations, type DiffKind } from './git.js';
 import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogin, type PrDetails, type ReviewComment, type ReviewEvent } from './github.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
@@ -12,17 +12,10 @@ import { lastAssistantText } from './transcripts.js';
 import { viewerShellCommand, type ViewKey } from './viewer.js';
 import { clientWidth, CLOSED, confirmPopup, popup, shellQuote, type PopupOptions, type ProgressPopup } from './tmux.js';
 
-// less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
-// 83) sets up delta's styles (`oo delta`) and comes back to the diff.
-const DIFF_KEYS = '#command\nS quit S\n';
-const APPROVE_KEYS = `${DIFF_KEYS}a quit A\n`;
+// What the viewer (`oo view`) exits with for the key that closed it: a approves, S sets up delta's styles
+// (`oo delta`) and comes back to the diff.
 const APPROVE_STATUS = 65;
 const DELTA_STATUS = 83;
-// The same trick gives the diff beside claude r to refresh it ('R' is 82), t to switch between the
-// step and thread diffs ('T' is 84) and a to commit.
-const PANE_KEYS = `${APPROVE_KEYS}r quit R\nt quit T\n`;
-const REFRESH_STATUS = 82;
-const TOGGLE_STATUS = 84;
 // The PR viewer's o opens the browser, m merges your own PR, and on someone else's x requests changes and c comments.
 const BROWSER_STATUS = 79;
 const MERGE_STATUS = 77;
@@ -35,8 +28,6 @@ const REVIEW_STATUSES: Record<number, [ReviewEvent, string]> = {
 };
 // `oo delta`, then a pause so its answer stays up until you're back in the diff.
 const OO_DELTA = `${[...OO_COMMAND, 'delta'].map(shellQuote).join(' ')}; read -rsn1 -p ${shellQuote('Any key goes back to the diff')}`;
-// What delta's --navigate labels files and hunks with (delta.ts warns when your config changes them).
-const NAVIGATE_PATTERN = '^(Δ|•|added:|removed:|renamed:).*';
 // The PR viewer and the popups it opens are framed and coloured magenta so they can't be mistaken for
 // the worktree's diffs: a heavy border, a banner on top, a prompt at the bottom and magenta file headers.
 const PR_FRAME: PopupOptions = { border: 'heavy', borderStyle: 'fg=magenta' };
@@ -246,89 +237,6 @@ export function prHeader(pr: PrDetails, width = 80): string {
 	]
 		.filter((line, i) => line || i > 3)
 		.join('\n');
-}
-
-/**
- * A shell command for the diff beside claude: the step's, or the thread's if the step has none.
- * `t` switches between the two, `r` re-runs it to keep up with claude's edits, and `a` commits
- * everything uncommitted (`oo commit`: claude drafts the message, you edit it).
- */
-export async function diffPaneCommand(cwd: string, thread: Thread): Promise<string[]> {
-	const step = ['diff', ...(await diffRevs(cwd, 'step', thread))];
-	const whole = ['diff', ...(await diffRevs(cwd, 'thread', thread))];
-	const keys = lesskey('pane', PANE_KEYS);
-	const keysHint = (other: string) => `t ${other}  a commit  r refresh  S styling  q close`;
-	const show = (fn: string, label: string, other: string) =>
-		`${statThenDiff(fn)} | ${lessCommand(keys, [lessPrompt(`${label} — n/N hunk  ${keysHint(other)}`)])}`;
-	const ooCommit = [...OO_COMMAND, 'commit', thread.id].map(shellQuote).join(' ');
-	const script = [
-		`step() { ${gitCommand(step)} "$@"; }`,
-		`thread() { ${gitCommand(whole)} "$@"; }`,
-		'git add --all --intent-to-add',
-		'mode=step; step --quiet && mode=thread',
-		'while :; do',
-		'git add --all --intent-to-add',
-		`if ! $mode --quiet; then`,
-		`  if [ $mode = step ]; then ${show('step', 'uncommitted', 'whole thread')}; else ${show('thread', `thread vs ${whole.at(-1)}`, 'uncommitted')}; fi`,
-		'  status=$?',
-		'else',
-		`  clear; [ $mode = step ] && printf %s ${shellQuote(`No uncommitted changes — ${keysHint('whole thread')}`)} || printf %s ${shellQuote(`No changes in the thread — ${keysHint('uncommitted')}`)}`,
-		'  read -rsn1 key; clear',
-		`  case $key in t) status=${TOGGLE_STATUS};; a) status=${APPROVE_STATUS};; r) status=${REFRESH_STATUS};; S) status=${DELTA_STATUS};; *) status=0;; esac`,
-		'fi',
-		'case $status in',
-		`  ${TOGGLE_STATUS}) [ $mode = step ] && mode=thread || mode=step;;`,
-		// oo commit has its own popups.
-		`  ${APPROVE_STATUS}) out=$(${ooCommit} 2>&1); [ -n "$out" ] && tmux display-message "$out";;`,
-		`  ${REFRESH_STATUS}) ;;`,
-		`  ${DELTA_STATUS}) clear; ${OO_DELTA}; clear;;`,
-		'  *) break;;',
-		'esac',
-		'done',
-	].join('\n');
-	return ['bash', '-c', script];
-}
-
-/**
- * The diff's stat (each changed file and how much it changed, sized to the terminal), then the
- * diff through delta. The stat stays out of delta so it isn't restyled; n/N skip it.
- */
-function statThenDiff(git: string): string {
-	// Header styles come from the user's [delta] git config (`oo delta` sets up the README's recommended one).
-	return `{ ${git} --stat="$(tput cols)" --compact-summary --color=always; echo; ${git} | delta --paging=never --navigate; }`;
-}
-
-function gitCommand(args: string[]): string {
-	return `git ${args.map(shellQuote).join(' ')}`;
-}
-
-/** less over delta's output, with n/N jumping between files and hunks, and any `extra` options. */
-function lessCommand(keys?: string, extra: string[] = []): string {
-	// --pattern also starts at the first file, past the stat; +g (only after it) goes back to the top.
-	// Matches aren't highlighted (-G) so delta's header styles show through, and -j4 lands a jump on
-	// the 4th row so the end of the hunk before shows above it.
-	const less = [
-		'less',
-		'-R',
-		'-G',
-		'-j4',
-		`--pattern=${NAVIGATE_PATTERN}`,
-		'+g',
-		...(keys ? [`--lesskey-src=${keys}`] : []),
-		...extra,
-	];
-	return less.map(shellQuote).join(' ');
-}
-
-/** A label for less's (short, the s) prompt, so it stays in view; these characters are special there. */
-function lessPrompt(label: string): string {
-	return `--prompt=s${label.replace(/[?:.%\\]/g, '\\$&')}`;
-}
-
-function lesskey(name: string, keys: string): string {
-	const file = join(tmpdir(), `oo-${name}.lesskey`);
-	writeFileSync(file, keys);
-	return file;
 }
 
 /**

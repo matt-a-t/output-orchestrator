@@ -37,7 +37,7 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 | Key | |
 |---|---|
 | `d` / `D` | step / whole thread diff (`d` with no changes: mark the step done) |
-| `s` / `M-d` | claude with a shell / live diff beside it |
+| `s` | claude with a shell beside it |
 | `c` | comment on the diff in vim |
 | `o` | changed hunks as a vim quickfix list |
 | `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
@@ -46,19 +46,30 @@ The mouse works too: click a card to select it, double-click to open it, scroll 
 
 ## In a diff
 
+`d`, `D` and `v` open the diff viewer: tab 1 is claude's last response (in `v`, the PR's
+description, checks and reviews), tab 2 the changed files, tab 3 the diff a file at a time.
+
 | Key | |
 |---|---|
-| `n`/`N` | next / previous file or hunk |
-| `a` | in `d`: approve the step. Beside claude: commit everything uncommitted (claude drafts the message, you edit it and add comments for claude in the commit form; esc cancels). `a` again while claude writes takes its message as it is |
-| `t` | beside claude: switch between the uncommitted and whole-thread diffs |
-| `r` | beside claude: refresh |
+| `h`/`l` `←`/`→` `1` `2` `3` | change tab |
+| `j`/`k` `↑`/`↓` | scroll (in the files tab: move between files) |
+| `ctrl-d`/`ctrl-u` `ctrl-f`/`ctrl-b` `space` | half / whole page down / up |
+| `g` / `G` | top / bottom (first / last file) |
+| `⏎` | in the files tab: open that file's diff |
+| `]`/`[` `J`/`K` | next / previous file |
+| `}`/`{` | next / previous hunk |
+| `+`/`-` | more / less context around the changes: 3, 10, 25 lines, then the whole file (in `v`, fetches the PR first) |
+| `/` | search every file (case-insensitive), then `n`/`N` for the next / previous match |
+| `a` | in `d`: approve the step |
 | `m` | in `v`, your PR: merge it (with a confirm that says what's in the way, if anything) |
 | `a` / `x` / `c` | in `v`, someone else's PR: approve (with a confirm) / request changes / comment (in vim on the diff: the main comment above it, `>>` notes become line comments) |
 | `o` | in `v`: open the PR in your browser |
-| `S` | set up delta's header styles (`oo delta` from the shell), then back to the diff |
-| `q` | close |
+| `S` | set up delta's header styles (`oo delta` from the shell), then back to where you were |
+| `q` / `esc` | close |
 | `>> note` | in `c`, or `x`/`c` in `v`: a comment on the diff line above it |
 | `:cq` | in `c`: send nothing (in `v`: back to the PR) |
+
+The mouse wheel scrolls too.
 
 ## In a form
 
@@ -86,7 +97,7 @@ reaches the program, and a key you've bound yourself is left alone.
 |---|---|
 | `M-h` / `M-l` | claude / the pane beside it |
 | `M-j` / `M-k` | next / previous thread window |
-| `M-s` / `M-d` | shell / live diff beside claude (like `s` / `M-d` on the board) |
+| `M-s` | shell beside claude (like `s` on the board) |
 | `M-u` | scroll up: tmux copy mode, with your `mode-keys` (`q` leaves) |
 | `M-z` | zoom the pane |
 | `M-q` / `M-b` | back to the board |
