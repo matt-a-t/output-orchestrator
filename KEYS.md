@@ -14,6 +14,7 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `u` | rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude) |
 | `n` | new thread (the form below) |
 | `e` | edit the thread |
+| `T` | every todo on the thread, when there are more than the details box shows (`j`/`k` or the wheel scroll, `g`/`G` top / bottom) |
 | `t` | into / out of Local (`oo thread local` from the shell) |
 | `B` | blocked by another thread: move to it and `⏎` (again unpicks it, `⏎` on the thread itself clears them all, `esc` cancels; `oo thread block` from the shell) |
 | `F` | straight to Done |

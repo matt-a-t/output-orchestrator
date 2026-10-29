@@ -16,6 +16,7 @@ import { usePendingLocal } from './board/local.js';
 import { useMessageDelivery } from './board/messages.js';
 import { NewThread, useRecentTickets } from './board/newThread.js';
 import { fetchReviews, ReviewList, type Review } from './board/reviewList.js';
+import { TodoView } from './board/todoView.js';
 import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
@@ -65,6 +66,9 @@ export function App() {
 	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[] } | null>(null);
 	// The review requests list (R), replacing the columns while it's open.
 	const [reviews, setReviews] = useState<Review[] | null>(null);
+	// The thread whose every todo is shown (T), replacing the columns while it's open.
+	const [todosOf, setTodosOf] = useState<string | null>(null);
+	const todosThread = todosOf ? state.threads.find(t => t.id === todosOf) : undefined;
 	// The columns' measured height and scroll positions, kept while another screen covers them.
 	const columnsLayout = useRef(newColumnsLayout());
 	// The thread B is picking a blocker for, while the cursor moves to the one it waits on.
@@ -250,8 +254,8 @@ export function App() {
 	const pickingThread = picking ? state.threads.find(t => t.id === picking) : undefined;
 
 	useInput((input, key) => {
-		// The form, the import and review lists and the import prompt take their own keys.
-		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews) return;
+		// The form, the import, review and todo lists and the import prompt take their own keys.
+		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews || todosThread) return;
 		setMessage('');
 		if (showKeys) {
 			if (input === '?' || input === 'q' || key.escape) setShowKeys(false);
@@ -309,6 +313,7 @@ export function App() {
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
 		if (input === 'e') return setEditing(selected.id);
+		if (input === 'T') return selected.todos?.length ? setTodosOf(selected.id) : setMessage(`⚠ #${selected.id} has no todos`);
 		if (input === 'B') {
 			if (selected.column === 'done' || selected.column === 'archived') return setMessage(`⚠ #${selected.id} is finished, so nothing blocks it`);
 			return setPicking(selected.id);
@@ -350,6 +355,8 @@ export function App() {
 				<KeysView />
 			) : reviews ? (
 				<ReviewList board={board} requests={reviews} active={!busy} onClose={() => setReviews(null)} />
+			) : todosThread ? (
+				<TodoView thread={todosThread} active={!busy} onClose={() => setTodosOf(null)} />
 			) : picker ? (
 				<ImportList
 					board={board}
@@ -374,10 +381,10 @@ export function App() {
 				/>
 			)}
 			<Footer
-				// About the highlighted card, so not while the import or review list covers the board.
-				thread={picker || reviews ? undefined : selected}
+				// About the highlighted card, so not while the import, review or todo list covers the board.
+				thread={picker || reviews || todosThread ? undefined : selected}
 				merge={selected && merge[selected.id]}
-				blockers={selected && !picker && !reviews ? blockers(state, selected) : []}
+				blockers={selected && !picker && !reviews && !todosThread ? blockers(state, selected) : []}
 				busy={busy}
 				message={
 					pickingThread

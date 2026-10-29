@@ -14,6 +14,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['u', 'rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude)'],
 			['n', 'new thread (form)'],
 			['e', 'edit the thread'],
+			['T', 'every todo on the thread (j/k scroll)'],
 			['t', 'into / out of Local'],
 			['B', 'blocked by another thread (move to it, ⏎ picks)'],
 			['F', 'straight to Done'],
