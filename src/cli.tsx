@@ -10,6 +10,7 @@ import { mouseStdin, reportMouse } from './mouse.js';
 import { COMMIT_FORM, commitFormCommand, type CommitForm } from './commitForm.js';
 import { commit, stageAll } from './git.js';
 import { deltaCommand, noStyling } from './delta.js';
+import { viewCommand } from './viewer.js';
 import { diffPaneCommand, writeCommit } from './review.js';
 import { OO_COMMAND, threadStatus, writeClaudeSettings, writeOoSkill } from './status.js';
 import { approvedTodo, merged, noRepo, setTodoStatus, threadDir } from './threads.js';
@@ -216,6 +217,8 @@ if (cmd === 'project') {
 	process.exit(await deltaCommand());
 } else if (cmd === 'commit') {
 	process.exit(await commitCommand(args));
+} else if (cmd === 'view') {
+	process.exit(await viewCommand(args));
 } else if (cmd === 'commit-form') {
 	process.exit(await commitFormCommand(args));
 } else if (cmd) {

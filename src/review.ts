@@ -8,6 +8,8 @@ import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogi
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
+import { lastAssistantText } from './transcripts.js';
+import { viewerShellCommand, type ViewKey } from './viewer.js';
 import { clientWidth, CLOSED, confirmPopup, popup, shellQuote, type PopupOptions, type ProgressPopup } from './tmux.js';
 
 // less quits with the first character of the extra string as its status: 'A' is 65, and S ('S' is
@@ -45,22 +47,28 @@ const PR_DELTA = "--file-style='bold magenta' --file-decoration-style='magenta u
 const VIM = "vim --cmd 'set nomodeline'";
 
 /**
- * Show a diff of the worktree in a popup, with n/N jumping between files and hunks. Step diffs
- * can be approved from there with `a`, and `S` sets up delta's styles. delta's paging would swallow less's exit
- * status, so it's piped into less here instead.
+ * Show a diff of the worktree in the viewer (`oo view`): claude's last response, the changed files and
+ * the diff a file at a time. Step diffs can be approved from there with `a`, and `S` sets up delta's
+ * styles, coming back to where you were.
  */
 export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Promise<'empty' | 'closed' | 'approved'> {
 	const args = await diffArgs(cwd, kind, thread);
 	if (!args) return 'empty';
 	const approvable = kind === 'step';
 	const label = kind === 'step' ? 'step diff' : `thread diff vs ${args.at(-1)}`;
-	const title = ` ${label} — n/N next/prev hunk  ${approvable ? 'a approve  ' : ''}S styling  q close `;
-	const command = `${statThenDiff(gitCommand(args))} | ${lessCommand(approvable ? lesskey('approve', APPROVE_KEYS) : lesskey('diff', DIFF_KEYS))}`;
-	for (;;) {
-		const status = await popup(command, { cwd, title });
-		if (status !== DELTA_STATUS) return status === APPROVE_STATUS ? 'approved' : 'closed';
-		// Back to the diff, restyled if you added them.
-		await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+	const keys: ViewKey[] = [...(approvable ? [{ key: 'a', status: APPROVE_STATUS, hint: 'approve' }] : []), { key: 'S', status: DELTA_STATUS, hint: 'styling' }];
+	const response = thread.transcriptPath && lastAssistantText(thread.transcriptPath);
+	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
+	const command = viewerShellCommand(dir, { cwd, args, intro: { label: 'claude', text: response || "No response from claude yet." }, keys });
+	try {
+		for (;;) {
+			const status = await popup(command, { cwd, title: ` ${label} ` });
+			if (status !== DELTA_STATUS) return status === APPROVE_STATUS ? 'approved' : 'closed';
+			// Back to the diff, restyled if you added them.
+			await popup(`bash -c ${shellQuote(OO_DELTA)}`, { cwd, title: ' delta styling ' });
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
 	}
 }
 
