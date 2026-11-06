@@ -120,17 +120,26 @@ export type FakeAnswer = { stdout?: string; exitCode?: number };
 /**
  * Put a fake `name` (gh, tmux) first on PATH for this test. It answers calls whose arguments start with one
  * of `answers`' keys (the longest that matches) and fails any other, so it never hands off to the real one.
- * `calls()` lists each call's arguments.
+ * `calls()` lists each call's arguments, `inputs()` what was piped to calls with `--body-file -`, and `answer`
+ * changes the answers for the calls after it.
  */
-export function fakeCommand(t: TestContext, name: string, answers: Record<string, FakeAnswer>): { calls: () => string[][] } {
+export function fakeCommand(
+	t: TestContext,
+	name: string,
+	answers: Record<string, FakeAnswer>,
+): { calls: () => string[][]; inputs: () => string[]; answer: (answers: Record<string, FakeAnswer>) => void } {
 	const bin = mkdtempSync(join(tmpdir(), `oo-fake-${name}-`));
 	const log = join(bin, 'calls.jsonl');
-	writeFileSync(join(bin, 'answers.json'), JSON.stringify(answers));
+	const answersFile = join(bin, 'answers.json');
+	writeFileSync(answersFile, JSON.stringify(answers));
 	const script = `#!/usr/bin/env node
 const { appendFileSync, readFileSync } = require('node:fs');
 const args = process.argv.slice(2);
-appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
-const answers = JSON.parse(readFileSync(${JSON.stringify(join(bin, 'answers.json'))}, 'utf8'));
+// Only read stdin when it's what the call is about, so a call with nothing piped in doesn't hang.
+const body = args.findIndex((a, i) => a === '--body-file' && args[i + 1] === '-');
+const input = body === -1 ? undefined : readFileSync(0, 'utf8');
+appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, input }) + '\\n');
+const answers = JSON.parse(readFileSync(${JSON.stringify(answersFile)}, 'utf8'));
 const line = args.join(' ');
 const key = Object.keys(answers).filter(k => line === k || line.startsWith(k + ' ')).sort((a, b) => b.length - a.length)[0];
 if (key === undefined) {
@@ -141,22 +150,28 @@ process.stdout.write(answers[key].stdout ?? '');
 process.exit(answers[key].exitCode ?? 0);
 `;
 	writeFileSync(join(bin, name), script, { mode: 0o755 });
-	const path = process.env.PATH;
-	process.env.PATH = `${bin}${delimiter}${path}`;
-	t.after(() => void (process.env.PATH = path));
+	process.env.PATH = `${bin}${delimiter}${process.env.PATH}`;
+	// Take out just this one, so fakes for other commands in the same test can come off in any order.
+	t.after(() => void (process.env.PATH = process.env.PATH!.split(delimiter).filter(p => p !== bin).join(delimiter)));
+	const logged = (): { args: string[]; input?: string }[] =>
+		existsSync(log)
+			? readFileSync(log, 'utf8')
+					.split('\n')
+					.filter(Boolean)
+					.map(l => JSON.parse(l))
+			: [];
 	return {
-		calls: () =>
-			existsSync(log)
-				? readFileSync(log, 'utf8')
-						.split('\n')
-						.filter(Boolean)
-						.map(l => JSON.parse(l) as string[])
-				: [],
+		calls: () => logged().map(c => c.args),
+		inputs: () => logged().flatMap(c => (c.input === undefined ? [] : [c.input])),
+		answer: answers => writeFileSync(answersFile, JSON.stringify(answers)),
 	};
 }
 
 /** A fake gh for this test (see fakeCommand). */
 export const fakeGh = (t: TestContext, answers: Record<string, FakeAnswer>) => fakeCommand(t, 'gh', answers);
 
-/** A fake tmux for this test with no oo windows open, so closing a thread's claude finds none to close. */
-export const fakeTmux = (t: TestContext) => fakeCommand(t, 'tmux', { 'list-windows': { stdout: '' } });
+/**
+ * A fake tmux for this test with just `windows` open (by default none, so closing a thread's claude finds
+ * nothing to close). Starting a claude isn't faked, so a test must never get that far.
+ */
+export const fakeTmux = (t: TestContext, windows: string[] = []) => fakeCommand(t, 'tmux', { 'list-windows': { stdout: windows.join('\n') } });
