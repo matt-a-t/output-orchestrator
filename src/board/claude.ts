@@ -2,6 +2,7 @@
 
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { stillWorking, unknownProject } from '../errors.js';
 import { DEFAULT_WAKE_PROMPT, hidden, type Thread } from '../state.js';
 import { CLAUDE_SETTINGS_FILE } from '../status.js';
 import { threadDir } from '../threads.js';
@@ -98,7 +99,7 @@ export async function restartClaude(board: Board, thread: Thread, mode: Permissi
 export const openThread = (board: Board, thread: Thread) =>
 	board.run(async () => {
 		const project = board.project(thread.project);
-		if (!project) return board.setMessage(`✗ Unknown project "${thread.project}"`);
+		if (!project) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
 		const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
 		await launchClaude(board, thread, cwd);
 	});
@@ -110,7 +111,7 @@ export const openThread = (board: Board, thread: Thread) =>
 export async function wakeThread(board: Board, thread: Thread, prompt?: string): Promise<boolean> {
 	const project = board.project(thread.project);
 	if (!project) {
-		board.setMessage(`✗ Unknown project "${thread.project}"`);
+		board.setMessage(`✗ ${unknownProject(thread.project)}`);
 		return false;
 	}
 	const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
@@ -141,7 +142,7 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string):
 
 /** w: wake the thread, unless its claude is plainly still at it. */
 export function wake(board: Board, thread: Thread) {
-	if (board.statuses()[thread.id] === 'working' && !stalled(board, thread)) return board.setMessage(`⚠ claude is still working on #${thread.id}`);
+	if (board.statuses()[thread.id] === 'working' && !stalled(board, thread)) return board.setMessage(`⚠ ${stillWorking(thread.id)}`);
 	return board.run(async () => void (await wakeThread(board, thread)), `waking #${thread.id}`);
 }
 

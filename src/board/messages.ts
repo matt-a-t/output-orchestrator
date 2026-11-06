@@ -1,6 +1,7 @@
 // Messages from one thread's claude to another's (`oo thread send`), put to the receiving claude by the board.
 
 import { useEffect, useRef } from 'react';
+import { errorMessage } from '../errors.js';
 import type { Request, Response } from '../requests.js';
 import { USER_SENDER, type Message, type State, type Thread } from '../state.js';
 import type { Status } from '../status.js';
@@ -63,7 +64,7 @@ export function useMessageDelivery(board: Board, state: State, statuses: Record<
 					const from = [...new Set(messages.map(m => senderLabel(m.from)))].join(', ');
 					board.setMessage(`Told #${thread.id} · ${messages.length === 1 ? 'message' : `${messages.length} messages`} from ${from}`);
 				} catch (err) {
-					board.setMessage(`✗ Couldn't tell #${thread.id} its messages: ${err instanceof Error ? err.message : String(err)}`);
+					board.setMessage(`✗ Couldn't tell #${thread.id} its messages: ${errorMessage(err)}`);
 				} finally {
 					delivering.current.delete(thread.id);
 				}

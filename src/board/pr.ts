@@ -2,6 +2,7 @@
 
 import { existsSync } from 'node:fs';
 import { EDITOR, parsePr, prText } from '../editor.js';
+import { errorMessage, resultMessage, unknownProject } from '../errors.js';
 import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart } from '../git.js';
 import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../github.js';
 import { runColumnHook } from '../hooks.js';
@@ -29,7 +30,7 @@ export type PrSteps = {
  */
 export async function openPr(board: Board, thread: Thread, steps: PrSteps): Promise<Outcome> {
 	const project = board.project(thread.project);
-	if (!project) return { ok: false, message: `Unknown project "${thread.project}"` };
+	if (!project) return { ok: false, message: unknownProject(thread.project) };
 	if (thread.cwd) {
 		if (!existsSync(thread.cwd)) return { ok: false, message: `${thread.cwd} no longer exists` };
 		// An imported thread has no branch of its own until now: it's whatever its directory is on.
@@ -96,7 +97,7 @@ export async function openPrFromBoard(board: Board, thread: Thread) {
 	// Open from here until the PR is, so the board isn't left looking usable while it waits.
 	let progress: ProgressPopup | undefined;
 	const popup = () => (progress ??= progressPopup(' pull request ', EDITOR));
-	const { ok, message } = await openPr(board, thread, {
+	const result = await openPr(board, thread, {
 		status: text => popup().status(text),
 		describe: async (cwd, thread, base) => {
 			const saved = board.state().threads.find(t => t.id === thread.id)?.drafts?.pr;
@@ -116,7 +117,7 @@ export async function openPrFromBoard(board: Board, thread: Thread) {
 		},
 		close: async () => void (await progress?.close()),
 	});
-	board.setMessage(ok ? message : `⚠ ${message}`);
+	board.setMessage(resultMessage(result));
 }
 
 /**
@@ -146,7 +147,7 @@ export async function checkPr(board: Board, thread: Thread) {
 		try {
 			left = await leaveLocalForDone(board, thread);
 		} catch (err) {
-			return board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+			return board.setMessage(`✗ ${errorMessage(err)}`);
 		}
 	}
 	board.setMerge(({ [thread.id]: _, ...rest }) => rest);
@@ -158,7 +159,7 @@ export async function checkPr(board: Board, thread: Thread) {
 	const unstacked = await unstackChildren(project, board.store, thread, true).catch(() => undefined);
 	const moved = followUp ? `Follow-up (${followUp} after-merge checkpoint${followUp === 1 ? '' : 's'})` : 'Done';
 	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → ${moved}`, left, unblocked, unstacked].filter(Boolean).join('; '));
-	const fail = (err: unknown) => board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+	const fail = (err: unknown) => board.setMessage(`✗ ${errorMessage(err)}`);
 	// Follow-up keeps the worktree (or makes it again, after Local) for its claude to carry on in.
 	await syncWorktree(board, { ...thread, local: undefined, column }).catch(fail);
 	if (!followUp) return;

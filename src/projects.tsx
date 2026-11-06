@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { messageColor } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
@@ -218,7 +219,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				</Box>
 			) : null}
 			<Box flexGrow={1} />
-			<Text color={message.startsWith('✗') ? 'red' : confirmRemove ? 'yellow' : 'green'}>{message}</Text>
+			<Text color={messageColor(message, confirmRemove)}>{message}</Text>
 			<Text dimColor>
 				{form
 					? typeof form.edit === 'number'

@@ -1,5 +1,6 @@
 // The `n` form on the board: the new thread's project, ticket, title, the prompt its claude starts on and its priority.
 import type { Key } from 'ink';
+import { unknownProject } from './errors.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { PRIORITIES, type Priority, type Project } from './state.js';
 import { normalizeKey, type Ticket } from './tickets.js';
@@ -95,7 +96,7 @@ function pickTicket(form: NewThreadForm, index: number, tickets: Ticket[]): Part
 }
 
 function submit(form: NewThreadForm, project: Project | undefined, tickets: Ticket[]): { done: NewThreadSubmit } | { problem: string } {
-	if (!project) return { problem: `Unknown project "${form.project}"` };
+	if (!project) return { problem: unknownProject(form.project) };
 	const typed = project.tracker === 'none' ? '' : form.ticketKey.trim();
 	const ticketKey = typed ? normalizeKey(project, typed) : undefined;
 	if (typed && !ticketKey) return { problem: `Not a ${project.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${typed}` };

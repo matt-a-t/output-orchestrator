@@ -1,5 +1,6 @@
 // Moving a thread between columns, and out of them (IDEAS, Done, archived).
 
+import { stillWorking } from '../errors.js';
 import { COLUMNS, type Thread } from '../state.js';
 import { doneProblem, merged, moveProblem, moveWarning, shelveProblem, unblockedNote, unstackChildren } from '../threads.js';
 import { threadWindowName } from '../tmux.js';
@@ -18,11 +19,11 @@ export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS
 	const status = board.statuses()[thread.id];
 	// Its claude is in plan mode just while it's Planned (see launchClaude), so an open one restarts on the way in or out.
 	const restart = (thread.column === 'planned') !== (column === 'planned') && board.liveWindows().has(threadWindowName(thread.id));
-	if (restart && status === 'working') return board.setMessage(`⚠ claude is still working on #${thread.id}`);
+	if (restart && status === 'working') return board.setMessage(`⚠ ${stillWorking(thread.id)}`);
 	const warning = moveWarning(board.state(), thread, column);
 	if (warning) board.setMessage(warning);
 	// Done closes its claude window.
-	if (column === 'done' && status === 'working') return board.setMessage(`⚠ claude is still working on #${thread.id}`);
+	if (column === 'done' && status === 'working') return board.setMessage(`⚠ ${stillWorking(thread.id)}`);
 	if (column === 'pr') return void board.run(() => openPrFromBoard(board, thread), 'opening PR');
 	const move = async () => {
 		const unblocked = unblockedNote(board.state(), thread.id, column);
@@ -68,7 +69,7 @@ export const shelveThread = (board: Board, thread: Thread) =>
 	board.run(async () => {
 		const problem = await shelveProblem(thread, 'ideas');
 		if (problem) return board.setMessage(problem);
-		if (board.statuses()[thread.id] === 'working') return board.setMessage(`⚠ claude is still working on #${thread.id}`);
+		if (board.statuses()[thread.id] === 'working') return board.setMessage(`⚠ ${stillWorking(thread.id)}`);
 		board.setColumn(thread.id, 'ideas');
 		const shown = board.shownColumns().includes('ideas');
 		if (shown) board.showAtEnd('ideas');

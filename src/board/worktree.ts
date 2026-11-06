@@ -1,3 +1,4 @@
+import { unknownProject } from '../errors.js';
 import { runColumnHook } from '../hooks.js';
 import type { Column, Project, Thread } from '../state.js';
 import { createWorktree as worktreeFor, noRepo, syncWorktree as syncWorktreeFor, threadDir, type WorktreeChange } from '../threads.js';
@@ -18,7 +19,7 @@ export async function createWorktree(board: Board, project: Project, thread: Thr
 /** Keep the worktree in step with the column (see threads.ts), then run the project's hook for leaving `from`, if any. */
 export async function syncWorktree(board: Board, thread: Thread, from?: Column) {
 	const project = board.project(thread.project);
-	if (!project) return board.setMessage(`✗ Unknown project "${thread.project}"`);
+	if (!project) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
 	const change = await syncWorktreeFor(project, thread);
 	const ran = from && (await runColumnHook(project, from, { ...thread, ...change.patch }));
 	applyChange(board, thread, { ...change, message: [change.message, ran].filter(Boolean).join('; ') || undefined });
@@ -37,6 +38,6 @@ export const inWorktree = (
 		if (reason) return board.setMessage(`⚠ ${reason} — it has no branch of its own for git to work on`);
 		const dir = threadDir(board.state(), thread);
 		if (dir) return await fn(dir);
-		if (thread.local) return board.setMessage(`✗ Unknown project "${thread.project}"`);
+		if (thread.local) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
 		board.setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
 	}, label);

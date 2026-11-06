@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
+import { errorMessage, resultMessage } from './errors.js';
 import type { PrStatus } from './github.js';
 import { loop } from './input.js';
 import { ProjectsView } from './projects.js';
@@ -131,7 +132,7 @@ export function App() {
 		try {
 			await fn();
 		} catch (err) {
-			setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+			setMessage(`✗ ${errorMessage(err)}`);
 		} finally {
 			setBusy(null);
 		}
@@ -250,7 +251,7 @@ export function App() {
 				: ({ op: thread.blockedBy?.includes(target.id) ? 'unblock' : 'block', thread: thread.id, blocker: target.id } as const);
 		void run(async () => {
 			const response = await applyRequest(board.store, { ...request, id: '' });
-			setMessage(response.ok ? response.message : `⚠ ${response.message}`);
+			setMessage(resultMessage(response));
 		}, 'blocking');
 	};
 	const pickingThread = picking ? state.threads.find(t => t.id === picking) : undefined;

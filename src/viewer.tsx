@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { execa } from 'execa';
 import { Box, measureElement, render, Text, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
+import { errorMessage } from './errors.js';
 import { mouse, mouseStdin, reportMouse } from './mouse.js';
 import { OO_COMMAND } from './status.js';
 import { shellQuote } from './tmux.js';
@@ -138,7 +139,7 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 	};
 
 	useEffect(() => {
-		if (files.length && !current) renderFile(file).catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`));
+		if (files.length && !current) renderFile(file).catch(err => setMessage(`✗ ${errorMessage(err)}`));
 	}, [file, context, columns, current]);
 
 	useEffect(() => {
