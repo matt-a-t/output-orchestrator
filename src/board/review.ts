@@ -1,6 +1,7 @@
 // Reviewing a thread's changes: diffs, comments, approving a step, and rebasing it on main.
 
 import { COMMIT_FORM, type CommitForm } from '../commitForm.js';
+import { errorMessage } from '../errors.js';
 import { commit, currentRef, forcePushBranch, rebaseInProgress, rebaseOnto, rebaseTarget, stageAll } from '../git.js';
 import { openChanges, reviewDiff, showDiff, writeCommit } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
@@ -89,7 +90,7 @@ async function tellClaude(board: Board, thread: Thread, prompt: string, claude: 
 function wakeToTell(board: Board, thread: Thread, prompt: string): string {
 	void wakeThread(board, thread, prompt)
 		.then(async woke => void (woke || (await tellClaude(board, thread, prompt, 'closed'))))
-		.catch(err => board.setMessage(`✗ Couldn't wake #${thread.id}: ${err instanceof Error ? err.message : String(err)}`));
+		.catch(err => board.setMessage(`✗ Couldn't wake #${thread.id}: ${errorMessage(err)}`));
 	return ' · waking claude to hear it';
 }
 

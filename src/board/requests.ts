@@ -1,5 +1,6 @@
 import { unwatchFile, watchFile } from 'node:fs';
 import { useEffect } from 'react';
+import { errorMessage } from '../errors.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from '../requests.js';
 import { draftPr, withTicket } from '../github.js';
 import { applyRequest, moveProblem } from '../threads.js';
@@ -79,7 +80,7 @@ export function useRequests(board: Board) {
 					const response = await handled.catch(err => ({
 						id: request.id,
 						ok: false,
-						message: err instanceof Error ? err.message : String(err),
+						message: errorMessage(err),
 					}));
 					respond(response);
 					board.setMessage(`${response.ok ? '' : '✗ '}oo thread: ${response.message.replaceAll('\n', ' · ')}`);

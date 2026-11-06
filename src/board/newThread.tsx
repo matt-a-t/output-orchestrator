@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { errorMessage } from '../errors.js';
 import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from '../fieldText.js';
 import { runNewThreadHook } from '../hooks.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadSubmit } from '../newThreadForm.js';
@@ -26,7 +27,7 @@ export function useRecentTickets() {
 		setRecent({ project: project.name, tickets: null });
 		recentTickets(project).then(
 			tickets => setRecent(r => (r?.project === project.name ? { ...r, tickets } : r)),
-			(err: unknown) => setRecent(r => (r?.project === project.name ? { ...r, tickets: err instanceof Error ? err.message : String(err) } : r)),
+			(err: unknown) => setRecent(r => (r?.project === project.name ? { ...r, tickets: errorMessage(err) } : r)),
 		);
 	};
 	return { recent, loadRecent };
@@ -146,7 +147,7 @@ async function threadFromForm(board: Board, project: Project, fields: NewFields,
 	const { title } = fields;
 	if (!ticketKey) return createThread(board, project.name, fields);
 	const ticket = await fetchTicket(project, ticketKey).catch((err: unknown) => {
-		board.setMessage(`⚠ Couldn't read ${ticketKey}: ${err instanceof Error ? err.message : String(err)}`);
+		board.setMessage(`⚠ Couldn't read ${ticketKey}: ${errorMessage(err)}`);
 		return known;
 	});
 	// Its description stays on the ticket, not the plan: anyone can file an issue, and claude follows plans.

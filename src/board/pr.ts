@@ -2,6 +2,7 @@
 
 import { existsSync } from 'node:fs';
 import { EDITOR, parsePr, prText } from '../editor.js';
+import { errorMessage } from '../errors.js';
 import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart } from '../git.js';
 import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../github.js';
 import { runColumnHook } from '../hooks.js';
@@ -146,7 +147,7 @@ export async function checkPr(board: Board, thread: Thread) {
 		try {
 			left = await leaveLocalForDone(board, thread);
 		} catch (err) {
-			return board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+			return board.setMessage(`✗ ${errorMessage(err)}`);
 		}
 	}
 	board.setMerge(({ [thread.id]: _, ...rest }) => rest);
@@ -158,7 +159,7 @@ export async function checkPr(board: Board, thread: Thread) {
 	const unstacked = await unstackChildren(project, board.store, thread, true).catch(() => undefined);
 	const moved = followUp ? `Follow-up (${followUp} after-merge checkpoint${followUp === 1 ? '' : 's'})` : 'Done';
 	board.setMessage([`#${thread.id}'s PR #${thread.pr.number} merged → ${moved}`, left, unblocked, unstacked].filter(Boolean).join('; '));
-	const fail = (err: unknown) => board.setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+	const fail = (err: unknown) => board.setMessage(`✗ ${errorMessage(err)}`);
 	// Follow-up keeps the worktree (or makes it again, after Local) for its claude to carry on in.
 	await syncWorktree(board, { ...thread, local: undefined, column }).catch(fail);
 	if (!followUp) return;

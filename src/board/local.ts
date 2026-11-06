@@ -1,6 +1,7 @@
 // Moving a thread into Local (its branch checked out in the project's own checkout) and back.
 
 import { useEffect } from 'react';
+import { errorMessage } from '../errors.js';
 import { carryChanges, checkout, defaultBranch, hasWorktree, isDirty, pullBranch, removeWorktree, restoreChanges, worktreePath } from '../git.js';
 import { tryHook } from '../hooks.js';
 import type { Project, ProjectHook, Thread } from '../state.js';
@@ -133,7 +134,7 @@ export async function leaveLocalForDone(board: Board, thread: Thread): Promise<s
 	// The checkout is back on main either way; it's just not up to date.
 	const pulled = await pullBranch(project.path, main).then(
 		() => 'pulled',
-		(err: unknown) => `couldn't pull origin/${main}: ${err instanceof Error ? err.message : String(err)}`,
+		(err: unknown) => `couldn't pull origin/${main}: ${errorMessage(err)}`,
 	);
 	board.updateThread(thread.id, { local: undefined });
 	return hook(project, 'leaveLocal', back, project.path, `${project.name} checkout is back on ${main}, ${pulled}`);

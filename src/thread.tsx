@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
+import { errorMessage } from './errors.js';
 import { hasWorktree, renameBranch, worktreePath } from './git.js';
 import { FieldText, EDITING_HELP, FIELD_HELP, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
@@ -72,7 +73,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			onClose(renamed.message ?? `Saved #${thread.id}`);
 		})().catch((err: unknown) => {
 			setSaving(false);
-			setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`);
+			setMessage(`✗ ${errorMessage(err)}`);
 		});
 	};
 
@@ -98,7 +99,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			setEditing(true);
 			editPlan(draft.plan, `#${thread.id} ${draft.title}`)
 				.then(plan => setDraft(d => d && { ...d, plan }))
-				.catch(err => setMessage(`✗ ${err instanceof Error ? err.message : String(err)}`))
+				.catch(err => setMessage(`✗ ${errorMessage(err)}`))
 				.finally(() => setEditing(false));
 			return;
 		}

@@ -1,4 +1,5 @@
 // Per-project hooks: shell commands set in the project's settings (P) for things that happen on the board.
+import { errorMessage } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { HOOK_LABELS, type Column, type Project, type ProjectHook, type Thread } from './state.js';
 import { killWindow, openWindow } from './tmux.js';
@@ -57,7 +58,7 @@ export async function tryHook(
 	extraEnv: Record<string, string> = {},
 ): Promise<string | undefined> {
 	return runHook(project, hook, thread, cwd, extraEnv).catch(
-		err => `✗ ${HOOK_LABELS[hook]} hook didn't start: ${err instanceof Error ? err.message : String(err)}`,
+		err => `✗ ${HOOK_LABELS[hook]} hook didn't start: ${errorMessage(err)}`,
 	);
 }
 
