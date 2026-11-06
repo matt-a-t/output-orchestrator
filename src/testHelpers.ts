@@ -1,8 +1,12 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import type { TestContext } from 'node:test';
-import { saveState, type State, type Thread } from './state.js';
+import { execa } from 'execa';
+import type { Board } from './board/board.js';
+import type { PrStatus } from './github.js';
+import { COLUMNS, saveState, type State, type Thread } from './state.js';
+import { setColumn } from './threads.js';
 
 // Moves to Done/archived close the thread's tmux window; point tmux at a socket dir with no server
 // so tests can't touch the real board's windows.
@@ -44,3 +48,130 @@ export function capture(t: TestContext): { out: () => string; err: () => string 
 	t.mock.method(console, 'error', (...args: unknown[]) => void err.push(args.join(' ')));
 	return { out: () => out.join('\n'), err: () => err.join('\n') };
 }
+
+// Tests stand in for gh with fakeGh. Should the real one be reached anyway, it has no login to act with.
+process.env.GH_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'oo-gh-config-'));
+for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) delete process.env[name];
+
+/** A Board over `state` held in memory, recording what it says. Pass `overrides` for anything a test needs to see or steer. */
+export function fakeBoard(state: State, overrides: Partial<Board> = {}): Board & { messages: string[]; merge: () => Record<string, PrStatus> } {
+	let current = state;
+	let merge: Record<string, PrStatus> = {};
+	const messages: string[] = [];
+	const setState: Board['setState'] = next => void (current = typeof next === 'function' ? next(current) : next);
+	return {
+		store: { get: () => current, update: fn => void (current = fn(current)) },
+		state: () => current,
+		setState,
+		updateThread: (id, patch) => setState(s => ({ ...s, threads: s.threads.map(t => (t.id === id ? { ...t, ...patch } : t)) })),
+		setColumn: (id, column, patch = {}) => setState(s => setColumn(s, id, column, patch)),
+		project: name => current.projects.find(p => p.name === name),
+		statuses: () => ({}),
+		statusSince: new Map(),
+		liveWindows: () => new Set(),
+		sessionStarts: new Map(),
+		refreshWindows: async () => {},
+		setMerge: next => void (merge = typeof next === 'function' ? next(merge) : next),
+		pendingLocal: new Map(),
+		setMessage: message => void messages.push(message),
+		setBusy: () => {},
+		run: async fn => {
+			try {
+				await fn();
+			} catch (err) {
+				messages.push(`✗ ${err instanceof Error ? err.message : String(err)}`);
+			}
+		},
+		ask: question => void messages.push(question),
+		shown: () => current.threads,
+		shownColumns: () => COLUMNS,
+		showAtEnd: () => {},
+		...overrides,
+		messages,
+		merge: () => merge,
+	};
+}
+
+/** Run git in `cwd`, with an identity so commits work anywhere. */
+export const git = (cwd: string, ...args: string[]) => execa('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-C', cwd, ...args]);
+
+/**
+ * fixture(), with project "p" a git repo on main with one commit, pushed to a bare repo on disk as its
+ * origin (`<dir>/origin.git`), so pushes and pulls work offline. Threads without a `worktree` get one
+ * under `<dir>/worktrees`, so nothing lands in the real data dir.
+ */
+export async function gitFixture(threads: Partial<Thread>[] = []): Promise<{ dir: string; project: string; origin: string; state: State }> {
+	const { dir, project, state } = fixture(threads);
+	for (const t of state.threads) if (!t.cwd) t.worktree ??= join(dir, 'worktrees', t.id);
+	const origin = join(dir, 'origin.git');
+	await execa('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+	await execa('git', ['init', '-q', '-b', 'main', project]);
+	writeFileSync(join(project, 'README'), 'hello\n');
+	await git(project, 'add', 'README');
+	await git(project, 'commit', '-q', '-m', 'init');
+	await git(project, 'remote', 'add', 'origin', origin);
+	await git(project, 'push', '-q', '-u', 'origin', 'main');
+	return { dir, project, origin, state };
+}
+
+/** What a fake command prints for a call whose arguments start with the key, e.g. `'pr view'`. */
+export type FakeAnswer = { stdout?: string; exitCode?: number };
+
+/**
+ * Put a fake `name` (gh, tmux) first on PATH for this test. It answers calls whose arguments start with one
+ * of `answers`' keys (the longest that matches) and fails any other, so it never hands off to the real one.
+ * `calls()` lists each call's arguments, `inputs()` what was piped to calls with `--body-file -`, and `answer`
+ * changes the answers for the calls after it.
+ */
+export function fakeCommand(
+	t: TestContext,
+	name: string,
+	answers: Record<string, FakeAnswer>,
+): { calls: () => string[][]; inputs: () => string[]; answer: (answers: Record<string, FakeAnswer>) => void } {
+	const bin = mkdtempSync(join(tmpdir(), `oo-fake-${name}-`));
+	const log = join(bin, 'calls.jsonl');
+	const answersFile = join(bin, 'answers.json');
+	writeFileSync(answersFile, JSON.stringify(answers));
+	const script = `#!/usr/bin/env node
+const { appendFileSync, readFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+// Only read stdin when it's what the call is about, so a call with nothing piped in doesn't hang.
+const body = args.findIndex((a, i) => a === '--body-file' && args[i + 1] === '-');
+const input = body === -1 ? undefined : readFileSync(0, 'utf8');
+appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, input }) + '\\n');
+const answers = JSON.parse(readFileSync(${JSON.stringify(answersFile)}, 'utf8'));
+const line = args.join(' ');
+const key = Object.keys(answers).filter(k => line === k || line.startsWith(k + ' ')).sort((a, b) => b.length - a.length)[0];
+if (key === undefined) {
+	process.stderr.write(${JSON.stringify(`fake ${name}: no answer for: `)} + line + '\\n');
+	process.exit(1);
+}
+process.stdout.write(answers[key].stdout ?? '');
+process.exit(answers[key].exitCode ?? 0);
+`;
+	writeFileSync(join(bin, name), script, { mode: 0o755 });
+	process.env.PATH = `${bin}${delimiter}${process.env.PATH}`;
+	// Take out just this one, so fakes for other commands in the same test can come off in any order.
+	t.after(() => void (process.env.PATH = process.env.PATH!.split(delimiter).filter(p => p !== bin).join(delimiter)));
+	const logged = (): { args: string[]; input?: string }[] =>
+		existsSync(log)
+			? readFileSync(log, 'utf8')
+					.split('\n')
+					.filter(Boolean)
+					.map(l => JSON.parse(l))
+			: [];
+	return {
+		calls: () => logged().map(c => c.args),
+		inputs: () => logged().flatMap(c => (c.input === undefined ? [] : [c.input])),
+		answer: answers => writeFileSync(answersFile, JSON.stringify(answers)),
+	};
+}
+
+/** A fake gh for this test (see fakeCommand). */
+export const fakeGh = (t: TestContext, answers: Record<string, FakeAnswer>) => fakeCommand(t, 'gh', answers);
+
+/**
+ * A fake tmux for this test with just `windows` open (by default none, so closing a thread's claude finds
+ * nothing to close). Starting a claude isn't faked, so a test must never get that far.
+ */
+export const fakeTmux = (t: TestContext, windows: string[] = []) => fakeCommand(t, 'tmux', { 'list-windows': { stdout: windows.join('\n') } });
