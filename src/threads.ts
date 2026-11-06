@@ -1,5 +1,6 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
+import { killRunSessions, runPrefix } from './commands.js';
 import { unknownProject } from './errors.js';
 import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
 import { prState, retargetPr } from './github.js';
@@ -344,6 +345,8 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 	}
 	// claude can't carry on in a deleted directory. No tmux server (`oo thread move` from a plain shell) means no window.
 	await killWindow(threadWindowName(thread.id)).catch(() => {});
+	// Nor can its commands (dev servers and the like).
+	await killRunSessions(runPrefix(project, thread));
 	if (!hasWorktree(thread)) return {};
 	await removeWorktree(project.path, thread);
 	return { message: `Removed #${thread.id}'s worktree (kept branch ${thread.branch})` };

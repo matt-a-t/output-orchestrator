@@ -2,6 +2,7 @@
 
 import { readFileSync, unwatchFile, watchFile } from 'node:fs';
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { runStatuses, type RunStatus } from '../commands.js';
 import { isDirty, restoreChanges } from '../git.js';
 import type { PrStatus } from '../github.js';
 import { STATE_FILE, loadState, saveState, type State, type Thread } from '../state.js';
@@ -108,6 +109,26 @@ export function useLiveWindows() {
 		return () => clearInterval(timer);
 	}, []);
 	return { liveWindows, liveWindowsRef, refreshWindows };
+}
+
+/** The project commands' run sessions (r) and how each is going, for the run picker and the ▶ on cards. */
+export function useRuns() {
+	const [runs, setRuns] = useState<Map<string, RunStatus>>(new Map());
+	const runsRef = useRef(runs);
+	runsRef.current = runs;
+	const refreshRuns = () =>
+		runStatuses()
+			.then(next => {
+				runsRef.current = next;
+				setRuns(next);
+			})
+			.catch(() => {});
+	useEffect(() => {
+		refreshRuns();
+		const timer = setInterval(refreshRuns, 2000);
+		return () => clearInterval(timer);
+	}, []);
+	return { runsRef, refreshRuns };
 }
 
 /** Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved. */

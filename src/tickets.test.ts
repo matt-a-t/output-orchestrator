@@ -10,6 +10,7 @@ const project = (p: Partial<Project>): Project => ({
 	worktrees: true,
 	color: 'cyan',
 	hooks: {},
+	commands: [],
 	tracker: 'none',
 	jiraSite: '',
 	jiraProject: '',

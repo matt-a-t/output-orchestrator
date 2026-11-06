@@ -252,7 +252,7 @@ function cycleThreads(step: 1 | -1): string[] {
 }
 
 /**
- * Bind `prefix b`, `prefix C-b` (for when ctrl is still held), `M-b` and `M-q` (no prefix) to
+ * Bind `prefix b`, `prefix C-b` (for when ctrl is still held; from a run session too), `M-b` and `M-q` (no prefix) to
  * jump back to the board, and in thread windows: `M-h` / `M-l` to move between claude and the pane
  * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` to open a shell beside claude
  * (via `split`, the command prefix that runs `oo split`), `M-u` to scroll up (copy
@@ -261,6 +261,8 @@ function cycleThreads(step: 1 | -1): string[] {
  */
 export async function bindBoardKeys(split: string): Promise<void> {
 	const back = ['select-window', '-t', BOARD_WINDOW];
+	// From a run session the board switched to (no terminal to open it in, see openRun), back to the board's session.
+	const backFromAnywhere = ['if-shell', '-F', '#{m:oo-run_*,#{session_name}}', 'switch-client -l', tmuxCommand(back)];
 	// Only in thread windows; everywhere else the key still reaches the program (e.g. readline's M-b back-a-word).
 	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, tmuxCommand(command), `send-keys ${key}`];
 	const beside = (role: string) => [
@@ -269,8 +271,8 @@ export async function bindBoardKeys(split: string): Promise<void> {
 		`out=$(${split} ${role} #{s/^oo-//:window_name} 2>&1) || tmux display-message "$out"`,
 	];
 	const bindings: [table: string, key: string, command: string[]][] = [
-		['prefix', 'b', back],
-		['prefix', 'C-b', back],
+		['prefix', 'b', backFromAnywhere],
+		['prefix', 'C-b', backFromAnywhere],
 		['root', 'M-b', inThreads('M-b', back)],
 		['root', 'M-q', inThreads('M-q', back)],
 		['root', 'M-h', inThreads('M-h', ['select-pane', '-L'])],

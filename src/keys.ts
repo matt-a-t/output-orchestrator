@@ -27,10 +27,21 @@ export const KEY_SECTIONS: KeySection[] = [
 			['I', 'show / hide the IDEAS column (threads shelved from Planned)'],
 			['A', 'show / hide archived threads'],
 			['i', 'import a thread started outside oo'],
-			['P', 'projects (their hooks, wake prompt and when idle claudes close)'],
+			['r', "run one of the project's commands (dev server, tests…) in the thread's worktree, in a new terminal window"],
+			['P', 'projects (their hooks, commands, wake prompt and when idle claudes close)'],
 			['?', 'these keys'],
 			['q', 'quit, leaving thread windows open'],
-			['Q', 'quit and close every thread window'],
+			['Q', 'quit, closing every thread window and stopping every run (r)'],
+		],
+	},
+	{
+		title: 'Running commands (r)',
+		keys: [
+			['j/k', 'move'],
+			['⏎ / 1-9', 'run it in a new window (again, if it finished); running: open another window on it'],
+			['R', 'restart it, in the windows already on it'],
+			['X', 'stop it'],
+			['esc / q / r', 'close'],
 		],
 	},
 	{

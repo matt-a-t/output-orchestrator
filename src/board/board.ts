@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react';
+import type { RunStatus } from '../commands.js';
 import type { PrStatus } from '../github.js';
 import type { Column, Project, State, Thread } from '../state.js';
 import type { Status } from '../status.js';
@@ -27,6 +28,9 @@ export type Board = {
 	// How many times each thread's claude has started this run, so waking can wait for the one it starts.
 	sessionStarts: Map<string, number>;
 	refreshWindows: () => Promise<void>;
+	// The project commands' run sessions (r), by session name.
+	runs: () => Map<string, RunStatus>;
+	refreshRuns: () => Promise<void>;
 	setMerge: Dispatch<SetStateAction<Record<string, PrStatus>>>;
 	// `oo thread local` moves waiting for the thread's claude to finish its turn: thread id → entering.
 	pendingLocal: Map<string, boolean>;

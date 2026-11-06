@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { statSync } from 'node:fs';
+import { statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { fixture } from './testHelpers.js';
-import { projectProblem, saveState, withHome } from './state.js';
+import { loadState, projectProblem, saveState, withHome } from './state.js';
 
 test('worktrees need the project to be a git repo', async () => {
 	const { project, state } = fixture();
@@ -39,4 +39,11 @@ test('the state file is only readable by you', () => {
 	saveState(state, file);
 	assert.equal(statSync(file).mode & 0o777, 0o600);
 	assert.equal(statSync(join(dir, 'data')).mode & 0o777, 0o700);
+});
+
+test('projects saved before commands load with none', () => {
+	const { dir, project } = fixture();
+	const file = join(dir, 'old.json');
+	writeFileSync(file, JSON.stringify({ version: 1, projects: [{ name: 'p', path: project, color: 'cyan' }], threads: [] }));
+	assert.deepEqual(loadState(file).projects[0]!.commands, []);
 });
