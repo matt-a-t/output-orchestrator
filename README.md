@@ -240,6 +240,37 @@ alone. `OO_THREAD_ID`, `OO_THREAD_TITLE`, `OO_PROJECT` and `OO_BRANCH` are set f
 `OO_THREAD_TITLE`, `OO_PROMPT` and `OO_BRANCH` can carry ticket text someone else wrote, so quote
 them (`"$OO_THREAD_TITLE"`) and never `eval` them or splice them unquoted into another command.
 
+### Project commands
+
+Commands you run often while working on a thread, like a dev server, the tests in watch mode or
+migrations, can be set per project in the projects screen (`P`). `⏎` on **commands** opens them
+in `$EDITOR`, one `name: command` a line:
+
+```
+dev: npm run dev
+test: npm test -- --watch
+migrate: npm run db:migrate
+```
+
+On the board, `r` lists the highlighted thread's project's commands, and `⏎` (or `1`–`9`) runs
+one in the thread's worktree (the project checkout when it's in Local, or with no thread
+highlighted). It opens in a new terminal window of its own, apart from the board:
+
+- On WSL, a new Windows Terminal (`wt.exe`) window.
+- On a Linux desktop, `$TERMINAL -e …`, or `x-terminal-emulator -e …` if that's unset.
+- Anywhere else, or to choose your own, set `OO_TERMINAL` to a command the window's command is
+  added on to, e.g. `OO_TERMINAL="kitty -e"`. With none of these the board itself switches to the
+  run, and `prefix b` comes back.
+
+Each run is its own tmux session, `oo-run_<project>_<thread>_<command>`, which the window
+attaches to, so closing the window leaves it running. A card shows `▶` while a command runs for
+its thread, and `r` shows each command's status: running, or how it exited. A finished command
+leaves a shell with its output. In the list, `⏎` on a running command opens another window on it,
+`R` restarts it in the windows already open, and `X` stops it. A thread's runs stop when its
+worktree is removed (Done, archived), and `Q` stops them all. Commands get `OO_COMMAND_NAME` and
+the same `OO_THREAD_ID`, `OO_THREAD_TITLE`, `OO_PROJECT` and `OO_BRANCH` as hooks (empty without
+a thread), with the same care needed quoting them.
+
 ### PRs, Follow-up and Done
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
@@ -345,11 +376,13 @@ what's hidden. Done shows one line per thread and, while you're not in it, only 
 ## What oo changes outside its own folder
 
 - **tmux key bindings**, set when the board starts: `prefix b` and `prefix Ctrl-b` jump to the
-  board, plus some `Alt` keys in thread windows only (see [KEYS.md](KEYS.md); everywhere else
+  board (from a project command's session too, see [Project commands](#project-commands)), plus some `Alt` keys in thread windows only (see [KEYS.md](KEYS.md); everywhere else
   those keys still reach the program, e.g. readline's `M-b` back-a-word). Keys you've already
   bound to something else are left alone, except that `prefix Ctrl-b` replaces tmux's default
   send-prefix (sending a literal `Ctrl-b`).
 - **tmux `mouse` on**, for the `oo` session only.
+- **tmux sessions** named `oo-run_…`, one per project command you run with `r`, stopped by `X`, `Q`
+  or the thread's worktree going.
 - **`~/.claude/skills/oo/SKILL.md`**, rewritten each time the board starts, which teaches claude the
   `oo thread` commands.
 - Your own Claude Code settings are left alone. Thread claudes get oo's claude hooks through

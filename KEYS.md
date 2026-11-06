@@ -27,12 +27,27 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `b`, `J`/`K`, `!` and `C`) |
 | `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K`, `!` and `C`) |
 | `i` | import a thread started outside oo |
-| `P` | projects (their hooks, wake prompt and when idle claudes close) |
+| `r` | run one of the project's commands (dev server, tests, migrations…) in a new terminal window (see below) |
+| `P` | projects (their hooks, commands, wake prompt and when idle claudes close) |
 | `?` | all keys |
 | `q` | quit, leaving thread windows open |
-| `Q` | quit and close every thread window (claude resumes next time) |
+| `Q` | quit, closing every thread window (claude resumes next time) and stopping every run (`r`) |
 
 The mouse works too: click a card to select it, double-click to open it, scroll to move.
+
+## Running commands
+
+`r` lists the commands set for the highlighted thread's project in the projects screen (`P`),
+with how each is going for that thread. They run in its worktree (the project checkout in Local,
+or for a thread with no worktree yet).
+
+| Key | |
+|---|---|
+| `j`/`k` `↑`/`↓` | move |
+| `⏎` / `1`–`9` | run it in a new terminal window, or again if it's finished; on one that's running, open another window on it |
+| `R` | restart it; windows already on it stay open and see it start over |
+| `X` | stop it, closing its windows |
+| `esc` / `q` / `r` | close |
 
 ## Reviewing
 
@@ -103,7 +118,7 @@ reaches the program, and a key you've bound yourself is left alone.
 | `M-u` | scroll up: tmux copy mode, with your `mode-keys` (`q` leaves) |
 | `M-z` | zoom the pane |
 | `M-q` / `M-b` | back to the board |
-| `prefix b` | back to the board, from anywhere |
+| `prefix b` | back to the board, from anywhere (a run's session too) |
 
 `M-v` (claude's image paste) and `M-[` (the start of arrow keys' escape codes) are left alone.
 
