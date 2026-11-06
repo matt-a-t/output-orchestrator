@@ -24,6 +24,7 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['⤳', 'blue', 'after-merge checkpoints left'],
 	['▲', 'red', 'high priority (!)'],
 	['▽', 'gray', 'low priority (!)'],
+	['▶', 'green', 'one of its commands is running (r)'],
 ];
 
 // The columns and the import list start below the title bar, a header and a rule.
@@ -49,10 +50,12 @@ type Props = {
 	merge: PrStatus | undefined;
 	// The unfinished threads it waits on (see blockers).
 	blockers: Thread[];
+	// Whether one of its project's commands is running for it (r).
+	running: boolean;
 };
 
 /** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
-export function Card({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers }: Props) {
+export function Card({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running }: Props) {
 	const oneLine = cardHeight(t.column) === 1;
 	const color = t.color ?? project?.color;
 	// Changes aren't ready to review until claude stops working on them.
@@ -77,6 +80,7 @@ export function Card({ thread: t, selected, project, live, status, resumable, st
 						{PRIORITY_MARKS[t.priority]}
 					</Text>
 				) : null}
+				{running ? <Text color="green"> ▶</Text> : null}
 				{unreviewed && !working ? (
 					<Text color="magenta" bold>
 						{' '}±

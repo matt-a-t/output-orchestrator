@@ -22,24 +22,31 @@ export function runSessionName(project: Project, thread: Thread | undefined, cmd
 	return `${runPrefix(project, thread)}${slug(cmd.name)}`;
 }
 
-/** A run still going, or the status its command exited with (its session stays open as a shell). */
-export type RunStatus = { running: true } | { running: false; exit: number };
+/** A run still going, or the status its command exited with (its session stays open as a shell), and how many windows are on it. */
+export type RunStatus = ({ running: true } | { running: false; exit: number }) & { attached: number };
 
-/** `list-sessions` output (name, then @oo-exit, tab-separated) as the status of each run session. */
+/** `list-sessions` output (name, @oo-exit, clients attached; tab-separated) as the status of each run session. */
 export function parseRunStatuses(stdout: string): Map<string, RunStatus> {
 	const statuses = new Map<string, RunStatus>();
 	for (const line of stdout.split('\n')) {
-		const [name, exit = ''] = line.split('\t');
+		const [name, exit = '', attached = '0'] = line.split('\t');
 		if (!name?.startsWith(`${RUN_PREFIX}_`)) continue;
-		statuses.set(name, exit.trim() === '' ? { running: true } : { running: false, exit: Number(exit) });
+		const clients = Number(attached) || 0;
+		statuses.set(name, exit.trim() === '' ? { running: true, attached: clients } : { running: false, exit: Number(exit), attached: clients });
 	}
 	return statuses;
 }
 
 /** Every run session's status; none without a tmux server. */
 export async function runStatuses(): Promise<Map<string, RunStatus>> {
-	const result = await execa('tmux', ['list-sessions', '-F', '#{session_name}\t#{@oo-exit}'], { reject: false });
+	const result = await execa('tmux', ['list-sessions', '-F', '#{session_name}\t#{@oo-exit}\t#{session_attached}'], { reject: false });
 	return result.exitCode === 0 ? parseRunStatuses(result.stdout) : new Map();
+}
+
+/** Whether any of the thread's commands are running (the ▶ on its card). */
+export function threadRunning(runs: Map<string, RunStatus>, project: Project, thread: Thread): boolean {
+	const prefix = runPrefix(project, thread);
+	return [...runs].some(([name, status]) => status.running && name.startsWith(prefix));
 }
 
 // The command comes in through the environment so it needs no quoting. Once it's done the session
@@ -53,11 +60,18 @@ const RUN_SCRIPT = [
 	'exec "${SHELL:-sh}"',
 ].join('; ');
 
+const runEnvArgs = (project: Project, thread: Thread | undefined, cmd: ProjectCommand) =>
+	Object.entries({ OO_CMD: cmd.command, OO_COMMAND_NAME: cmd.name, ...threadEnv(project, thread) }).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+
 /** Start `cmd` for the thread in a new detached session named `session`, in `cwd`. */
 export async function startCommand(session: string, project: Project, thread: Thread | undefined, cmd: ProjectCommand, cwd: string): Promise<void> {
-	const env = { OO_CMD: cmd.command, OO_COMMAND_NAME: cmd.name, ...threadEnv(project, thread) };
-	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-	await execa('tmux', ['new-session', '-d', '-s', session, '-c', cwd, ...envArgs, 'sh', '-c', RUN_SCRIPT]);
+	await execa('tmux', ['new-session', '-d', '-s', session, '-c', cwd, ...runEnvArgs(project, thread, cmd), 'sh', '-c', RUN_SCRIPT]);
+}
+
+/** Run `cmd` again in its session, stopping it if it's still going; windows on it stay open and see it start over. */
+export async function restartCommand(session: string, project: Project, thread: Thread | undefined, cmd: ProjectCommand, cwd: string): Promise<void> {
+	await execa('tmux', ['set-option', '-u', '-t', `=${session}:`, '@oo-exit']);
+	await execa('tmux', ['respawn-pane', '-k', '-t', `=${session}:`, '-c', cwd, ...runEnvArgs(project, thread, cmd), 'sh', '-c', RUN_SCRIPT]);
 }
 
 /** Stop a run, closing its session. */

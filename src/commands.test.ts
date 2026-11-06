@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { commandsText, parseCommands, parseRunStatuses, runPrefix, runSessionName, terminalCommand, tmuxAttach } from './commands.js';
+import { commandsText, parseCommands, parseRunStatuses, runPrefix, runSessionName, terminalCommand, threadRunning, tmuxAttach } from './commands.js';
 import type { Project, Thread } from './state.js';
 
 const project = { name: 'my.web' } as Project;
@@ -20,12 +20,17 @@ test("a thread's prefix doesn't take in another project's runs", () => {
 });
 
 test('run sessions are running until they record how their command exited', () => {
-	const statuses = parseRunStatuses(['oo\t', 'oo-run_web_12_dev\t', 'oo-run_web_12_test\t0', 'oo-run_web_main_lint\t2', 'mine\t1'].join('\n'));
+	const statuses = parseRunStatuses(['oo\t\t1', 'oo-run_web_12_dev\t\t1', 'oo-run_web_12_test\t0\t0', 'oo-run_web_main_lint\t2\t2', 'mine\t1\t0'].join('\n'));
 	assert.deepEqual([...statuses], [
-		['oo-run_web_12_dev', { running: true }],
-		['oo-run_web_12_test', { running: false, exit: 0 }],
-		['oo-run_web_main_lint', { running: false, exit: 2 }],
+		['oo-run_web_12_dev', { running: true, attached: 1 }],
+		['oo-run_web_12_test', { running: false, exit: 0, attached: 0 }],
+		['oo-run_web_main_lint', { running: false, exit: 2, attached: 2 }],
 	]);
+	const web = { name: 'web' } as Project;
+	assert.equal(threadRunning(statuses, web, { id: '12' } as Thread), true);
+	// Its tests finished; only running commands count.
+	assert.equal(threadRunning(new Map([...statuses].filter(([n]) => n !== 'oo-run_web_12_dev')), web, { id: '12' } as Thread), false);
+	assert.equal(threadRunning(statuses, web, { id: '1' } as Thread), false);
 });
 
 const attach = ['/usr/bin/tmux', 'attach-session', '-t', '=oo-run_web_12_dev'];

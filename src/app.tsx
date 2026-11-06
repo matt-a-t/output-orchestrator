@@ -20,7 +20,9 @@ import { fetchReviews, ReviewList, type Review } from './board/reviewList.js';
 import { TodoView } from './board/todoView.js';
 import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
-import { useLiveWindows, usePrPoll, useRestoreCarried, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
+import { RunPicker, runTarget, type RunTarget } from './board/runPicker.js';
+import { useLiveWindows, usePrPoll, useRestoreCarried, useRuns, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
+import { killRunSessions } from './commands.js';
 import { COLORS, COLUMNS, PRIORITIES, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
 import { applyRequest, blockers, byPriority, matchesSearch, priorityOf, setColumn as moveTo, withPriority } from './threads.js';
@@ -59,6 +61,9 @@ export function App() {
 	const [editing, setEditing] = useState<string | null>(null);
 	const { statuses, statusesRef, sessionStarts, statusSince } = useStatuses(stateRef, setState);
 	const { liveWindowsRef, refreshWindows } = useLiveWindows();
+	const { runsRef, refreshRuns } = useRuns();
+	// The project's commands to run (r), over the bottom of the board.
+	const [runIn, setRunIn] = useState<RunTarget | null>(null);
 	const unreviewed = useUnreviewed(stateRef);
 	useRestoreCarried(stateRef);
 	const pendingLocal = useRef(new Map<string, boolean>());
@@ -138,18 +143,25 @@ export function App() {
 		}
 	};
 
-	/** Q: quit and close every thread and hook window, warning about claudes still working in them. */
+	/** Q: quit and close every thread and hook window and stop every run (r), warning about claudes still working in them. */
 	const quitClosingWindows = async () => {
 		const windows = await ooWindows();
-		if (windows.length === 0) return ask('Quit?', exit);
+		const runs = runsRef.current.size;
+		if (windows.length === 0 && runs === 0) return ask('Quit?', exit);
 		const working = stateRef.current.threads
 			.filter(t => statusesRef.current[t.id] === 'working' && windows.includes(threadWindowName(t.id)))
 			.map(t => `#${t.id}`);
 		const warning = working.length ? ` ⚠ ${working.join(', ')} ${working.length === 1 ? 'is' : 'are'} still working` : '';
-		const count = `${windows.length} window${windows.length === 1 ? '' : 's'}`;
+		const count = [
+			windows.length ? `${windows.length} window${windows.length === 1 ? '' : 's'}` : '',
+			runs ? `${runs} run${runs === 1 ? '' : 's'}` : '',
+		]
+			.filter(Boolean)
+			.join(' and ');
 		ask(`Close ${count} and quit?${warning}`, () =>
 			void run(async () => {
 				await closeOoWindows();
+				await killRunSessions();
 				exit();
 			}, 'closing windows'),
 		);
@@ -173,6 +185,8 @@ export function App() {
 		liveWindows: () => liveWindowsRef.current,
 		sessionStarts,
 		refreshWindows,
+		runs: () => runsRef.current,
+		refreshRuns,
 		setMerge,
 		pendingLocal: pendingLocal.current,
 		setMessage,
@@ -258,7 +272,7 @@ export function App() {
 
 	useInput((input, key) => {
 		// The form, the import, review and todo lists and the import prompt take their own keys.
-		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews || todosThread) return;
+		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews || todosThread || runIn) return;
 		setMessage('');
 		if (showKeys) {
 			if (input === '?' || input === 'q' || key.escape) setShowKeys(false);
@@ -312,6 +326,11 @@ export function App() {
 			return setCursor(cursor.col === 0 ? { col: 0, row: 0 } : { col: cursor.col - 1, row });
 		}
 		if (input === 'i') return startImport();
+		if (input === 'r') {
+			const project = projectByName(selected?.project ?? filter ?? '') ?? (state.projects.length === 1 ? state.projects[0] : undefined);
+			if (!project) return setMessage('⚠ Run whose commands? Highlight a thread, or p to filter to a project');
+			return setRunIn(runTarget(board, project, selected));
+		}
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
 			setFilter(names[(names.indexOf(filter) + 1) % names.length]!);
@@ -383,7 +402,7 @@ export function App() {
 					columns={shownColumns.map(column => columnThreads(column))}
 					cursor={{ col: cursor.col, row }}
 					setCursor={setCursor}
-					active={!busy && !newThreadIn && !choosingImport && !confirm && !search.typing}
+					active={!busy && !newThreadIn && !choosingImport && !runIn && !confirm && !search.typing}
 					unreviewed={unreviewed}
 					merge={merge}
 					layout={columnsLayout}
@@ -405,6 +424,7 @@ export function App() {
 				width={width}
 				hidden={showProjects || showKeys || !!editing}
 			>
+				{runIn ? <RunPicker board={board} target={runIn} active={!busy} onClose={() => setRunIn(null)} /> : null}
 				{choosingImport ? <ImportProject board={board} active={!busy} onPick={openPicker} onClose={() => setChoosingImport(false)} /> : null}
 				<SearchBox search={search} />
 				{newThreadIn ? <NewThread board={board} project={newThreadIn} recent={recent} active={!busy} onClose={() => setNewThreadIn(null)} /> : null}

@@ -8,6 +8,7 @@ import { COLUMN_LABELS, type Column, type Thread } from '../state.js';
 import { threadWindowName } from '../tmux.js';
 import type { Board } from './board.js';
 import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES } from './card.js';
+import { threadRunning } from '../commands.js';
 import { blockers } from '../threads.js';
 import { openThread, resumeId, stalled } from './claude.js';
 import { useDoubleClick } from './doubleClick.js';
@@ -128,6 +129,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 								unreviewed={unreviewed.has(t.id)}
 								merge={merge[t.id]}
 								blockers={blockers(board.state(), t)}
+								running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
 							/>
 						))}
 						{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
