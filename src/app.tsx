@@ -271,7 +271,7 @@ export function App() {
 	const pickingThread = picking ? state.threads.find(t => t.id === picking) : undefined;
 
 	useInput((input, key) => {
-		// The form, the import, review and todo lists and the import prompt take their own keys.
+		// The form, the import, review and todo lists and the import project picker take their own keys.
 		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews || todosThread || runIn) return;
 		setMessage('');
 		if (showKeys) {
@@ -381,11 +381,13 @@ export function App() {
 					}}
 				/>
 			) : showKeys ? (
-				<KeysView />
+				<KeysView active={!busy} />
 			) : reviews ? (
 				<ReviewList board={board} requests={reviews} active={!busy} onClose={() => setReviews(null)} />
 			) : todosThread ? (
 				<TodoView thread={todosThread} active={!busy} onClose={() => setTodosOf(null)} />
+			) : choosingImport ? (
+				<ImportProject board={board} active={!busy} onPick={openPicker} onClose={() => setChoosingImport(false)} />
 			) : picker ? (
 				<ImportList
 					board={board}
@@ -402,7 +404,7 @@ export function App() {
 					columns={shownColumns.map(column => columnThreads(column))}
 					cursor={{ col: cursor.col, row }}
 					setCursor={setCursor}
-					active={!busy && !newThreadIn && !choosingImport && !runIn && !confirm && !search.typing}
+					active={!busy && !newThreadIn && !runIn && !confirm && !search.typing}
 					unreviewed={unreviewed}
 					merge={merge}
 					layout={columnsLayout}
@@ -410,10 +412,10 @@ export function App() {
 				/>
 			)}
 			<Footer
-				// About the highlighted card, so not while the import, review or todo list covers the board.
-				thread={picker || reviews || todosThread ? undefined : selected}
+				// About the highlighted card, so not while the import, review or todo list or the project picker covers the board.
+				thread={picker || reviews || todosThread || choosingImport ? undefined : selected}
 				merge={selected && merge[selected.id]}
-				blockers={selected && !picker && !reviews && !todosThread ? blockers(state, selected) : []}
+				blockers={selected && !picker && !reviews && !todosThread && !choosingImport ? blockers(state, selected) : []}
 				busy={busy}
 				message={
 					pickingThread
@@ -425,7 +427,6 @@ export function App() {
 				hidden={showProjects || showKeys || !!editing}
 			>
 				{runIn ? <RunPicker board={board} target={runIn} active={!busy} onClose={() => setRunIn(null)} /> : null}
-				{choosingImport ? <ImportProject board={board} active={!busy} onPick={openPicker} onClose={() => setChoosingImport(false)} /> : null}
 				<SearchBox search={search} />
 				{newThreadIn ? <NewThread board={board} project={newThreadIn} recent={recent} active={!busy} onClose={() => setNewThreadIn(null)} /> : null}
 			</Footer>

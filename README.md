@@ -370,8 +370,8 @@ and down (the import list works the same way). For this the board turns on tmux'
 for its session, so in claude windows dragging selects into tmux's buffer. Hold Shift while
 dragging to use your terminal's own selection.
 
-Columns too long for the window scroll with the cursor, with `↑ n more` / `↓ n more` marking
-what's hidden. Done shows one line per thread and, while you're not in it, only its newest arrivals.
+Columns too long for the window scroll with the cursor, with a scroll bar beside their cards
+showing where you are. Done shows one line per thread and, while you're not in it, only its newest arrivals.
 
 ## What oo changes outside its own folder
 

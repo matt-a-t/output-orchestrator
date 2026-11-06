@@ -1,12 +1,14 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { useEffect, useRef, useState } from 'react';
+import { Box, Text, measureElement, useInput, type DOMElement } from 'ink';
+import { ScrollBar } from './board/scrollList.js';
 import { editCommands } from './editor.js';
 import { errorMessage, messageColor } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
+import { scrollWindow } from './scroll.js';
 import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
 const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'closeIdleAfter', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS, 'commands'] as const;
@@ -190,6 +192,21 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 	const abbrevWidth = Math.max(6, ...state.projects.map(p => p.abbrev.length)) + 2;
 	const pad = (s: string, n: number) => s.padEnd(n);
 
+	// The list and the form under it share the space measured after each render; the list scrolls in what the form leaves.
+	const space = useRef<DOMElement>(null);
+	const [spaceLines, setSpaceLines] = useState(0);
+	useEffect(() => {
+		if (!space.current) return;
+		const measured = measureElement(space.current).height;
+		if (measured !== spaceLines) setSpaceLines(measured);
+	});
+	// The form's title, its fields and the blank line above it.
+	const formLines = form ? FIELDS.length + 2 : 0;
+	const listLines = Math.max(1, Math.min(state.projects.length, spaceLines - formLines));
+	const top = useRef(0);
+	const view = scrollWindow(state.projects.map(() => 1), top.current, row, listLines);
+	top.current = view.top;
+
 	return (
 		<Box flexDirection="column" flexGrow={1}>
 			<Text bold>Projects</Text>
@@ -199,49 +216,55 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				{pad('abbrev', abbrevWidth)}
 				{pad('colour', 9)}path
 			</Text>
-			{state.projects.map((p, i) => (
-				<Text key={p.name} wrap="truncate" inverse={!form && i === row}>
-					{'  '}
-					<Text color={p.color}>{pad(p.name, nameWidth)}</Text>
-					{pad(p.abbrev, abbrevWidth)}
-					<Text color={p.color}>{pad(p.color, 9)}</Text>
-					{p.path}
-					{p.worktrees ? null : <Text dimColor>  (no worktrees)</Text>}
-				</Text>
-			))}
-			{form ? (
-				<Box flexDirection="column" marginTop={1}>
-					<Text bold>{form.original ? `Edit ${form.original}` : 'New project'}</Text>
-					{FIELDS.map((field, i) => {
-						const active = i === form.field;
-						return (
-							<Text key={field}>
-								<Text dimColor={!active}>
-									{active ? '› ' : '  '}
-									{pad(`${FIELD_LABELS[field]}:`, LABEL_WIDTH)}
-								</Text>
-								{isChoice(field) ? (
-									<Text color={field === 'color' ? form.project.color : undefined}>
-										{active ? `‹ ${choiceLabel(form.project[field])} ›` : choiceLabel(form.project[field])}
-									</Text>
-								) : field === 'commands' ? (
-									form.project.commands.length ? (
-										<Text>{form.project.commands.map(c => c.name).join(', ')}</Text>
-									) : (
-										<Text dimColor>none</Text>
-									)
-								) : (
-									<Text>
-										<FieldText value={fieldValue(form.project, field)} edit={active ? form.edit : null} />
-										{field === 'wakePrompt' && !form.project.wakePrompt ? <Text dimColor>{DEFAULT_WAKE_PROMPT}</Text> : null}
-									</Text>
-								)}
+			<Box ref={space} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
+				<Box height={listLines} flexShrink={0}>
+					<Box flexGrow={1} flexDirection="column" overflow="hidden">
+						{state.projects.slice(view.top, view.end).map((p, i) => (
+							<Text key={p.name} wrap="truncate" inverse={!form && view.top + i === row}>
+								{'  '}
+								<Text color={p.color}>{pad(p.name, nameWidth)}</Text>
+								{pad(p.abbrev, abbrevWidth)}
+								<Text color={p.color}>{pad(p.color, 9)}</Text>
+								{p.path}
+								{p.worktrees ? null : <Text dimColor>  (no worktrees)</Text>}
 							</Text>
-						);
-					})}
+						))}
+					</Box>
+					{view.end - view.top < state.projects.length ? <ScrollBar total={view.total} first={view.first} shown={view.shown} height={listLines} /> : null}
 				</Box>
-			) : null}
-			<Box flexGrow={1} />
+				{form ? (
+					<Box flexDirection="column" marginTop={1} flexShrink={0}>
+						<Text bold>{form.original ? `Edit ${form.original}` : 'New project'}</Text>
+						{FIELDS.map((field, i) => {
+							const active = i === form.field;
+							return (
+								<Text key={field}>
+									<Text dimColor={!active}>
+										{active ? '› ' : '  '}
+										{pad(`${FIELD_LABELS[field]}:`, LABEL_WIDTH)}
+									</Text>
+									{isChoice(field) ? (
+										<Text color={field === 'color' ? form.project.color : undefined}>
+											{active ? `‹ ${choiceLabel(form.project[field])} ›` : choiceLabel(form.project[field])}
+										</Text>
+									) : field === 'commands' ? (
+										form.project.commands.length ? (
+											<Text>{form.project.commands.map(c => c.name).join(', ')}</Text>
+										) : (
+											<Text dimColor>none</Text>
+										)
+									) : (
+										<Text>
+											<FieldText value={fieldValue(form.project, field)} edit={active ? form.edit : null} />
+											{field === 'wakePrompt' && !form.project.wakePrompt ? <Text dimColor>{DEFAULT_WAKE_PROMPT}</Text> : null}
+										</Text>
+									)}
+								</Text>
+							);
+						})}
+					</Box>
+				) : null}
+			</Box>
 			<Text color={messageColor(message, confirmRemove)}>{message}</Text>
 			<Text dimColor>
 				{form
