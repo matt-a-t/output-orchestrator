@@ -1,4 +1,4 @@
-// The board's columns of cards: scrolling each to fit, and finding what a click is on.
+// The board's columns of cards: scrolling each to fit, with a scroll bar, and finding what a click is on.
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Box, Text, measureElement, useWindowSize, type DOMElement } from 'ink';
@@ -12,6 +12,7 @@ import { threadRunning } from '../commands.js';
 import { blockers } from '../threads.js';
 import { openThread, resumeId, stalled } from './claude.js';
 import { useDoubleClick } from './doubleClick.js';
+import { ScrollBar } from './scrollList.js';
 
 type Cursor = { col: number; row: number };
 
@@ -51,15 +52,17 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 		if (measured !== boardHeight) setBoardHeight(measured);
 	});
 
-	/** The slice of a column's threads that fits, keeping the cursor in view; `top` is the lines its "more" line above takes. */
+	// Lines for the cards, under the column's header and rule; a scroll bar beside them shows where a taller column is.
+	const cardArea = Math.max(0, boardHeight - (LIST_TOP - 1));
+
+	/** The slice of a column's threads that fits, keeping the cursor in view. */
 	const visibleSlice = (column: Column, threads: Thread[], cursorRow: number | undefined) => {
 		const count = threads.length;
 		// Room for the borders of the cards in Local, whether or not they're scrolled into view.
-		const lines = boardHeight - (LIST_TOP - 1) - LOCAL_BORDER_LINES * threads.filter(t => t.local).length;
+		const lines = cardArea - LOCAL_BORDER_LINES * threads.filter(t => t.local).length;
 		const rowLines = cardHeight(column);
-		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count, top: 0 };
-		// Room for the "more" lines above and below.
-		const fits = Math.max(1, Math.floor((lines - 2) / rowLines));
+		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count };
+		const fits = Math.max(1, Math.floor(lines / rowLines));
 		const last = count - fits;
 		let start = scrollOffsets[column] ?? (column === 'done' ? last : 0);
 		if (cursorRow !== undefined) start = Math.min(Math.max(start, cursorRow - fits + 1), cursorRow);
@@ -67,7 +70,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 		else if (column === 'done') start = last;
 		start = Math.min(Math.max(0, start), last);
 		scrollOffsets[column] = start;
-		return { start, end: start + fits, top: start > 0 ? 1 : 0 };
+		return { start, end: start + fits };
 	};
 	const columnSlice = (c: number) => visibleSlice(shown[c]!, columns[c]!, c === cursor.col ? cursor.row : undefined);
 
@@ -81,8 +84,8 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 		const col = Math.floor(x / colWidth);
 		if (button !== 'left' || y < 1 || col >= shown.length) return;
 		const slice = columnSlice(col);
-		let top = LIST_TOP + slice.top;
-		// The column's header, or its "more" line.
+		let top = LIST_TOP;
+		// The column's header.
 		if (y < top) return setCursor({ col, row: cursor.row });
 		// Cards in Local are taller, so count down through the ones shown.
 		const threads = columns[col]!;
@@ -109,30 +112,38 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 			{shown.map((column, c) => {
 				const threads = columns[c]!;
 				const { start, end } = columnSlice(c);
+				const linesOf = (from: number, to: number) => threads.slice(from, to).reduce((n, t) => n + cardLines(t), 0);
 				return (
-					<Box key={column} flexDirection="column" width={colWidth} paddingRight={1}>
-						<Text bold color={c === cursor.col ? 'white' : 'gray'}>
-							{COLUMN_LABELS[column]} ({threads.length})
-						</Text>
+					<Box key={column} flexDirection="column" width={colWidth}>
+						<Box paddingRight={1}>
+							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+								{COLUMN_LABELS[column]} ({threads.length})
+							</Text>
+						</Box>
 						<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
-						{start > 0 ? <Text dimColor>  ↑ {start} more</Text> : null}
-						{threads.slice(start, end).map((t, i) => (
-							<Card
-								key={t.id}
-								thread={t}
-								selected={c === cursor.col && start + i === cursor.row}
-								project={board.project(t.project)}
-								live={board.liveWindows().has(threadWindowName(t.id))}
-								status={board.statuses()[t.id]}
-								resumable={!!resumeId(t)}
-								stalled={stalled(board, t)}
-								unreviewed={unreviewed.has(t.id)}
-								merge={merge[t.id]}
-								blockers={blockers(board.state(), t)}
-								running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
-							/>
-						))}
-						{end < threads.length ? <Text dimColor>  ↓ {threads.length - end} more</Text> : null}
+						<Box>
+							<Box flexDirection="column" width={colWidth - 1}>
+								{threads.slice(start, end).map((t, i) => (
+									<Card
+										key={t.id}
+										thread={t}
+										selected={c === cursor.col && start + i === cursor.row}
+										project={board.project(t.project)}
+										live={board.liveWindows().has(threadWindowName(t.id))}
+										status={board.statuses()[t.id]}
+										resumable={!!resumeId(t)}
+										stalled={stalled(board, t)}
+										unreviewed={unreviewed.has(t.id)}
+										merge={merge[t.id]}
+										blockers={blockers(board.state(), t)}
+										running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
+									/>
+								))}
+							</Box>
+							{end - start < threads.length ? (
+								<ScrollBar total={linesOf(0, threads.length)} first={linesOf(0, start)} shown={linesOf(start, end)} height={cardArea} />
+							) : null}
+						</Box>
 					</Box>
 				);
 			})}
