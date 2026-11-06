@@ -1,15 +1,12 @@
 // Importing a claude thread started outside the board (`i`): which project, then which thread.
 
-import { useEffect, useRef, useState } from 'react';
-import { Box, Text, measureElement, useInput, useWindowSize, type DOMElement } from 'ink';
-import { loop } from '../input.js';
-import { mouse, type MouseEvent } from '../mouse.js';
+import { useState } from 'react';
+import { Box, Text, useInput } from 'ink';
 import type { Project, Thread } from '../state.js';
 import { addThread } from '../threads.js';
 import { recentlyActive, timeAgo, type OutsideThread } from '../transcripts.js';
 import type { Board } from './board.js';
-import { LIST_TOP } from './card.js';
-import { useDoubleClick } from './doubleClick.js';
+import { ScrollList } from './scrollList.js';
 
 type ProjectProps = {
 	board: Board;
@@ -68,7 +65,6 @@ const entryHeight = (t: OutsideThread) => (t.title === t.firstPrompt ? 1 : 2);
 
 /** The import list, in place of the columns: the project's claude threads, newest first. */
 export function ImportList({ board, project, threads, active, onClose, onShow }: ListProps) {
-	const { columns: width } = useWindowSize();
 	const [row, setRow] = useState(0);
 	const linkedThread = (outside: OutsideThread) => board.state().threads.find(t => t.sessionId === outside.id);
 
@@ -96,99 +92,44 @@ export function ImportList({ board, project, threads, active, onClose, onShow }:
 		);
 	};
 
-	useInput(
-		(input, key) => {
-			board.setMessage('');
-			const count = threads.length;
-			if (input === 'q' || input === 'i' || key.escape) return onClose();
-			if (input === 'j' || key.downArrow) return setRow(loop(row, 1, count));
-			if (input === 'k' || key.upArrow) return setRow(loop(row, -1, count));
-			if (key.return) return importThread(threads[row]!);
-		},
-		{ isActive: active },
-	);
-
-	// The list scrolls to keep the selected entry in view; it shows what fits in the space
-	// measured after each render, starting at entry `top`.
-	const list = useRef<DOMElement>(null);
-	const [lines, setLines] = useState(0);
-	useEffect(() => {
-		if (!list.current) return;
-		const measured = measureElement(list.current).height;
-		if (measured !== lines) setLines(measured);
-	});
-	const top = useRef(0);
-	const linesFrom = (from: number, to: number) => threads.slice(from, to + 1).reduce((n, t) => n + entryHeight(t), 0);
-	top.current = Math.min(top.current, row);
-	while (top.current < row && linesFrom(top.current, row) > lines) top.current++;
-	const shown: OutsideThread[] = [];
-	let used = 0;
-	for (const t of threads.slice(top.current)) {
-		used += entryHeight(t);
-		if (used > lines) break;
-		shown.push(t);
-	}
-
-	/** The entry at screen row `y`; an entry is one line, or two when it shows its first prompt. */
-	const rowAt = (y: number) => {
-		let bottom = LIST_TOP;
-		for (const [r, t] of shown.entries()) {
-			bottom += entryHeight(t);
-			if (y < bottom) return top.current + r;
-		}
-	};
-
-	const isDoubleClick = useDoubleClick();
-	// The wheel stops at the ends rather than looping.
-	const onMouse = ({ button, y }: MouseEvent) => {
-		if (!active) return;
-		board.setMessage('');
-		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
-		if (wheel) return setRow(r => Math.max(0, Math.min(threads.length - 1, r + wheel)));
-		const r = y >= LIST_TOP ? rowAt(y) : undefined;
-		if (button !== 'left' || r === undefined) return;
-		setRow(r);
-		if (isDoubleClick(threads[r]!.id)) importThread(threads[r]!);
-	};
-	const onMouseRef = useRef(onMouse);
-	onMouseRef.current = onMouse;
-	useEffect(() => {
-		const listener = (event: MouseEvent) => onMouseRef.current(event);
-		mouse.on('press', listener);
-		return () => void mouse.off('press', listener);
-	}, []);
-
 	return (
-		<Box flexGrow={1} overflow="hidden" flexDirection="column">
-			<Text bold>
-				Import a {project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
-			</Text>
-			<Text dimColor>
-				{'─'.repeat(Math.max(0, width - 13))} {String(row + 1).padStart(4)} of {String(threads.length).padEnd(3)}
-			</Text>
-			<Box ref={list} flexGrow={1} flexBasis={0} flexDirection="column" overflow="hidden">
-				{shown.map((s, i) => {
-					const r = top.current + i;
-					const linked = linkedThread(s);
-					const recent = recentlyActive(s.transcriptPath);
-					return (
-						<Box key={s.id} flexDirection="column" flexShrink={0}>
-							<Text wrap="truncate" inverse={r === row}>
-								<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
-								{linked ? <Text color="cyan">#{linked.id} </Text> : null}
-								{recent ? <Text color="yellow">● active </Text> : null}
-								{s.title}
+		<ScrollList
+			board={board}
+			items={threads}
+			itemKey={t => t.id}
+			itemHeight={entryHeight}
+			title={
+				<>
+					Import a {project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
+				</>
+			}
+			row={row}
+			setRow={setRow}
+			active={active}
+			onActivate={importThread}
+			onInput={(input, key) => {
+				if (input === 'q' || input === 'i' || key.escape) onClose();
+			}}
+			renderItem={(s, selected) => {
+				const linked = linkedThread(s);
+				const recent = recentlyActive(s.transcriptPath);
+				return (
+					<>
+						<Text wrap="truncate" inverse={selected}>
+							<Text dimColor>{timeAgo(s.lastActivity).padEnd(9)}</Text>
+							{linked ? <Text color="cyan">#{linked.id} </Text> : null}
+							{recent ? <Text color="yellow">● active </Text> : null}
+							{s.title}
+						</Text>
+						{s.title !== s.firstPrompt ? (
+							<Text wrap="truncate" dimColor>
+								{'         '}
+								{s.firstPrompt}
 							</Text>
-							{s.title !== s.firstPrompt ? (
-								<Text wrap="truncate" dimColor>
-									{'         '}
-									{s.firstPrompt}
-								</Text>
-							) : null}
-						</Box>
-					);
-				})}
-			</Box>
-		</Box>
+						) : null}
+					</>
+				);
+			}}
+		/>
 	);
 }
