@@ -1,7 +1,7 @@
 // Importing a claude thread started outside the board (`i`): which project, then which thread.
 
 import { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Text } from 'ink';
 import type { Project, Thread } from '../state.js';
 import { addThread } from '../threads.js';
 import { recentlyActive, timeAgo, type OutsideThread } from '../transcripts.js';
@@ -16,38 +16,40 @@ type ProjectProps = {
 	onClose: () => void;
 };
 
-/** Picking the project to import from, when there's no filter to say. */
+/** Picking the project to import from, when there's no filter to say, in place of the columns. */
 export function ImportProject({ board, active, onPick, onClose }: ProjectProps) {
-	const [index, setIndex] = useState(0);
-	const { projects } = board.state();
-	useInput(
-		(input, key) => {
-			board.setMessage('');
-			if (key.escape) {
-				onClose();
-				return board.setMessage('Cancelled');
-			}
-			const count = projects.length;
-			if (input === 'j' || key.downArrow) return setIndex((index + 1) % count);
-			if (input === 'k' || key.upArrow) return setIndex((index + count - 1) % count);
-			if (key.return) {
-				onClose();
-				return onPick(projects[index]!);
-			}
-		},
-		{ isActive: active },
-	);
+	const [row, setRow] = useState(0);
+	const pick = (project: Project) => {
+		onClose();
+		onPick(project);
+	};
 	return (
-		<Box flexDirection="column">
-			<Text bold>Import — project? (j/k move, ⏎ choose, esc cancel)</Text>
-			{projects.map((p, i) => (
-				<Text key={p.name} inverse={i === index}>
+		<ScrollList
+			board={board}
+			items={board.state().projects}
+			itemKey={p => p.name}
+			title={
+				<>
+					Import — which project? <Text dimColor>(j/k move  ⏎ choose  esc/q/i cancel, or click, double-click, scroll)</Text>
+				</>
+			}
+			row={row}
+			setRow={setRow}
+			active={active}
+			onActivate={pick}
+			onInput={(input, key) => {
+				if (input !== 'q' && input !== 'i' && !key.escape) return;
+				onClose();
+				board.setMessage('Cancelled');
+			}}
+			renderItem={(p, selected) => (
+				<Text wrap="truncate" inverse={selected}>
 					{'  '}
 					<Text color={p.color}>{p.name}</Text>
 					<Text dimColor> {p.path}</Text>
 				</Text>
-			))}
-		</Box>
+			)}
+		/>
 	);
 }
 
