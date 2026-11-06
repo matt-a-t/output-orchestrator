@@ -1,6 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { commandsText, parseCommands } from './commands.js';
+import type { ProjectCommand } from './state.js';
 import { popup, shellQuote } from './tmux.js';
 
 export const EDITOR = process.env.VISUAL || process.env.EDITOR || 'vim';
@@ -32,6 +34,19 @@ async function editLines(text: string, title: string): Promise<string[]> {
 export async function editPlan(plan: string, thread: string): Promise<string> {
 	const lines = await editLines([plan, '', `# The plan for ${thread}. Lines starting with "# " are ignored.`, ''].join('\n'), ' plan ');
 	return lines.join('\n').trim();
+}
+
+/** Edit a project's commands in $EDITOR, one `name: command` a line. */
+export async function editCommands(commands: ProjectCommand[], project: string): Promise<ReturnType<typeof parseCommands>> {
+	const help = [
+		`# ${project}'s commands, run with r on the board: one "name: command" a line, e.g.`,
+		'#   dev: npm run dev',
+		'#   test: npm test -- --watch',
+		"# Each runs in the thread's worktree (the project checkout in Local, or with no thread), in a new terminal",
+		'# window, with OO_THREAD_ID, OO_THREAD_TITLE, OO_PROJECT, OO_BRANCH and OO_COMMAND_NAME set.',
+		'# Lines starting with "# " are ignored.',
+	];
+	return parseCommands(await editLines([commandsText(commands), '', ...help, ''].join('\n'), ' commands '));
 }
 
 export type PrDraft = { title: string; body: string };

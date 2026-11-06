@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseRunStatuses, runPrefix, runSessionName, terminalCommand, tmuxAttach } from './commands.js';
+import { commandsText, parseCommands, parseRunStatuses, runPrefix, runSessionName, terminalCommand, tmuxAttach } from './commands.js';
 import type { Project, Thread } from './state.js';
 
 const project = { name: 'my.web' } as Project;
@@ -58,4 +58,16 @@ test("the window's tmux attaches on the board's own server", () => {
 		'=oo-run_web_main_dev',
 	]);
 	assert.deepEqual(tmuxAttach('tmux', {}, 's'), ['tmux', 'attach-session', '-t', '=s']);
+});
+
+test("commands are edited a line each, the name up to the first colon", () => {
+	const commands = [
+		{ name: 'dev', command: 'npm run dev' },
+		{ name: 'migrate', command: 'DATABASE_URL=postgres://localhost:5432/x npm run migrate' },
+	];
+	assert.deepEqual(parseCommands(commandsText(commands).split('\n')), { commands, problems: [] });
+	assert.deepEqual(parseCommands(['  test :  npm test  ', '', 'oops', 'empty:', 'test: again']), {
+		commands: [{ name: 'test', command: 'npm test' }],
+		problems: ['"oops" isn\'t name: command', '"empty:" isn\'t name: command', 'a second "test"'],
+	});
 });

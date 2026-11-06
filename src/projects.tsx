@@ -2,13 +2,14 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { messageColor } from './errors.js';
+import { editCommands } from './editor.js';
+import { errorMessage, messageColor } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'closeIdleAfter', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS] as const;
+const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'closeIdleAfter', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS, 'commands'] as const;
 type Field = (typeof FIELDS)[number];
 const FIELD_LABELS: Record<Field, string> = {
 	name: 'name',
@@ -22,6 +23,7 @@ const FIELD_LABELS: Record<Field, string> = {
 	jiraSite: 'jira site',
 	jiraProject: 'jira project',
 	...HOOK_LABELS,
+	commands: 'commands',
 };
 // Changed with ←/→ through a fixed list rather than typed.
 type Choice = 'color' | 'worktrees' | 'closeIdleAfter' | 'tracker';
@@ -30,6 +32,9 @@ const CHOICES: { [F in Choice]: readonly Project[F][] } = { color: COLORS, workt
 const choiceLabel = (value: Project[Choice]) =>
 	value === true ? 'on' : value === false ? 'off' : value === 0 ? 'never' : typeof value === 'number' ? `after ${value} min` : value;
 const isChoice = (field: Field): field is Choice => field in CHOICES;
+// Neither typed nor chosen: ⏎ edits them in $EDITOR.
+type TextField = Exclude<Field, Choice | 'commands'>;
+const isText = (field: Field): field is TextField => !isChoice(field) && field !== 'commands';
 // Where each hook runs, for its hint.
 const HOOK_WHERE: Record<ProjectHook, string> = {
 	newThread: "as a thread is added, in its worktree if it's been made yet (it has with an initial prompt), else the project checkout",
@@ -47,13 +52,14 @@ const FIELD_HINTS: Partial<Record<Field, string>> = {
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
 	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
+	commands: "⏎ edits them in $EDITOR, one name: command a line; r on the board runs one in the thread's worktree, in a new terminal window  ",
 	...Object.fromEntries(HOOK_EVENTS.map(e => [e, `shell command run ${HOOK_WHERE[e]} (OO_THREAD_ID, OO_THREAD_TITLE, OO_PROJECT, OO_BRANCH set${e === 'newThread' ? ', and OO_PROMPT' : ''})  `])),
 };
 const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
 
 const isHook = (field: Field): field is ProjectHook => (HOOK_EVENTS as readonly string[]).includes(field);
-const fieldValue = (project: Project, field: Exclude<Field, Choice>) => (isHook(field) ? (project.hooks[field] ?? '') : project[field]);
-const withField = (project: Project, field: Exclude<Field, Choice>, value: string): Project =>
+const fieldValue = (project: Project, field: TextField) => (isHook(field) ? (project.hooks[field] ?? '') : project[field]);
+const withField = (project: Project, field: TextField, value: string): Project =>
 	isHook(field) ? { ...project, hooks: { ...project.hooks, [field]: value } } : { ...project, [field]: value };
 
 /** `original` is the name of the project being edited; undefined when adding one. `edit` is the focused text field's (see fieldKey). */
@@ -118,7 +124,18 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		setMessage('');
 		if (form) {
 			const field = FIELDS[form.field]!;
-			if (!isChoice(field)) {
+			if (field === 'commands' && !key.ctrl && !key.meta && (key.return || input === 'i')) {
+				const name = form.project.name || 'the new project';
+				editCommands(form.project.commands, name).then(
+					({ commands, problems }) => {
+						setForm(f => f && { ...f, project: { ...f.project, commands } });
+						setMessage(problems.length ? `⚠ Dropped ${problems.join(', ')}` : '');
+					},
+					err => setMessage(`✗ ${errorMessage(err)}`),
+				);
+				return;
+			}
+			if (isText(field)) {
 				const next = fieldKey(fieldValue(form.project, field), form.edit, input, key);
 				if (next) return setForm({ ...form, project: withField(form.project, field, next.value), edit: next.edit });
 			}
@@ -127,7 +144,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 			if (key.return) {
 				const next = nextField(form.field, FIELDS.length, i => {
 					const f = FIELDS[i]!;
-					return isChoice(f) ? undefined : fieldValue(form.project, f).length;
+					return isText(f) ? fieldValue(form.project, f).length : undefined;
 				});
 				return setForm({ ...form, ...next });
 			}
@@ -207,6 +224,12 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 									<Text color={field === 'color' ? form.project.color : undefined}>
 										{active ? `‹ ${choiceLabel(form.project[field])} ›` : choiceLabel(form.project[field])}
 									</Text>
+								) : field === 'commands' ? (
+									form.project.commands.length ? (
+										<Text>{form.project.commands.map(c => c.name).join(', ')}</Text>
+									) : (
+										<Text dimColor>none</Text>
+									)
 								) : (
 									<Text>
 										<FieldText value={fieldValue(form.project, field)} edit={active ? form.edit : null} />
@@ -224,7 +247,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				{form
 					? typeof form.edit === 'number'
 						? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${EDITING_HELP}`
-						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? 'h/l change' : FIELD_HELP}  ${formHelp('save')}`
+						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? 'h/l change' : isText(FIELDS[form.field]!) ? FIELD_HELP : '⏎ edit'}  ${formHelp('save')}`
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>

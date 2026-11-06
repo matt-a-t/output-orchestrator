@@ -1,5 +1,6 @@
 // A project's commands (set in P, run with r on the board): each run is its own tmux session, outside
 // the `oo` session, so it can be watched from a separate terminal window and keeps going once that's closed.
+import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { threadEnv } from './hooks.js';
 import type { Project, ProjectCommand, Thread } from './state.js';
@@ -112,15 +113,40 @@ export async function openRun(session: string, title: string): Promise<string> {
 	const launch = terminalCommand({ env: process.env, hasWt: Boolean(await onPath('wt.exe')) }, tmuxAttach((await onPath('tmux')) ?? 'tmux', process.env, session), title);
 	if ('argv' in launch) {
 		const [program, ...args] = launch.argv;
-		const child = execa(program!, args, { detached: true, stdio: 'ignore', reject: false });
+		const child = spawn(program!, args, { detached: true, stdio: 'ignore' });
 		child.unref();
-		const result = await Promise.race([child, new Promise(resolve => setTimeout(resolve, 1000))]);
 		// One that fails straight off (not found, or exiting non-zero) is worth hearing about; most hand off and exit 0.
-		if (result && typeof result === 'object' && 'failed' in result && result.failed) {
-			return `✗ Couldn't open a terminal with ${program}: ${result.shortMessage}`;
-		}
-		return `Opened ${title} in a new window`;
+		const problem = await new Promise<string | undefined>(resolve => {
+			child.on('error', err => resolve(err.message));
+			child.on('exit', code => resolve(code ? `exited with status ${code}` : undefined));
+			setTimeout(() => resolve(undefined), 1000);
+		});
+		return problem ? `✗ Couldn't open a terminal with ${program}: ${problem}` : `Opened ${title} in a new window`;
 	}
 	await execa('tmux', ['switch-client', '-t', `=${session}`]);
 	return `Switched to ${title} (no terminal to open it in: set OO_TERMINAL); prefix b comes back`;
+}
+
+/** The project's commands as `editCommands` shows them in $EDITOR: one `name: command` a line. */
+export function commandsText(commands: ProjectCommand[]): string {
+	return commands.map(c => `${c.name}: ${c.command}`).join('\n');
+}
+
+/**
+ * Read back commandsText once edited: the name is up to the first `:`. Lines with no name or no
+ * command are dropped, as is a second command of the same name (`problems` says which).
+ */
+export function parseCommands(lines: string[]): { commands: ProjectCommand[]; problems: string[] } {
+	const commands: ProjectCommand[] = [];
+	const problems: string[] = [];
+	for (const line of lines) {
+		if (!line.trim()) continue;
+		const colon = line.indexOf(':');
+		const name = colon < 0 ? '' : line.slice(0, colon).trim();
+		const command = colon < 0 ? '' : line.slice(colon + 1).trim();
+		if (!name || !command) problems.push(`"${line.trim()}" isn't name: command`);
+		else if (commands.some(c => c.name === name)) problems.push(`a second "${name}"`);
+		else commands.push({ name, command });
+	}
+	return { commands, problems };
 }
