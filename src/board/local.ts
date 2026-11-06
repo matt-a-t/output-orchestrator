@@ -1,7 +1,7 @@
 // Moving a thread into Local (its branch checked out in the project's own checkout) and back.
 
 import { useEffect } from 'react';
-import { errorMessage } from '../errors.js';
+import { errorMessage, resultMessage, stillWorking, unknownProject } from '../errors.js';
 import { carryChanges, checkout, defaultBranch, hasWorktree, isDirty, pullBranch, removeWorktree, restoreChanges, worktreePath } from '../git.js';
 import { tryHook } from '../hooks.js';
 import type { Project, ProjectHook, Thread } from '../state.js';
@@ -31,7 +31,7 @@ async function hook(project: Project, event: ProjectHook, thread: Thread, cwd: s
  */
 export async function localProblem(board: Board, thread: Thread, entering: boolean): Promise<string | undefined> {
 	const project = board.project(thread.project);
-	if (!project) return `Unknown project "${thread.project}"`;
+	if (!project) return unknownProject(thread.project);
 	if (entering) {
 		const other = board.state().threads.find(t => t.local && t.project === thread.project);
 		if (other) return `${thread.project} already has #${other.id} ${other.title} in Local`;
@@ -62,7 +62,7 @@ export async function enterLocal(board: Board, thread: Thread): Promise<Outcome>
 		board.updateThread(thread.id, { local: true });
 		return { ok: true, message: await hook(project, 'enterLocal', thread, thread.cwd, `#${thread.id} is in Local`) };
 	}
-	if (board.statuses()[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
+	if (board.statuses()[thread.id] === 'working') return { ok: false, message: stillWorking(thread.id) };
 	const wasOpen = await closeClaude(board, thread);
 	// Uncommitted changes ride along on a temporary commit on the branch, undone once it's checked out here.
 	let carried = false;
@@ -99,7 +99,7 @@ export async function leaveLocal(board: Board, thread: Thread): Promise<Outcome>
 		board.updateThread(thread.id, { local: undefined });
 		return { ok: true, message: await hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is out of Local`) };
 	}
-	if (board.statuses()[thread.id] === 'working') return { ok: false, message: `claude is still working on #${thread.id}` };
+	if (board.statuses()[thread.id] === 'working') return { ok: false, message: stillWorking(thread.id) };
 	const main = (await defaultBranch(project.path)) ?? 'main';
 	const wasOpen = await closeClaude(board, thread);
 	// Including untracked files: anything new there is the thread's work.
@@ -143,8 +143,7 @@ export async function leaveLocalForDone(board: Board, thread: Thread): Promise<s
 /** Into or out of Local, saying how it went on the message line. */
 export const moveLocal = (board: Board, thread: Thread, entering: boolean) =>
 	board.run(async () => {
-		const { ok, message } = await (entering ? enterLocal : leaveLocal)(board, thread);
-		board.setMessage(ok ? message : `⚠ ${message}`);
+		board.setMessage(resultMessage(await (entering ? enterLocal : leaveLocal)(board, thread)));
 	}, entering ? 'checking out for Local' : 'leaving Local');
 
 /** t: into or out of Local now, dropping any move `oo thread local` left waiting. */

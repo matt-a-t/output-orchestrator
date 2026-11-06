@@ -1,6 +1,7 @@
 // `oo thread …`: drive the board from the shell (and from claude, see the oo skill).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { resultMessage, unknownProject } from './errors.js';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
@@ -114,7 +115,7 @@ function threadAt(state: State, cwd: string): Thread | undefined {
 /** `--project`, else the project of the thread `cwd` is in (worktrees aren't inside the project), else the project containing `cwd`. */
 export function resolveProject(state: State, cwd: string, name?: string): string {
 	if (name) {
-		if (!state.projects.some(p => p.name === name)) throw new CommandError(`Unknown project "${name}"`);
+		if (!state.projects.some(p => p.name === name)) throw new CommandError(unknownProject(name));
 		return name;
 	}
 	const project =
@@ -432,7 +433,7 @@ export async function planApproved(input: any, ctx: Context): Promise<string | u
 		...(plan ? [await change({ op: 'plan', thread, plan }, ctx)] : []),
 		await change({ op: 'move', thread, column: 'active' }, ctx),
 	];
-	const messages = responses.map(r => `${r.ok ? '' : '✗ '}${r.message}`);
+	const messages = responses.map(resultMessage);
 	if (responses.at(-1)!.ok) messages.push(TODOS_PROMPT);
 	return messages.join('\n');
 }

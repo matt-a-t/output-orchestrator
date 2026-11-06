@@ -1,5 +1,6 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
+import { unknownProject } from './errors.js';
 import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
 import { prState, retargetPr } from './github.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
@@ -377,7 +378,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const state = store.get();
 	if (request.op === 'add') {
 		const project = state.projects.find(p => p.name === request.project);
-		if (!project) return { id, ok: false, message: `Unknown project "${request.project}"` };
+		if (!project) return { id, ok: false, message: unknownProject(request.project) };
 		const parent = request.from === undefined ? undefined : state.threads.find(t => t.id === request.from);
 		if (request.from !== undefined && !parent) return { id, ok: false, message: `No thread #${request.from}` };
 		const fields = { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket };
@@ -397,7 +398,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	const thread = state.threads.find(t => t.id === request.thread);
 	if (!thread) return { id, ok: false, message: `No thread #${request.thread}` };
 	const project = state.projects.find(p => p.name === thread.project);
-	if (!project) return { id, ok: false, message: `Unknown project "${thread.project}"` };
+	if (!project) return { id, ok: false, message: unknownProject(thread.project) };
 	const done = (message: string) => ({ id, ok: true, message, thread: thread.id });
 	// The board handles these itself, before they get here.
 	if (request.op === 'local') return { id, ok: false, message: 'Moving into or out of Local needs the board running' };

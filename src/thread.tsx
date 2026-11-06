@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
-import { errorMessage } from './errors.js';
+import { errorMessage, messageColor } from './errors.js';
 import { hasWorktree, renameBranch, worktreePath } from './git.js';
 import { FieldText, EDITING_HELP, FIELD_HELP, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
@@ -200,7 +200,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 				))}
 			</Box>
 			<Box flexGrow={1} />
-			<Text color={message.startsWith('✗') ? 'red' : 'green'}>{editing ? '… editing plan' : saving ? '… saving' : message}</Text>
+			<Text color={messageColor(message)}>{editing ? '… editing plan' : saving ? '… saving' : message}</Text>
 			<Text dimColor>
 				{typeof edit === 'number'
 					? EDITING_HELP

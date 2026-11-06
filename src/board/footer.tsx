@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Box, Text } from 'ink';
+import { messageColor } from '../errors.js';
 import { mergeLabel, type PrStatus } from '../github.js';
 import type { Thread } from '../state.js';
 import { LEGEND } from './card.js';
@@ -72,7 +73,7 @@ export function Footer({ thread, merge, blockers, busy, message, confirming, wid
 			{busy ? (
 				<Text color="cyan">{busy}…</Text>
 			) : (
-				<Text color={message.startsWith('✗') ? 'red' : confirming || message.startsWith('⚠') ? 'yellow' : 'green'}>{message}</Text>
+				<Text color={messageColor(message, confirming)}>{message}</Text>
 			)}
 			<Text>
 				{LEGEND.map(([badge, color, label]) => (

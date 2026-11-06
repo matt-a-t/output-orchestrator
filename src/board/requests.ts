@@ -1,6 +1,6 @@
 import { unwatchFile, watchFile } from 'node:fs';
 import { useEffect } from 'react';
-import { errorMessage } from '../errors.js';
+import { errorMessage, resultMessage } from '../errors.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from '../requests.js';
 import { draftPr, withTicket } from '../github.js';
 import { applyRequest, moveProblem } from '../threads.js';
@@ -83,7 +83,7 @@ export function useRequests(board: Board) {
 						message: errorMessage(err),
 					}));
 					respond(response);
-					board.setMessage(`${response.ok ? '' : '✗ '}oo thread: ${response.message.replaceAll('\n', ' · ')}`);
+					board.setMessage(resultMessage(response).replace(/^([✗⚠] )?/, '$1oo thread: ').replaceAll('\n', ' · '));
 					await board.refreshWindows();
 				});
 			}
