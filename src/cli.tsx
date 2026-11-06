@@ -51,6 +51,7 @@ function projectCommand(args: string[]): number {
 			wakePrompt: '',
 			closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER,
 			hooks: {},
+			commands: [],
 			tracker: 'none' as const,
 			jiraSite: '',
 			jiraProject: '',

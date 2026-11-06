@@ -155,7 +155,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER, hooks: {}, tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0, edit: null });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER, hooks: {}, commands: [], tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0, edit: null });
 		}
 		if (!current) return;
 		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0, edit: null });

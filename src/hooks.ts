@@ -15,16 +15,19 @@ export function hookWindowName(project: Project, hook: ProjectHook): string {
 	return `oo-hook-${project.name}`;
 }
 
+/** What the project's hooks and commands are told about the thread they run for (empty without one). */
+export function threadEnv(project: Project, thread: Thread | undefined): Record<string, string> {
+	return {
+		OO_THREAD_ID: thread?.id ?? '',
+		OO_THREAD_TITLE: thread?.title ?? '',
+		OO_PROJECT: project.name,
+		OO_BRANCH: thread?.branch ?? '',
+	};
+}
+
 /** What a hook's command gets in its environment, besides `extra` (e.g. the new thread's prompt). */
 export function hookEnv(project: Project, hook: ProjectHook, thread: Thread, extra: Record<string, string> = {}): Record<string, string> {
-	return {
-		OO_HOOK_NAME: HOOK_LABELS[hook],
-		OO_THREAD_ID: thread.id,
-		OO_THREAD_TITLE: thread.title,
-		OO_PROJECT: project.name,
-		OO_BRANCH: thread.branch ?? '',
-		...extra,
-	};
+	return { OO_HOOK_NAME: HOOK_LABELS[hook], ...threadEnv(project, thread), ...extra };
 }
 
 /**

@@ -14,6 +14,7 @@ const project = (name: string, tracker: Project['tracker'] = 'none'): Project =>
 	wakePrompt: '',
 	closeIdleAfter: 30,
 	hooks: {},
+	commands: [],
 	tracker,
 	jiraSite: '',
 	jiraProject: 'AV',
