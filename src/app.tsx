@@ -381,7 +381,7 @@ export function App() {
 					}}
 				/>
 			) : showKeys ? (
-				<KeysView />
+				<KeysView active={!busy} />
 			) : reviews ? (
 				<ReviewList board={board} requests={reviews} active={!busy} onClose={() => setReviews(null)} />
 			) : todosThread ? (
