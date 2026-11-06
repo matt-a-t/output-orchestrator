@@ -114,16 +114,16 @@ export async function gitFixture(threads: Partial<Thread>[] = []): Promise<{ dir
 	return { dir, project, origin, state };
 }
 
-/** What the fake gh prints for a call whose arguments start with the key, e.g. `'pr view'`. */
-export type GhAnswer = { stdout?: string; exitCode?: number };
+/** What a fake command prints for a call whose arguments start with the key, e.g. `'pr view'`. */
+export type FakeAnswer = { stdout?: string; exitCode?: number };
 
 /**
- * Put a fake gh first on PATH for this test. It answers calls whose arguments start with one of
- * `answers`' keys (the longest that matches) and fails any other, so it never hands off to the real gh.
+ * Put a fake `name` (gh, tmux) first on PATH for this test. It answers calls whose arguments start with one
+ * of `answers`' keys (the longest that matches) and fails any other, so it never hands off to the real one.
  * `calls()` lists each call's arguments.
  */
-export function fakeGh(t: TestContext, answers: Record<string, GhAnswer>): { calls: () => string[][] } {
-	const bin = mkdtempSync(join(tmpdir(), 'oo-fake-gh-'));
+export function fakeCommand(t: TestContext, name: string, answers: Record<string, FakeAnswer>): { calls: () => string[][] } {
+	const bin = mkdtempSync(join(tmpdir(), `oo-fake-${name}-`));
 	const log = join(bin, 'calls.jsonl');
 	writeFileSync(join(bin, 'answers.json'), JSON.stringify(answers));
 	const script = `#!/usr/bin/env node
@@ -134,13 +134,13 @@ const answers = JSON.parse(readFileSync(${JSON.stringify(join(bin, 'answers.json
 const line = args.join(' ');
 const key = Object.keys(answers).filter(k => line === k || line.startsWith(k + ' ')).sort((a, b) => b.length - a.length)[0];
 if (key === undefined) {
-	process.stderr.write('fake gh: no answer for: ' + line + '\\n');
+	process.stderr.write(${JSON.stringify(`fake ${name}: no answer for: `)} + line + '\\n');
 	process.exit(1);
 }
 process.stdout.write(answers[key].stdout ?? '');
 process.exit(answers[key].exitCode ?? 0);
 `;
-	writeFileSync(join(bin, 'gh'), script, { mode: 0o755 });
+	writeFileSync(join(bin, name), script, { mode: 0o755 });
 	const path = process.env.PATH;
 	process.env.PATH = `${bin}${delimiter}${path}`;
 	t.after(() => void (process.env.PATH = path));
@@ -154,3 +154,9 @@ process.exit(answers[key].exitCode ?? 0);
 				: [],
 	};
 }
+
+/** A fake gh for this test (see fakeCommand). */
+export const fakeGh = (t: TestContext, answers: Record<string, FakeAnswer>) => fakeCommand(t, 'gh', answers);
+
+/** A fake tmux for this test with no oo windows open, so closing a thread's claude finds none to close. */
+export const fakeTmux = (t: TestContext) => fakeCommand(t, 'tmux', { 'list-windows': { stdout: '' } });
