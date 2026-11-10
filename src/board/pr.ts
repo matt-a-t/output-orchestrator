@@ -6,6 +6,7 @@ import { errorMessage, resultMessage, unknownProject } from '../errors.js';
 import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart } from '../git.js';
 import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../github.js';
 import { runColumnHook } from '../hooks.js';
+import { popQuiz, type QuizOutcome } from '../quiz.js';
 import { showPr } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
@@ -92,14 +93,20 @@ export async function openPr(board: Board, thread: Thread, steps: PrSteps): Prom
 	return { ok: true, message: ran ? `${opened}; ${ran}` : opened };
 }
 
-/** The board's way: claude drafts the PR in a popup, then the user edits it there. */
+/**
+ * The board's way: a pop quiz on the changes (which has to be passed, or overridden), then claude drafts the
+ * PR in a popup and the user edits it there.
+ */
 export async function openPrFromBoard(board: Board, thread: Thread) {
 	// Open from here until the PR is, so the board isn't left looking usable while it waits.
 	let progress: ProgressPopup | undefined;
 	const popup = () => (progress ??= progressPopup(' pull request ', EDITOR));
+	let quiz: QuizOutcome | null = null;
 	const result = await openPr(board, thread, {
 		status: text => popup().status(text),
 		describe: async (cwd, thread, base) => {
+			quiz = await popQuiz(popup(), cwd, thread, base);
+			if (!quiz || quiz.result === 'failed') return null;
 			const saved = board.state().threads.find(t => t.id === thread.id)?.drafts?.pr;
 			const written = saved ?? (await popup().cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal)));
 			if (written === CLOSED) return null;
@@ -117,7 +124,15 @@ export async function openPrFromBoard(board: Board, thread: Thread) {
 		},
 		close: async () => void (await progress?.close()),
 	});
-	board.setMessage(resultMessage(result));
+	board.setMessage(quizMessage(resultMessage(result), quiz));
+}
+
+/** The status line after opening a PR from the board, with how its quiz went. */
+export function quizMessage(message: string, quiz: QuizOutcome | null): string {
+	if (!quiz) return message;
+	if (quiz.result === 'failed') return `⚠ Pop quiz failed (${quiz.score}) — PR not opened`;
+	if (quiz.result === 'skipped') return `${message} · ⚠ no pop quiz: claude couldn't write one`;
+	return `${message} · pop quiz ${quiz.score}${quiz.result === 'overridden' ? ', opened anyway' : ''}`;
 }
 
 /**
