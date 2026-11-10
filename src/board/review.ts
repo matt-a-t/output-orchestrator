@@ -168,8 +168,12 @@ export const updateFromMain = (board: Board, thread: Thread) =>
 	);
 
 export const reviewKeys: Binding[] = [
-	{ key: 'd', run: onThread((board, thread) => diffThread(board, thread, 'step')) },
+	{ key: 'd', run: onThread((board, thread) => diffThread(board, thread, 'step')), help: { section: 'Reviewing', keys: 'd / D', what: 'step / whole thread diff' } },
 	{ key: 'D', run: onThread((board, thread) => diffThread(board, thread, 'thread')) },
-	{ key: 'c', run: onThread(commentOnDiff) },
-	{ key: 'u', run: onThread(updateFromMain) },
+	{ key: 'c', run: onThread(commentOnDiff), help: { section: 'Reviewing', what: 'comment on the diff in vim' } },
+	{
+		key: 'u',
+		run: onThread(updateFromMain),
+		help: { section: 'Board', what: 'rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude)' },
+	},
 ];

@@ -211,6 +211,6 @@ export function browsePr(board: Board, thread: Thread) {
 }
 
 export const prKeys: Binding[] = [
-	{ key: 'b', run: onThread(browsePr, { hidden: true }) },
-	{ key: 'v', run: onThread(viewThreadPr) },
+	{ key: 'v', run: onThread(viewThreadPr), help: { section: 'Reviewing', what: 'view the PR (m merges it)' } },
+	{ key: 'b', run: onThread(browsePr, { hidden: true }), help: { section: 'Reviewing', what: 'open the PR in your browser' } },
 ];

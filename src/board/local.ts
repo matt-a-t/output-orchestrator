@@ -164,4 +164,4 @@ export function usePendingLocal(board: Board, statuses: Record<string, Status>) 
 	}, [statuses]);
 }
 
-export const localKeys: Binding[] = [{ key: 'o', run: onThread(toggleLocal) }];
+export const localKeys: Binding[] = [{ key: 'o', run: onThread(toggleLocal), help: { section: 'Board', what: 'into / out of Local' } }];

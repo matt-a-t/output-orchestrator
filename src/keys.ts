@@ -1,31 +1,33 @@
 // Every key oo adds, for the board's `?` screen. KEYS.md says the same for reading outside the board.
+// The keys that act on a thread come from their bindings (BINDINGS); the board's own and the rest are here.
+
+import { BINDINGS, type BindingHelp } from './board/bindings.js';
 
 export type KeySection = { title: string; keys: [key: string, what: string][] };
+
+/** The rows for the thread keys bound in `section`, in BINDINGS order. */
+export function bindingRows(section: BindingHelp['section']): [key: string, what: string][] {
+	return BINDINGS.flatMap(b => (b.help?.section === section ? [[b.help.keys ?? b.key, b.help.what] as [string, string]] : []));
+}
 
 export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'Board',
 		keys: [
 			['h/l j/k', 'move (arrows too)'],
-			['H/L', 'move the thread a column (H: Planned → IDEAS, archived → Done; L: IDEAS → Planned)'],
+			...bindingRows('Board'),
 			['J/K', 'reorder within its column (among threads of its priority)'],
-			['⏎', 'open (or resume) its claude'],
-			['w / W', 'wake it ("keep going", or start it on its thread) / every thread closed mid-work'],
-			['u', 'rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude)'],
 			['n', 'new thread (form)'],
+			['N', 'import a thread started outside oo'],
 			['e', 'edit the thread'],
 			['t', 'every todo on the thread (j/k scroll)'],
-			['o', 'into / out of Local'],
 			['B', 'blocked by another thread (move to it, ⏎ picks)'],
-			['F', 'straight to Done'],
-			['x', 'archive (an IDEAS one too)'],
 			['!', 'cycle its priority (normal, high, low); high sorts to the top of its column, low to the bottom'],
 			['p', 'filter by project'],
 			['/', 'search (⏎ keeps it, esc drops it)'],
 			['esc', 'clear the search, then the project'],
 			['I', 'show / hide the IDEAS column (threads shelved from Planned)'],
 			['A', 'show / hide archived threads'],
-			['N', 'import a thread started outside oo'],
 			['r', "run one of the project's commands (dev server, tests…) in the thread's worktree, in a new terminal window"],
 			['P', 'projects (their hooks, commands, wake prompt and when idle claudes close)'],
 			['?', 'these keys'],
@@ -46,12 +48,8 @@ export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'Reviewing',
 		keys: [
-			['d / D', 'step / whole thread diff'],
-			['s', 'claude + a shell beside it'],
-			['c', 'comment on the diff in vim'],
-			['v', 'view the PR (m merges it)'],
+			...bindingRows('Reviewing'),
 			['R', 'PRs waiting for your review'],
-			['b', 'open the PR in your browser'],
 		],
 	},
 	{

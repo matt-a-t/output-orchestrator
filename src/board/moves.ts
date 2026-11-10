@@ -97,8 +97,12 @@ export const archiveThread = (board: Board, thread: Thread) =>
 	}, 'checking for uncommitted changes');
 
 export const moveKeys: Binding[] = [
-	{ key: 'H', run: onThread((board, thread) => moveColumn(board, thread, -1), { hidden: true }) },
+	{
+		key: 'H',
+		run: onThread((board, thread) => moveColumn(board, thread, -1), { hidden: true }),
+		help: { section: 'Board', keys: 'H/L', what: 'move the thread a column (H: Planned → IDEAS, archived → Done; L: IDEAS → Planned)' },
+	},
 	{ key: 'L', run: onThread((board, thread) => moveColumn(board, thread, 1), { hidden: true }) },
-	{ key: 'F', run: onThread(finishThread) },
-	{ key: 'x', run: onThread(archiveThread, { hidden: true }) },
+	{ key: 'F', run: onThread(finishThread), help: { section: 'Board', what: 'straight to Done' } },
+	{ key: 'x', run: onThread(archiveThread, { hidden: true }), help: { section: 'Board', what: 'archive (an IDEAS one too)' } },
 ];

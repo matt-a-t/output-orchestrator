@@ -13,20 +13,19 @@ Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the t
 | `w` / `W` | wake it / every thread closed mid-work ("keep going") |
 | `u` | rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude) |
 | `n` | new thread (the form below) |
+| `N` | import a thread started outside oo |
 | `e` | edit the thread |
-| `T` | every todo on the thread, when there are more than the details box shows (`j`/`k` or the wheel scroll, `g`/`G` top / bottom) |
-| `t` | into / out of Local (`oo thread local` from the shell) |
+| `t` | every todo on the thread, when there are more than the details box shows (`j`/`k` or the wheel scroll, `g`/`G` top / bottom) |
+| `o` | into / out of Local (`oo thread local` from the shell) |
 | `B` | blocked by another thread: move to it and `⏎` (again unpicks it, `⏎` on the thread itself clears them all, `esc` cancels; `oo thread block` from the shell) |
 | `F` | straight to Done |
 | `x` | archive (an IDEAS one too) |
 | `!` | cycle its priority: normal → high (`▲`, top of its column) → low (`▽`, bottom); `oo thread priority` from the shell |
-| `C` | cycle its colour |
 | `p` | filter by project |
 | `/` | search the id, title, plan, ticket, branch and PR as you type; `⏎` keeps it, `esc` drops it |
 | `esc` | clear the search, then the project filter |
-| `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `b`, `J`/`K`, `!` and `C`) |
-| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K`, `!` and `C`) |
-| `i` | import a thread started outside oo |
+| `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `b`, `J`/`K` and `!`) |
+| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K` and `!`) |
 | `r` | run one of the project's commands (dev server, tests, migrations…) in a new terminal window (see below) |
 | `P` | projects (their hooks, commands, wake prompt and when idle claudes close) |
 | `?` | all keys |
@@ -56,7 +55,6 @@ or for a thread with no worktree yet).
 | `d` / `D` | step / whole thread diff (`d` with no changes: mark the step done) |
 | `s` | claude with a shell beside it |
 | `c` | comment on the diff in vim |
-| `o` | changed hunks as a vim quickfix list |
 | `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
 | `R` | PRs waiting for your review, across projects (`⏎` views one) |
 | `b` | open the PR in your browser |
