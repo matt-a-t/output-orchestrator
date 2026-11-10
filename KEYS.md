@@ -1,6 +1,8 @@
 # Keys
 
-Press `?` on the board for this list (it comes from `src/keys.ts`, so keep the two in step).
+Press `?` on the board for this list. The thread keys on it come from their bindings in `src/board/*.ts`
+(`help` on each), the rest from `src/keys.ts`; `src/keys.test.ts` checks the Board and Reviewing
+tables here list every bound key, so keep the two in step.
 
 ## Board
 
@@ -56,7 +58,7 @@ or for a thread with no worktree yet).
 | `s` | claude with a shell beside it |
 | `c` | comment on the diff in vim |
 | `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
-| `R` | PRs waiting for your review, across projects (`⏎` views one) |
+| `R` | PRs waiting for your review, across projects (`j`/`k` move, `⏎` or `v` views one, `b` opens it in your browser, `r` refreshes, `R`/`q`/`esc` close) |
 | `b` | open the PR in your browser |
 
 ## In a diff
@@ -68,19 +70,19 @@ description, checks and reviews), tab 2 the changed files, tab 3 the diff a file
 |---|---|
 | `h`/`l` `←`/`→` `1` `2` `3` | change tab |
 | `j`/`k` `↑`/`↓` | scroll (in the files tab: move between files) |
-| `ctrl-d`/`ctrl-u` `ctrl-f`/`ctrl-b` `space` | half / whole page down / up |
-| `g` / `G` | top / bottom (first / last file) |
+| `ctrl-d`/`ctrl-u` `ctrl-f`/`ctrl-b` `space` | half / whole page down / up (PageDown / PageUp too) |
+| `g` / `G` | top / bottom (first / last file; Home / End too) |
 | `⏎` | in the files tab: open that file's diff |
 | `]`/`[` `J`/`K` | next / previous file |
 | `n`/`N` `}`/`{` | next / previous hunk, on into the next / previous file |
-| `+`/`-` | more / less context around the changes: 3, 10, 25 lines, then the whole file (in `v`, fetches the PR first) |
+| `+`/`-` | more / less context (`=` works as `+`) around the changes: 3, 10, 25 lines, then the whole file (in `v`, fetches the PR first) |
 | `/` | search every file (case-insensitive). `n`/`N` then go to the next / previous match until `esc` ends the search |
 | `a` | in `d`: approve the step |
 | `m` | in `v`, your PR: merge it (with a confirm that says what's in the way, if anything) |
 | `a` / `x` / `c` | in `v`, someone else's PR: approve (with a confirm) / request changes / comment (in vim on the diff: the main comment above it, `>>` notes become line comments) |
-| `o` | in `v`: open the PR in your browser |
+| `b` | in `v`: open the PR in your browser |
 | `S` | set up delta's header styles (`oo delta` from the shell), then back to where you were |
-| `q` / `esc` | close (`esc` ends a search first) |
+| `q` / `esc` | close (`esc` ends a search first). `d`, `D` or `v`, the key that opened it, closes it too |
 | `>> note` | in `c`, or `x`/`c` in `v`: a comment on the diff line above it |
 | `:cq` | in `c`: send nothing (in `v`: back to the PR) |
 
@@ -94,14 +96,27 @@ once you start editing one, vim-style, so letters are keys until then.
 | Key | |
 |---|---|
 | `j`/`k` `↑`/`↓` `tab` | move between fields (`shift-tab` back too) |
-| `h`/`l` `←`/`→` | on a choice field: change it (project, colour, priority, …). On the new thread's ticket: pick one of your recent tickets |
+| `h`/`l` `←`/`→` `space` | on a choice field: change it (project, colour, priority, …; `space` goes forward). On the new thread's ticket: pick one of your recent tickets |
 | `i` / `I` | edit a text field, cursor at the end / at the start |
 | `dd` | clear it and edit |
-| `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). On the thread's plan: open `$EDITOR` |
-| `a` / `shift-⏎` | submit: create the thread (starting its claude on the initial prompt if there is one), save, or commit. `a` only while not editing; `shift-⏎` only where the terminal sends it apart from `⏎` |
+| `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (after the last field, onto the submit row). On the thread's plan: open `$EDITOR` |
+| `⏎` on the submit row | submit: the **[ Create ]** / **[ Save ]** / **[ Commit ]** row after the last field creates the thread (starting its claude on the initial prompt if there is one), saves, or commits |
+| `shift-⏎` | submit from any field, editing or not, where the terminal sends it apart from `⏎` (inside tmux it usually doesn't, so use the submit row) |
 | `q` / `esc` | cancel the form. While editing, `esc` stops editing, keeping the text, and `q` is just typed |
 | `←`/`→` `ctrl-a`/`ctrl-e` | while editing: move the cursor / to the start or end |
 | `ctrl-u` / `ctrl-w` | while editing: delete back to the start / back over a word |
+
+## On the projects screen
+
+`P` on the board. Editing a project opens the form above.
+
+| Key | |
+|---|---|
+| `j`/`k` `↑`/`↓` | move |
+| `e` / `⏎` | edit the project |
+| `n` | add a project |
+| `x` | remove it (`y` to confirm) |
+| `q` / `esc` / `P` | back to the board |
 
 ## In a thread's window
 
@@ -115,10 +130,11 @@ reaches the program, and a key you've bound yourself is left alone.
 | `M-s` | shell beside claude (like `s` on the board) |
 | `M-u` | scroll up: tmux copy mode, with your `mode-keys` (`q` leaves) |
 | `M-z` | zoom the pane |
-| `M-q` / `M-b` | back to the board |
+| `M-q` | back to the board |
 | `prefix b` | back to the board, from anywhere (a run's session too) |
 
-`M-v` (claude's image paste) and `M-[` (the start of arrow keys' escape codes) are left alone.
+`M-v` (claude's image paste), `M-b` (back a word in claude's prompt and the shell) and `M-[` (the start of
+arrow keys' escape codes) are left alone.
 
 ## Claude
 

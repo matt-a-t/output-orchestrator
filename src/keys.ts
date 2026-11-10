@@ -49,7 +49,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		title: 'Reviewing',
 		keys: [
 			...bindingRows('Reviewing'),
-			['R', 'PRs waiting for your review'],
+			['R', 'PRs waiting for your review (⏎/v view, b browser, r refresh)'],
 		],
 	},
 	{
@@ -74,7 +74,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		title: 'In a form (n, e, P, commit)',
 		keys: [
 			['j/k ↑/↓ tab', 'move between fields'],
-			['h/l ←/→', 'change a choice (project, colour, priority, recent ticket…)'],
+			['h/l ←/→ space', 'change a choice (project, colour, priority, recent ticket…)'],
 			['i / I', 'edit, cursor at the end / start'],
 			['dd', 'clear the field and edit'],
 			['⏎', 'edit the field; editing: save it and edit the next'],
@@ -83,6 +83,16 @@ export const KEY_SECTIONS: KeySection[] = [
 			['q / esc', 'cancel (esc while editing: stop editing)'],
 			['←/→ C-a/C-e', 'editing: move / start, end'],
 			['C-u / C-w', 'editing: delete line / word'],
+		],
+	},
+	{
+		title: 'Projects (P)',
+		keys: [
+			['j/k', 'move'],
+			['e / ⏎', 'edit the project (the form above)'],
+			['n', 'add a project'],
+			['x', 'remove it (y confirms)'],
+			['q / esc / P', 'back to the board'],
 		],
 	},
 	{
