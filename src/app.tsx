@@ -28,6 +28,22 @@ import { listOutsideThreads, type OutsideThread } from './transcripts.js';
 import { applyRequest, blockers, byPriority, matchesSearch, priorityOf, setColumn as moveTo, withPriority } from './threads.js';
 import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
 
+/** What fills the space between the title and the footer: the columns, or a view in their place. */
+type Screen =
+	| { kind: 'board' }
+	| { kind: 'projects' } // P
+	| { kind: 'keys' } // ?
+	| { kind: 'edit'; threadId: string } // e, the thread form
+	| { kind: 'reviews'; requests: Review[] } // R
+	| { kind: 'todos'; threadId: string } // t, every todo of the thread
+	| { kind: 'importProject' } // N with no filter: which project to import from
+	| { kind: 'import'; project: string; threads: OutsideThread[] }; // N, the threads to import
+
+/** A form over the bottom of the board, below the columns. */
+type Overlay = { kind: 'newThread'; project: Project } | { kind: 'run'; target: RunTarget } | null;
+
+const BOARD: Screen = { kind: 'board' };
+
 export function App() {
 	const { exit } = useApp();
 	const { columns: width, rows: height } = useWindowSize();
@@ -50,32 +66,29 @@ export function App() {
 	shownColumnsRef.current = shownColumns;
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
-	// Asking which project to import from (i with no filter), over the bottom of the board.
-	const [choosingImport, setChoosingImport] = useState(false);
-	// The new-thread form (n), over the bottom of the board, opened on this project.
-	const [newThreadIn, setNewThreadIn] = useState<Project | null>(null);
+	const [screen, setScreen] = useState<Screen>(BOARD);
+	const toBoard = () => setScreen(BOARD);
+	// The new-thread form (n) or the project's commands to run (r).
+	const [overlay, setOverlay] = useState<Overlay>(null);
+	const closeOverlay = () => setOverlay(null);
 	const recent = useRecentTickets();
-	const [showProjects, setShowProjects] = useState(false);
-	const [showKeys, setShowKeys] = useState(false);
-	// The thread form (e), replacing the board while it's open.
-	const [editing, setEditing] = useState<string | null>(null);
 	const { statuses, statusesRef, sessionStarts, statusSince } = useStatuses(stateRef, setState);
 	const { liveWindowsRef, refreshWindows } = useLiveWindows();
 	const { runsRef, refreshRuns } = useRuns();
-	// The project's commands to run (r), over the bottom of the board.
-	const [runIn, setRunIn] = useState<RunTarget | null>(null);
 	const unreviewed = useUnreviewed(stateRef);
 	useRestoreCarried(stateRef);
 	const pendingLocal = useRef(new Map<string, boolean>());
 	// The merge status of open PRs, from the PR poll; not saved, since the poll refills it on startup.
 	const [merge, setMerge] = useState<Record<string, PrStatus>>({});
-	// The import list (i), replacing the columns while it's open.
-	const [picker, setPicker] = useState<{ project: string; threads: OutsideThread[] } | null>(null);
-	// The review requests list (R), replacing the columns while it's open.
-	const [reviews, setReviews] = useState<Review[] | null>(null);
-	// The thread whose every todo is shown (T), replacing the columns while it's open.
-	const [todosOf, setTodosOf] = useState<string | null>(null);
-	const todosThread = todosOf ? state.threads.find(t => t.id === todosOf) : undefined;
+	const todosThread = screen.kind === 'todos' ? state.threads.find(t => t.id === screen.threadId) : undefined;
+	// The screen as shown: the board again if the thread whose todos were open has gone.
+	const shown: Screen = screen.kind === 'todos' && !todosThread ? BOARD : screen;
+	// Every view but the keys screen takes its own keys, as do the overlays.
+	const ownKeys = (shown.kind !== 'board' && shown.kind !== 'keys') || !!overlay;
+	// Lists in place of the columns, under which the footer has no highlighted card to describe.
+	const coversCards = shown.kind === 'reviews' || shown.kind === 'todos' || shown.kind === 'importProject' || shown.kind === 'import';
+	// Views that take the whole window, footer and all.
+	const fullScreen = shown.kind === 'projects' || shown.kind === 'keys' || shown.kind === 'edit';
 	// The columns' measured height and scroll positions, kept while another screen covers them.
 	const columnsLayout = useRef(newColumnsLayout());
 	// The thread B is picking a blocker for, while the cursor moves to the one it waits on.
@@ -210,7 +223,7 @@ export function App() {
 	/** Open the new-thread form on the filtered or highlighted project. */
 	const newThread = () => {
 		const project = projectByName(filter ?? selected?.project ?? '') ?? state.projects[0]!;
-		setNewThreadIn(project);
+		setOverlay({ kind: 'newThread', project });
 		recent.loadRecent(project);
 	};
 
@@ -218,21 +231,21 @@ export function App() {
 	const startImport = () => {
 		const filtered = filter ? projectByName(filter) : state.projects.length === 1 ? state.projects[0] : undefined;
 		if (filtered) return openPicker(filtered);
-		setChoosingImport(true);
+		setScreen({ kind: 'importProject' });
 	};
 
 	const openPicker = (project: Project) =>
 		run(async () => {
 			const threads = await listOutsideThreads(project.path);
 			if (threads.length === 0) return setMessage(`No claude threads to import in ${project.path}`);
-			setPicker({ project: project.name, threads });
+			setScreen({ kind: 'import', project: project.name, threads });
 		}, 'looking for threads');
 
 	const openReviews = () =>
 		run(async () => {
 			const requests = await fetchReviews(board);
 			if (requests.length === 0) return setMessage(m => m || 'No PRs waiting for your review');
-			setReviews(requests);
+			setScreen({ kind: 'reviews', requests });
 		}, 'looking for review requests');
 
 	/** Where the thread is shown with `f` as the filter and `q` as the search: its column, and its row there. */
@@ -272,10 +285,10 @@ export function App() {
 
 	useInput((input, key) => {
 		// The form, the import, review and todo lists and the import project picker take their own keys.
-		if (busy || showProjects || editing || newThreadIn || choosingImport || picker || reviews || todosThread || runIn) return;
+		if (busy || ownKeys) return;
 		setMessage('');
-		if (showKeys) {
-			if (input === '?' || input === 'q' || key.escape) setShowKeys(false);
+		if (shown.kind === 'keys') {
+			if (input === '?' || input === 'q' || key.escape) toBoard();
 			return;
 		}
 		if (confirm) {
@@ -310,9 +323,9 @@ export function App() {
 		if (input === 'j' || key.downArrow) return setCursor({ col: cursor.col, row: loop(row, 1, colThreads.length) });
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
-		if (input === 'P') return setShowProjects(true);
+		if (input === 'P') return setScreen({ kind: 'projects' });
 		if (input === 'R') return openReviews();
-		if (input === '?') return setShowKeys(true);
+		if (input === '?') return setScreen({ kind: 'keys' });
 		if (input === 'A') {
 			setShowArchived(!showArchived);
 			// Out of the ARCHIVED column as it goes, into Done.
@@ -329,7 +342,7 @@ export function App() {
 		if (input === 'r') {
 			const project = projectByName(selected?.project ?? filter ?? '') ?? (state.projects.length === 1 ? state.projects[0] : undefined);
 			if (!project) return setMessage('⚠ Run whose commands? Highlight a thread, or p to filter to a project');
-			return setRunIn(runTarget(board, project, selected));
+			return setOverlay({ kind: 'run', target: runTarget(board, project, selected) });
 		}
 		if (input === 'p') {
 			const names = [null, ...state.projects.map(p => p.name)];
@@ -340,14 +353,60 @@ export function App() {
 		if (!selected) return;
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
-		if (input === 'e') return setEditing(selected.id);
-		if (input === 't') return selected.todos?.length ? setTodosOf(selected.id) : setMessage(`⚠ #${selected.id} has no todos`);
+		if (input === 'e') return setScreen({ kind: 'edit', threadId: selected.id });
+		if (input === 't') return selected.todos?.length ? setScreen({ kind: 'todos', threadId: selected.id }) : setMessage(`⚠ #${selected.id} has no todos`);
 		if (input === 'B') {
 			if (selected.column === 'done' || selected.column === 'archived') return setMessage(`⚠ #${selected.id} is finished, so nothing blocks it`);
 			return setPicking(selected.id);
 		}
 		if (input === '!') return cyclePriority(selected);
 	});
+
+	/** The columns, or the view open in their place. Grows to fill the window, which keeps the footer at the bottom. */
+	const renderScreen = () => {
+		switch (shown.kind) {
+			case 'projects':
+				return <ProjectsView state={state} setState={setState} onClose={toBoard} />;
+			case 'edit':
+				return (
+					<ThreadView
+						key={shown.threadId}
+						state={state}
+						threadId={shown.threadId}
+						updateThread={updateThread}
+						onClose={closing => {
+							toBoard();
+							setMessage(closing);
+						}}
+					/>
+				);
+			case 'keys':
+				return <KeysView active={!busy} />;
+			case 'reviews':
+				return <ReviewList board={board} requests={shown.requests} active={!busy} onClose={toBoard} />;
+			case 'todos':
+				return <TodoView thread={todosThread!} active={!busy} onClose={toBoard} />;
+			case 'importProject':
+				return <ImportProject board={board} active={!busy} onPick={openPicker} onClose={toBoard} />;
+			case 'import':
+				return <ImportList board={board} project={shown.project} threads={shown.threads} active={!busy} onClose={toBoard} onShow={showThread} />;
+			case 'board':
+				return (
+					<Columns
+						board={board}
+						shown={shownColumns}
+						columns={shownColumns.map(column => columnThreads(column))}
+						cursor={{ col: cursor.col, row }}
+						setCursor={setCursor}
+						active={!busy && !overlay && !confirm && !search.typing}
+						unreviewed={unreviewed}
+						merge={merge}
+						layout={columnsLayout}
+						onPick={pickingThread ? target => pickBlocker(pickingThread, target) : undefined}
+					/>
+				);
+		}
+	};
 
 	return (
 		<Box flexDirection="column" height={height}>
@@ -363,55 +422,12 @@ export function App() {
 				</Text>
 			</Box>
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
-			{showProjects ? (
-				<ProjectsView state={state} setState={setState} onClose={() => setShowProjects(false)} />
-			) : editing ? (
-				<ThreadView
-					key={editing}
-					state={state}
-					threadId={editing}
-					updateThread={updateThread}
-					onClose={closing => {
-						setEditing(null);
-						setMessage(closing);
-					}}
-				/>
-			) : showKeys ? (
-				<KeysView active={!busy} />
-			) : reviews ? (
-				<ReviewList board={board} requests={reviews} active={!busy} onClose={() => setReviews(null)} />
-			) : todosThread ? (
-				<TodoView thread={todosThread} active={!busy} onClose={() => setTodosOf(null)} />
-			) : choosingImport ? (
-				<ImportProject board={board} active={!busy} onPick={openPicker} onClose={() => setChoosingImport(false)} />
-			) : picker ? (
-				<ImportList
-					board={board}
-					project={picker.project}
-					threads={picker.threads}
-					active={!busy}
-					onClose={() => setPicker(null)}
-					onShow={showThread}
-				/>
-			) : (
-				<Columns
-					board={board}
-					shown={shownColumns}
-					columns={shownColumns.map(column => columnThreads(column))}
-					cursor={{ col: cursor.col, row }}
-					setCursor={setCursor}
-					active={!busy && !newThreadIn && !runIn && !confirm && !search.typing}
-					unreviewed={unreviewed}
-					merge={merge}
-					layout={columnsLayout}
-					onPick={pickingThread ? target => pickBlocker(pickingThread, target) : undefined}
-				/>
-			)}
+			{renderScreen()}
 			<Footer
-				// About the highlighted card, so not while the import, review or todo list or the project picker covers the board.
-				thread={picker || reviews || todosThread || choosingImport ? undefined : selected}
+				// About the highlighted card, so not while a list covers the board.
+				thread={coversCards ? undefined : selected}
 				merge={selected && merge[selected.id]}
-				blockers={selected && !picker && !reviews && !todosThread && !choosingImport ? blockers(state, selected) : []}
+				blockers={selected && !coversCards ? blockers(state, selected) : []}
 				busy={busy}
 				message={
 					pickingThread
@@ -420,11 +436,13 @@ export function App() {
 				}
 				confirming={!!confirm}
 				width={width}
-				hidden={showProjects || showKeys || !!editing}
+				hidden={fullScreen}
 			>
-				{runIn ? <RunPicker board={board} target={runIn} active={!busy} onClose={() => setRunIn(null)} /> : null}
+				{overlay?.kind === 'run' ? <RunPicker board={board} target={overlay.target} active={!busy} onClose={closeOverlay} /> : null}
 				<SearchBox search={search} />
-				{newThreadIn ? <NewThread board={board} project={newThreadIn} recent={recent} active={!busy} onClose={() => setNewThreadIn(null)} /> : null}
+				{overlay?.kind === 'newThread' ? (
+					<NewThread board={board} project={overlay.project} recent={recent} active={!busy} onClose={closeOverlay} />
+				) : null}
 			</Footer>
 		</Box>
 	);
