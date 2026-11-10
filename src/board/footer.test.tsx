@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderToString } from 'ink';
-import { Legend } from './footer.js';
+import { Legend, planSummary } from './footer.js';
 import { LEGEND } from './card.js';
 
 test('the legend wraps only between entries', () => {
@@ -15,4 +15,10 @@ test('the legend wraps only between entries', () => {
 		const text = lines.join('\n');
 		for (const [badge, , label] of LEGEND) assert.ok(text.includes(`${badge} ${label}`), `"${label}" is split at ${width} columns`);
 	}
+});
+
+test('the plan line skips blank lines and drops heading marks', () => {
+	assert.equal(planSummary('# #61 Rework the keys\n\n## Context\nThe keys are confusing.\n- more'), '#61 Rework the keys · Context · The keys are confusing.');
+	assert.equal(planSummary('  \n#hashtag, not a heading\n### Plan  '), '#hashtag, not a heading · Plan');
+	assert.equal(planSummary('\n\n'), '');
 });
