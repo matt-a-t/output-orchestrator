@@ -27,7 +27,7 @@ export function TodoRow({ todo, index, width, merged }: { todo: Todo; index: num
 
 /**
  * The highlighted thread's progress through claude's task list, with the current step in view, in
- * `lines` rows below its header; the rest are summed up as "N more", and T shows them all.
+ * `lines` rows below its header; the rest are summed up as "N more", and t shows them all.
  */
 export function TodoList({ todos, lines, merged }: { todos: Todo[]; lines: number; merged: boolean }) {
 	const { start, end } = todoRows(todos, lines);
@@ -44,7 +44,7 @@ export function TodoList({ todos, lines, merged }: { todos: Todo[]; lines: numbe
 		<Box flexDirection="column">
 			<Text>
 				<Text bold>todo</Text> {todoProgress(todos)}
-				{start > 0 || end < todos.length ? <Text dimColor> · T shows all</Text> : null}
+				{start > 0 || end < todos.length ? <Text dimColor> · t shows all</Text> : null}
 			</Text>
 			{more(start, '↑')}
 			{todos.slice(start, end).map((todo, i) => (

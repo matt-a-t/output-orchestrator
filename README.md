@@ -19,7 +19,7 @@ Works on macOS, Linux and WSL.
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | | the threads themselves | `npm i -g @anthropic-ai/claude-code` |
 | [GitHub CLI](https://cli.github.com) | | opening PRs and noticing when they merge; run `gh auth login` once | `brew install gh` / [cli.github.com](https://github.com/cli/cli#installation) |
 | [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `v`) | `brew install git-delta` / `apt install git-delta` |
-| vim | | commenting on diffs (`c`) and the changed-hunks list (`o`) | usually already there |
+| vim | | commenting on diffs (`c`) | usually already there |
 
 `oo` checks for these when it starts. It won't start without tmux, git and claude, and it warns
 about the rest, which only some actions need.
@@ -41,9 +41,9 @@ oo                               # open the board
 
 On the board, `n` opens the new thread form: a project, a ticket if the project has a tracker, a
 title, an initial prompt and a priority (normal unless you change it). Its fields are edited vim-style: `i` to type into one, ⏎ on to the
-next, `a` to create it and `q` or esc to cancel. The thread starts in Planned, and `e` adds a plan if you want one.
+next, ⏎ on **[ Create ]** after the last field to create it (or shift-⏎ from any field, where the terminal sends it) and `q` or esc to cancel. The thread starts in Planned, and `e` adds a plan if you want one.
 With an initial prompt, its claude starts straight away in the background, in plan mode, on that
-prompt; without one, Enter opens its claude when you're ready. `Ctrl-b b` (or `Alt-b`) brings you back to the
+prompt; without one, Enter opens its claude when you're ready. `Ctrl-b b` (or `Alt-q` in a thread's window) brings you back to the
 board. `?` on the board lists every key, and so does [KEYS.md](KEYS.md).
 
 `oo` starts (or reattaches to) a tmux session called `oo` with the board in it. If you run it
@@ -146,7 +146,7 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
 - In a step diff, `a` approves the step. Approving commits everything with
   a one-line message claude drafts, in a form with two fields: **commit** (the drafted message)
   and **for claude** (comments to send along). It takes the same keys as every form (see
-  [KEYS.md](KEYS.md#in-a-form)): `i` edits a field, ⏎ goes on to the next, `a` commits, and `q` or
+  [KEYS.md](KEYS.md#in-a-form)): `i` edits a field, ⏎ goes on to the next, ⏎ on **[ Commit ]** commits, and `q` or
   esc cancels (leaving the changes staged).
   Press `a` while claude is still writing to commit whatever it writes without opening the form
   (`a` again goes back). The thread's claude is then told the step was committed, given your
@@ -164,7 +164,6 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
 - `c` opens the diff in vim for comments. Write notes on lines starting `>>` under the diff line
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels), waking it first if its window is closed.
-- `o` opens the changed hunks in vim as a quickfix list.
 
 Confirmations (quit, archive, resuming a busy thread) all take `y`. Any other key cancels.
 
@@ -177,11 +176,11 @@ and other `Alt` keys move between panes and threads, scroll and go back to the b
 
 ### Local: trying a thread in your usual setup
 
-`t` puts a thread in Local, so you can try it out in your usual dev
+`o` puts a thread in Local, so you can try it out in your usual dev
 setup. Its branch is checked out in the project's own checkout (which must have no uncommitted
 changes to tracked files), its worktree is removed, and its claude moves there too. Only one
 thread per project fits. The thread stays where it is in its column, its card outlined in yellow,
-but it can't move between columns until `t` brings it back. Bringing it back needs the checkout clean, puts
+but it can't move between columns until `o` brings it back. Bringing it back needs the checkout clean, puts
 the checkout back on the default branch, and gives the thread its worktree again.
 
 `oo thread local [id] [in|out]` does the same from the shell, and a thread's claude offers it when you want
@@ -316,11 +315,11 @@ PR, to push. `u` says no while claude is working or waiting on a question.
 Moving a thread to Done or archiving it (`x`) removes the worktree and closes its claude window.
 The branch stays. Done keeps a worktree that has uncommitted changes, and archiving refuses
 until they're committed or discarded. `F` moves a thread straight to Done from any column after
-a `y` to confirm (a thread in Local has to come back with `t` first).
+a `y` to confirm (a thread in Local has to come back with `o` first).
 
 ### Importing threads
 
-`i` imports a thread you started outside the board (e.g. plain `claude` in the project's
+`N` imports a thread you started outside the board (e.g. plain `claude` in the project's
 directory). Pick one from the project's recent threads and it lands in Planned, where Enter
 resumes it, with badges from then on. Imported threads keep running in the directory they
 started in rather than a worktree, so diffs, comments and approve work there but they can't
@@ -377,7 +376,7 @@ showing where you are. Done shows one line per thread and, while you're not in i
 
 - **tmux key bindings**, set when the board starts: `prefix b` and `prefix Ctrl-b` jump to the
   board (from a project command's session too, see [Project commands](#project-commands)), plus some `Alt` keys in thread windows only (see [KEYS.md](KEYS.md); everywhere else
-  those keys still reach the program, e.g. readline's `M-b` back-a-word). Keys you've already
+  those keys still reach the program; `M-b`, readline's and claude's back-a-word, is left alone). Keys you've already
   bound to something else are left alone, except that `prefix Ctrl-b` replaces tmux's default
   send-prefix (sending a literal `Ctrl-b`).
 - **tmux `mouse` on**, for the `oo` session only.

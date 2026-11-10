@@ -13,7 +13,7 @@ import { syncWorktree } from './worktree.js';
 export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS)[number]) {
 	if (thread.column === column) return;
 	// Its branch is checked out in the project's checkout, not its worktree, until it comes back. Opening its PR works from there.
-	if (thread.local && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
+	if (thread.local && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — o brings it back to the board first`);
 	const problem = moveProblem(board.state(), thread, column);
 	if (problem) return board.setMessage(problem);
 	const status = board.statuses()[thread.id];
@@ -97,8 +97,12 @@ export const archiveThread = (board: Board, thread: Thread) =>
 	}, 'checking for uncommitted changes');
 
 export const moveKeys: Binding[] = [
-	{ key: 'H', run: onThread((board, thread) => moveColumn(board, thread, -1), { hidden: true }) },
+	{
+		key: 'H',
+		run: onThread((board, thread) => moveColumn(board, thread, -1), { hidden: true }),
+		help: { section: 'Board', keys: 'H/L', what: 'move the thread a column (H: Planned → IDEAS, archived → Done; L: IDEAS → Planned)' },
+	},
 	{ key: 'L', run: onThread((board, thread) => moveColumn(board, thread, 1), { hidden: true }) },
-	{ key: 'F', run: onThread(finishThread) },
-	{ key: 'x', run: onThread(archiveThread, { hidden: true }) },
+	{ key: 'F', run: onThread(finishThread), help: { section: 'Board', what: 'straight to Done' } },
+	{ key: 'x', run: onThread(archiveThread, { hidden: true }), help: { section: 'Board', what: 'archive (an IDEAS one too)' } },
 ];

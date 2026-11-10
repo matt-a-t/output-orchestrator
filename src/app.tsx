@@ -23,7 +23,7 @@ import { useRequests } from './board/requests.js';
 import { RunPicker, runTarget, type RunTarget } from './board/runPicker.js';
 import { useLiveWindows, usePrPoll, useRestoreCarried, useRuns, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
 import { killRunSessions } from './commands.js';
-import { COLORS, COLUMNS, PRIORITIES, type Column, type Project, type Thread } from './state.js';
+import { COLUMNS, PRIORITIES, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
 import { applyRequest, blockers, byPriority, matchesSearch, priorityOf, setColumn as moveTo, withPriority } from './threads.js';
 import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
@@ -325,7 +325,7 @@ export function App() {
 			if (!showIdeas) return setCursor({ col: cursor.col + 1, row });
 			return setCursor(cursor.col === 0 ? { col: 0, row: 0 } : { col: cursor.col - 1, row });
 		}
-		if (input === 'i') return startImport();
+		if (input === 'N') return startImport();
 		if (input === 'r') {
 			const project = projectByName(selected?.project ?? filter ?? '') ?? (state.projects.length === 1 ? state.projects[0] : undefined);
 			if (!project) return setMessage('⚠ Run whose commands? Highlight a thread, or p to filter to a project');
@@ -341,16 +341,12 @@ export function App() {
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
 		if (input === 'e') return setEditing(selected.id);
-		if (input === 'T') return selected.todos?.length ? setTodosOf(selected.id) : setMessage(`⚠ #${selected.id} has no todos`);
+		if (input === 't') return selected.todos?.length ? setTodosOf(selected.id) : setMessage(`⚠ #${selected.id} has no todos`);
 		if (input === 'B') {
 			if (selected.column === 'done' || selected.column === 'archived') return setMessage(`⚠ #${selected.id} is finished, so nothing blocks it`);
 			return setPicking(selected.id);
 		}
 		if (input === '!') return cyclePriority(selected);
-		if (input === 'C') {
-			const current = selected.color ?? projectByName(selected.project)?.color ?? COLORS[0];
-			return updateThread(selected.id, { color: COLORS[(COLORS.indexOf(current) + 1) % COLORS.length] });
-		}
 	});
 
 	return (

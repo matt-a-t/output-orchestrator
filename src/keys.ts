@@ -1,32 +1,33 @@
 // Every key oo adds, for the board's `?` screen. KEYS.md says the same for reading outside the board.
+// The keys that act on a thread come from their bindings (BINDINGS); the board's own and the rest are here.
+
+import { BINDINGS, type BindingHelp } from './board/bindings.js';
 
 export type KeySection = { title: string; keys: [key: string, what: string][] };
+
+/** The rows for the thread keys bound in `section`, in BINDINGS order. */
+export function bindingRows(section: BindingHelp['section']): [key: string, what: string][] {
+	return BINDINGS.flatMap(b => (b.help?.section === section ? [[b.help.keys ?? b.key, b.help.what] as [string, string]] : []));
+}
 
 export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'Board',
 		keys: [
 			['h/l j/k', 'move (arrows too)'],
-			['H/L', 'move the thread a column (H: Planned → IDEAS, archived → Done; L: IDEAS → Planned)'],
+			...bindingRows('Board'),
 			['J/K', 'reorder within its column (among threads of its priority)'],
-			['⏎', 'open (or resume) its claude'],
-			['w / W', 'wake it ("keep going", or start it on its thread) / every thread closed mid-work'],
-			['u', 'rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude)'],
 			['n', 'new thread (form)'],
+			['N', 'import a thread started outside oo'],
 			['e', 'edit the thread'],
-			['T', 'every todo on the thread (j/k scroll)'],
-			['t', 'into / out of Local'],
+			['t', 'every todo on the thread (j/k scroll)'],
 			['B', 'blocked by another thread (move to it, ⏎ picks)'],
-			['F', 'straight to Done'],
-			['x', 'archive (an IDEAS one too)'],
 			['!', 'cycle its priority (normal, high, low); high sorts to the top of its column, low to the bottom'],
-			['C', 'cycle its colour'],
 			['p', 'filter by project'],
 			['/', 'search (⏎ keeps it, esc drops it)'],
 			['esc', 'clear the search, then the project'],
 			['I', 'show / hide the IDEAS column (threads shelved from Planned)'],
 			['A', 'show / hide archived threads'],
-			['i', 'import a thread started outside oo'],
 			['r', "run one of the project's commands (dev server, tests…) in the thread's worktree, in a new terminal window"],
 			['P', 'projects (their hooks, commands, wake prompt and when idle claudes close)'],
 			['?', 'these keys'],
@@ -47,13 +48,8 @@ export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'Reviewing',
 		keys: [
-			['d / D', 'step / whole thread diff'],
-			['s', 'claude + a shell beside it'],
-			['c', 'comment on the diff in vim'],
-			['o', 'changed hunks as a vim quickfix list'],
-			['v', 'view the PR (m merges it)'],
-			['R', 'PRs waiting for your review'],
-			['b', 'open the PR in your browser'],
+			...bindingRows('Reviewing'),
+			['R', 'PRs waiting for your review (⏎/v view, b browser, r refresh)'],
 		],
 	},
 	{
@@ -67,9 +63,9 @@ export const KEY_SECTIONS: KeySection[] = [
 			['a', 'approve the step (d)'],
 			['m', 'merge your PR (v)'],
 			['a / x / c', "approve / request changes / comment (v, someone else's PR)"],
-			['o', 'open the PR in your browser (v)'],
+			['b', 'open the PR in your browser (v)'],
 			['S', "delta's header styles (oo delta)"],
-			['q', 'close'],
+			['q / d D v', 'close (d, D, v: the key that opened it)'],
 			['>> note', 'in c (and x/c in v): a comment on the line above'],
 			[':cq', 'in c: send nothing'],
 		],
@@ -78,14 +74,25 @@ export const KEY_SECTIONS: KeySection[] = [
 		title: 'In a form (n, e, P, commit)',
 		keys: [
 			['j/k ↑/↓ tab', 'move between fields'],
-			['h/l ←/→', 'change a choice (project, colour, priority, recent ticket…)'],
+			['h/l ←/→ space', 'change a choice (project, colour, priority, recent ticket…)'],
 			['i / I', 'edit, cursor at the end / start'],
 			['dd', 'clear the field and edit'],
 			['⏎', 'edit the field; editing: save it and edit the next'],
-			['a / shift-⏎', 'create / save / commit'],
+			['⏎ on [ Save ]', 'create / save / commit (the row after the last field)'],
+			['shift-⏎', 'the same, from any field (where the terminal sends it)'],
 			['q / esc', 'cancel (esc while editing: stop editing)'],
 			['←/→ C-a/C-e', 'editing: move / start, end'],
 			['C-u / C-w', 'editing: delete line / word'],
+		],
+	},
+	{
+		title: 'Projects (P)',
+		keys: [
+			['j/k', 'move'],
+			['e / ⏎', 'edit the project (the form above)'],
+			['n', 'add a project'],
+			['x', 'remove it (y confirms)'],
+			['q / esc / P', 'back to the board'],
 		],
 	},
 	{
@@ -96,7 +103,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['M-s', 'shell beside claude'],
 			['M-u', 'scroll up (tmux copy mode, q leaves)'],
 			['M-z', 'zoom the pane'],
-			['M-q / M-b', 'back to the board'],
+			['M-q', 'back to the board'],
 			['prefix b', 'back to the board, from anywhere'],
 		],
 	},

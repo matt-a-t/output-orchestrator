@@ -252,18 +252,19 @@ function cycleThreads(step: 1 | -1): string[] {
 }
 
 /**
- * Bind `prefix b`, `prefix C-b` (for when ctrl is still held; from a run session too), `M-b` and `M-q` (no prefix) to
- * jump back to the board, and in thread windows: `M-h` / `M-l` to move between claude and the pane
+ * Bind `prefix b`, `prefix C-b` (for when ctrl is still held; from a run session too) and `M-q` (no prefix)
+ * to jump back to the board, and in thread windows: `M-h` / `M-l` to move between claude and the pane
  * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` to open a shell beside claude
  * (via `split`, the command prefix that runs `oo split`), `M-u` to scroll up (copy
  * mode) and `M-z` to zoom the pane. Not `M-v` (claude's image paste) or `M-[` (the start of
- * arrow keys' escape codes). Keys the user has bound to something themselves are left alone.
+ * arrow keys' escape codes) or `M-b` (readline's and claude's back-a-word). Keys the user has bound
+ * to something themselves are left alone.
  */
 export async function bindBoardKeys(split: string): Promise<void> {
 	const back = ['select-window', '-t', BOARD_WINDOW];
 	// From a run session the board switched to (no terminal to open it in, see openRun), back to the board's session.
 	const backFromAnywhere = ['if-shell', '-F', '#{m:oo-run_*,#{session_name}}', 'switch-client -l', tmuxCommand(back)];
-	// Only in thread windows; everywhere else the key still reaches the program (e.g. readline's M-b back-a-word).
+	// Only in thread windows; everywhere else the key still reaches the program.
 	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, tmuxCommand(command), `send-keys ${key}`];
 	const beside = (role: string) => [
 		'run-shell',
@@ -273,7 +274,6 @@ export async function bindBoardKeys(split: string): Promise<void> {
 	const bindings: [table: string, key: string, command: string[]][] = [
 		['prefix', 'b', backFromAnywhere],
 		['prefix', 'C-b', backFromAnywhere],
-		['root', 'M-b', inThreads('M-b', back)],
 		['root', 'M-q', inThreads('M-q', back)],
 		['root', 'M-h', inThreads('M-h', ['select-pane', '-L'])],
 		['root', 'M-l', inThreads('M-l', ['select-pane', '-R'])],
@@ -294,6 +294,9 @@ export async function bindBoardKeys(split: string): Promise<void> {
 	const old = await execa('tmux', ['list-keys', '-T', 'root', 'M-d'], { reject: false });
 	// Quoted again by list-keys, so look for the end of the split command instead of all of it.
 	if (old.exitCode === 0 && /split\W* diff #\{/.test(old.stdout)) await execa('tmux', ['unbind-key', '-T', 'root', 'M-d']);
+	// M-b went back to the board too, taking back-a-word from claude's prompt and the shell.
+	const oldBack = await execa('tmux', ['list-keys', '-T', 'root', 'M-b'], { reject: false });
+	if (oldBack.exitCode === 0 && oldBack.stdout.includes(BOARD_WINDOW)) await execa('tmux', ['unbind-key', '-T', 'root', 'M-b']);
 }
 
 /** One tmux command as a string, quoting arguments that need it (for if-shell). */

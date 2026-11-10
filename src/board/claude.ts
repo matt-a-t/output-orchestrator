@@ -176,8 +176,12 @@ export const openShell = (board: Board, thread: Thread) =>
 	);
 
 export const claudeKeys: Binding[] = [
-	{ key: '⏎', run: onThread(openThread) },
-	{ key: 'w', run: onThread(wake) },
+	{ key: '⏎', run: onThread(openThread), help: { section: 'Board', what: 'open (or resume) its claude' } },
+	{
+		key: 'w',
+		run: onThread(wake),
+		help: { section: 'Board', keys: 'w / W', what: 'wake it ("keep going", or start it on its thread) / every thread closed mid-work' },
+	},
 	{ key: 'W', run: board => wakeStalled(board, board.shown()) },
-	{ key: 's', run: onThread(openShell) },
+	{ key: 's', run: onThread(openShell), help: { section: 'Reviewing', what: 'claude + a shell beside it' } },
 ];

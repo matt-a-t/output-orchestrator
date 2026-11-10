@@ -45,6 +45,8 @@ export type ViewSpec = {
 	// Tab 1: its name in the tab bar and its text.
 	intro: { label: string; text: string };
 	keys: ViewKey[];
+	// The board key that opened it (d, D or v), which closes it too.
+	closeKey?: string;
 };
 
 /** Where the viewer was, saved in its directory on the way out so it comes back there (e.g. after S). */
@@ -247,7 +249,7 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 			setMatch(undefined);
 			return;
 		}
-		if (input === 'q' || key.escape) return close(0);
+		if (input === 'q' || key.escape || (spec.closeKey && input === spec.closeKey)) return close(0);
 		if (input === 'h' || key.leftArrow) return setTab((tab + TAB_COUNT - 1) % TAB_COUNT);
 		if (input === 'l' || key.rightArrow || (tab === 1 && key.return)) return setTab((tab + 1) % TAB_COUNT);
 		if (['1', '2', '3'].includes(input)) return setTab(Number(input) - 1);

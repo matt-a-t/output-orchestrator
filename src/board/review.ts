@@ -3,7 +3,7 @@
 import { COMMIT_FORM, type CommitForm } from '../commitForm.js';
 import { errorMessage, stillWorking } from '../errors.js';
 import { commit, currentRef, forcePushBranch, rebaseInProgress, rebaseOnto, rebaseTarget, stageAll } from '../git.js';
-import { openChanges, reviewDiff, showDiff, writeCommit } from '../review.js';
+import { reviewDiff, showDiff, writeCommit } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { approvedPrompt } from '../threadCommand.js';
 import { applyRequest, approvedTodo, conflictPrompt, merged, setTodoStatus, withDrafts } from '../threads.js';
@@ -132,17 +132,6 @@ export const commentOnDiff = (board: Board, thread: Thread) =>
 		{ git: true },
 	);
 
-/** o: the changed hunks as a vim quickfix list. */
-export const listChanges = (board: Board, thread: Thread) =>
-	inWorktree(
-		board,
-		thread,
-		async cwd => {
-			if (!(await openChanges(cwd, thread))) board.setMessage('No changes');
-		},
-		{ git: true },
-	);
-
 /**
  * u: rebase the thread's branch on origin's default branch, or the branch it builds on (see rebaseTarget),
  * keeping uncommitted changes, and push it if it has a PR. Conflicts are left for the thread's claude to resolve (and push).
@@ -179,9 +168,12 @@ export const updateFromMain = (board: Board, thread: Thread) =>
 	);
 
 export const reviewKeys: Binding[] = [
-	{ key: 'd', run: onThread((board, thread) => diffThread(board, thread, 'step')) },
+	{ key: 'd', run: onThread((board, thread) => diffThread(board, thread, 'step')), help: { section: 'Reviewing', keys: 'd / D', what: 'step / whole thread diff' } },
 	{ key: 'D', run: onThread((board, thread) => diffThread(board, thread, 'thread')) },
-	{ key: 'c', run: onThread(commentOnDiff) },
-	{ key: 'o', run: onThread(listChanges) },
-	{ key: 'u', run: onThread(updateFromMain) },
+	{ key: 'c', run: onThread(commentOnDiff), help: { section: 'Reviewing', what: 'comment on the diff in vim' } },
+	{
+		key: 'u',
+		run: onThread(updateFromMain),
+		help: { section: 'Board', what: 'rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude)' },
+	},
 ];

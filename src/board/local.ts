@@ -26,7 +26,7 @@ async function hook(project: Project, event: ProjectHook, thread: Thread, cwd: s
 }
 
 /**
- * Why the thread can't go into (`entering`) or come out of Local now, if it can't; shared by t and
+ * Why the thread can't go into (`entering`) or come out of Local now, if it can't; shared by o and
  * `oo thread local`. Claude still working is checked separately, since the command waits for it instead.
  */
 export async function localProblem(board: Board, thread: Thread, entering: boolean): Promise<string | undefined> {
@@ -164,4 +164,4 @@ export function usePendingLocal(board: Board, statuses: Record<string, Status>) 
 	}, [statuses]);
 }
 
-export const localKeys: Binding[] = [{ key: 't', run: onThread(toggleLocal) }];
+export const localKeys: Binding[] = [{ key: 'o', run: onThread(toggleLocal), help: { section: 'Board', what: 'into / out of Local' } }];
