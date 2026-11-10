@@ -278,6 +278,13 @@ PR into that branch instead, so the PR shows only its own work. That branch has 
 commits first, which opening the other thread's PR does. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
 cancels). Press `a` while claude is still writing to open the PR with what it writes, skipping vim.
+Before that, the board gives you a pop quiz on the thread's changes, to check you read what you
+approved: claude writes two multiple-choice questions and one to answer in a sentence or two, about
+what the change does rather than what its files are called. In vim, put an `x` in one box for each of the first two and
+write your answer under the third, then save. claude grades the written answer. If you get any wrong,
+the results show the right answers and the PR isn't opened unless you change `open the PR anyway? n` to
+`y`. `q` while claude is writing or grading cancels the whole move. Only opening a new PR from the
+board quizzes you: a thread whose PR is already open just pushes, and `oo thread pr` skips it.
 A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
 running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's

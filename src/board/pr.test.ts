@@ -10,7 +10,7 @@ import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
 import { fakeBoard, fakeGh, fakeTmux, fixture, git, gitFixture, type FakeAnswer } from '../testHelpers.js';
 import { enterLocal } from './local.js';
-import { checkPr, openPr, type PrSteps } from './pr.js';
+import { checkPr, openPr, quizMessage, type PrSteps } from './pr.js';
 
 const BRANCH = 'oo/the-thing';
 const URL = 'https://github.com/o/r/pull/5';
@@ -246,4 +246,13 @@ test("a merged PR stays in PR while the Local checkout has changes that Done wou
 		board.messages[0],
 		"⚠ #1's PR #5 merged, but it stays in PR until it can leave Local: #1 has uncommitted changes — approve them (d, then a) or discard them first",
 	);
+});
+
+test('quizMessage says how the pop quiz went, and that a failed one stopped the PR', () => {
+	const opened = 'Opened PR #5: url';
+	assert.equal(quizMessage(opened, null), opened);
+	assert.equal(quizMessage(opened, { result: 'passed', score: '3/3' }), `${opened} · pop quiz 3/3`);
+	assert.equal(quizMessage(opened, { result: 'overridden', score: '1/3' }), `${opened} · pop quiz 1/3, opened anyway`);
+	assert.equal(quizMessage('Cancelled', { result: 'failed', score: '1/3' }), '⚠ Pop quiz failed (1/3) — PR not opened');
+	assert.equal(quizMessage(opened, { result: 'skipped' }), `${opened} · ⚠ no pop quiz: claude couldn't write one`);
 });
