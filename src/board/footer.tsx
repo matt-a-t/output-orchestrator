@@ -28,6 +28,35 @@ type Props = {
 	children?: ReactNode;
 };
 
+/**
+ * The start of a plan on one line: its first three non-blank lines, without markdown's heading marks
+ * (a "#61" that starts a heading's text stays).
+ */
+export function planSummary(plan: string): string {
+	return plan
+		.split('\n')
+		.map(line => line.trim().replace(/^#+\s+/, ''))
+		.filter(Boolean)
+		.slice(0, 3)
+		.join(' · ');
+}
+
+/** What the cards' badges mean, wrapping only between entries so none is split across lines. */
+export function Legend({ width }: { width: number }) {
+	return (
+		<Box flexWrap="wrap" columnGap={3} width={width}>
+			{LEGEND.map(([badge, color, label]) => (
+				<Box key={label} flexShrink={0}>
+					<Text>
+						<Text color={color}>{badge}</Text>
+						<Text dimColor> {label}</Text>
+					</Text>
+				</Box>
+			))}
+		</Box>
+	);
+}
+
 /** Below the board: the highlighted thread's details, the message line, the legend and the help line. */
 export function Footer({ thread, merge, blockers, busy, message, confirming, width, hidden, children }: Props) {
 	const merged = merge && mergeLabel(merge);
@@ -48,7 +77,7 @@ export function Footer({ thread, merge, blockers, busy, message, confirming, wid
 				{thread ? null : <Text dimColor>no thread selected</Text>}
 				{thread?.plan ? (
 					<Text dimColor wrap="truncate-end">
-						{thread.plan.split('\n').slice(0, 3).join(' · ')}
+						{planSummary(thread.plan)}
 					</Text>
 				) : null}
 				{thread?.ticket?.url ? (
@@ -75,14 +104,7 @@ export function Footer({ thread, merge, blockers, busy, message, confirming, wid
 			) : (
 				<Text color={messageColor(message, confirming)}>{message}</Text>
 			)}
-			<Text>
-				{LEGEND.map(([badge, color, label]) => (
-					<Text key={label}>
-						<Text color={color}>{badge}</Text>
-						<Text dimColor> {label}   </Text>
-					</Text>
-				))}
-			</Text>
+			<Legend width={width} />
 			{/* The way into every other key, kept in the corner so it's always in the same place. */}
 			<Box justifyContent="space-between" width={width}>
 				<Text dimColor wrap="truncate-end">
