@@ -6,7 +6,7 @@ import { ScrollBar } from './board/scrollList.js';
 import { editCommands } from './editor.js';
 import { errorMessage, messageColor } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
-import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp, SubmitRow, submitHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { scrollWindow } from './scroll.js';
 import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
@@ -58,6 +58,9 @@ const FIELD_HINTS: Partial<Record<Field, string>> = {
 	...Object.fromEntries(HOOK_EVENTS.map(e => [e, `shell command run ${HOOK_WHERE[e]} (OO_THREAD_ID, OO_THREAD_TITLE, OO_PROJECT, OO_BRANCH set${e === 'newThread' ? ', and OO_PROMPT' : ''})  `])),
 };
 const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
+// The [ Save ] row after the fields, and how many rows j/k go through.
+const SUBMIT = FIELDS.length;
+const ROWS = FIELDS.length + 1;
 
 const isHook = (field: Field): field is ProjectHook => (HOOK_EVENTS as readonly string[]).includes(field);
 const fieldValue = (project: Project, field: TextField) => (isHook(field) ? (project.hooks[field] ?? '') : project[field]);
@@ -125,7 +128,8 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 	useInput((input, key) => {
 		setMessage('');
 		if (form) {
-			const field = FIELDS[form.field]!;
+			// undefined on the submit row.
+			const field = FIELDS[form.field];
 			if (field === 'commands' && !key.ctrl && !key.meta && (key.return || input === 'i')) {
 				const name = form.project.name || 'the new project';
 				editCommands(form.project.commands, name).then(
@@ -137,23 +141,23 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				);
 				return;
 			}
-			if (isText(field)) {
+			if (field && isText(field)) {
 				const next = fieldKey(fieldValue(form.project, field), form.edit, input, key);
 				if (next) return setForm({ ...form, project: withField(form.project, field, next.value), edit: next.edit });
 			}
 			if (isBack(input, key, form.edit)) return setForm(null);
-			if (isSubmit(input, key, form.edit)) return save(form);
+			if (isSubmit(key) || (key.return && form.field === SUBMIT)) return save(form);
 			if (key.return) {
-				const next = nextField(form.field, FIELDS.length, i => {
-					const f = FIELDS[i]!;
-					return isText(f) ? fieldValue(form.project, f).length : undefined;
+				const next = nextField(form.field, ROWS, i => {
+					const f = FIELDS[i];
+					return f && isText(f) ? fieldValue(form.project, f).length : undefined;
 				});
 				return setForm({ ...form, ...next });
 			}
 			const moved = { ...form, edit: null };
 			const step = fieldStep(input, key);
-			if (step) return setForm({ ...moved, field: loop(form.field, step, FIELDS.length) });
-			if (isChoice(field)) {
+			if (step) return setForm({ ...moved, field: loop(form.field, step, ROWS) });
+			if (field && isChoice(field)) {
 				const delta = choiceStep(input, key);
 				if (!delta) return;
 				const choices = CHOICES[field] as readonly Project[Choice][];
@@ -200,8 +204,8 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		const measured = measureElement(space.current).height;
 		if (measured !== spaceLines) setSpaceLines(measured);
 	});
-	// The form's title, its fields and the blank line above it.
-	const formLines = form ? FIELDS.length + 2 : 0;
+	// The form's title, its fields and submit row, and the blank line above it.
+	const formLines = form ? ROWS + 2 : 0;
 	const listLines = Math.max(1, Math.min(state.projects.length, spaceLines - formLines));
 	const top = useRef(0);
 	const view = scrollWindow(state.projects.map(() => 1), top.current, row, listLines);
@@ -262,15 +266,18 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 								</Text>
 							);
 						})}
+						<SubmitRow label="Save" active={form.field === SUBMIT} indent={LABEL_WIDTH} />
 					</Box>
 				) : null}
 			</Box>
 			<Text color={messageColor(message, confirmRemove)}>{message}</Text>
 			<Text dimColor>
 				{form
-					? typeof form.edit === 'number'
-						? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${EDITING_HELP}`
-						: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? 'h/l change' : isText(FIELDS[form.field]!) ? FIELD_HELP : '⏎ edit'}  ${formHelp('save')}`
+					? form.field === SUBMIT
+						? submitHelp('save')
+						: typeof form.edit === 'number'
+							? `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${EDITING_HELP}`
+							: `${FIELD_HINTS[FIELDS[form.field]!] ?? ''}${isChoice(FIELDS[form.field]!) ? 'h/l change' : isText(FIELDS[form.field]!) ? FIELD_HELP : '⏎ edit'}  ${formHelp('save')}`
 					: 'j/k move  e/⏎ edit  n new  x remove  esc/q back to board'}
 			</Text>
 		</Box>

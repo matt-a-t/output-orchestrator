@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { errorMessage } from '../errors.js';
-import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from '../fieldText.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp, SubmitRow, submitHelp } from '../fieldText.js';
 import { runNewThreadHook } from '../hooks.js';
 import { NEW_THREAD_LABELS, newThreadFields, newThreadForm, newThreadKey, type NewThreadField, type NewThreadSubmit } from '../newThreadForm.js';
 import { PRIORITY_COLORS, type Project, type Thread } from '../state.js';
@@ -65,7 +65,7 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
 
 	const project = board.project(form.project);
 	const tickets = recent?.project === form.project ? recent.tickets : null;
-	const value = (field: NewThreadField, active: boolean) => {
+	const value = (field: Exclude<NewThreadField, 'submit'>, active: boolean) => {
 		if (field === 'project') return <Text color={project?.color}>{active ? `‹ ${form.project} ›` : form.project}</Text>;
 		if (field === 'priority') return <Text color={PRIORITY_COLORS[form.priority]}>{active ? `‹ ${form.priority} ›` : form.priority}</Text>;
 		const edit = active ? form.edit : null;
@@ -87,12 +87,15 @@ export function NewThread({ board, project: opening, recent: { recent, loadRecen
 	const help =
 		typeof form.edit === 'number'
 			? EDITING_HELP
-			: `${form.field === 'project' || form.field === 'priority' ? 'h/l change' : form.field === 'ticket' ? `${FIELD_HELP}  h/l recent` : FIELD_HELP}  ${formHelp('create')}`;
+			: form.field === 'submit'
+				? submitHelp('create')
+				: `${form.field === 'project' || form.field === 'priority' ? 'h/l change' : form.field === 'ticket' ? `${FIELD_HELP}  h/l recent` : FIELD_HELP}  ${formHelp('create')}`;
 	return (
 		<Box flexDirection="column" borderStyle="round" borderColor={project?.color} paddingX={1}>
 			<Text bold>New thread</Text>
 			{newThreadFields(project).map(field => {
 				const active = field === form.field;
+				if (field === 'submit') return <SubmitRow key={field} label="Create" active={active} indent={LABEL_WIDTH} />;
 				return (
 					<Box key={field} flexDirection="column">
 						<Text wrap="wrap">

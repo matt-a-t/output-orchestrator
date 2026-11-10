@@ -5,8 +5,9 @@ import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, typ
 import { PRIORITIES, type Priority, type Project } from './state.js';
 import { normalizeKey, type Ticket } from './tickets.js';
 
-export type NewThreadField = 'project' | 'ticket' | 'title' | 'prompt' | 'priority';
-export const NEW_THREAD_LABELS: Record<NewThreadField, string> = { project: 'project', ticket: 'ticket', title: 'title', prompt: 'initial prompt', priority: 'priority' };
+// `submit` is the [ Create ] row after the fields.
+export type NewThreadField = 'project' | 'ticket' | 'title' | 'prompt' | 'priority' | 'submit';
+export const NEW_THREAD_LABELS: Record<Exclude<NewThreadField, 'submit'>, string> = { project: 'project', ticket: 'ticket', title: 'title', prompt: 'initial prompt', priority: 'priority' };
 
 export type NewThreadForm = {
 	project: string;
@@ -33,9 +34,12 @@ export function newThreadForm(project: string): NewThreadForm {
 	return { project, field: 'project', ticketKey: '', ticket: -1, title: '', titleEdited: false, prompt: '', priority: 'normal', edit: null };
 }
 
-/** The form's fields for the project: no ticket without a tracker. The priority comes last, so ⏎ still goes from the title to the prompt. */
+/**
+ * The form's fields for the project, then the submit row: no ticket without a tracker. The priority
+ * comes after the text fields, so ⏎ still goes from the title to the prompt.
+ */
 export function newThreadFields(project: Project | undefined): NewThreadField[] {
-	return project && project.tracker !== 'none' ? ['project', 'ticket', 'title', 'prompt', 'priority'] : ['project', 'title', 'prompt', 'priority'];
+	return project && project.tracker !== 'none' ? ['project', 'ticket', 'title', 'prompt', 'priority', 'submit'] : ['project', 'title', 'prompt', 'priority', 'submit'];
 }
 
 /** Apply a keypress: the new form, what it ends with (null if cancelled), or why it can't be submitted yet. */
@@ -51,7 +55,7 @@ export function newThreadKey(
 	}
 	const project = projects.find(p => p.name === form.project);
 	if (isBack(input, key, form.edit)) return { done: null };
-	if (isSubmit(input, key, form.edit)) return submit(form, project, tickets);
+	if (isSubmit(key) || (key.return && form.field === 'submit')) return submit(form, project, tickets);
 	const fields = newThreadFields(project);
 	const index = fields.indexOf(form.field);
 	if (key.return) {
@@ -75,9 +79,9 @@ export function newThreadKey(
 	return moved;
 }
 
-type TextField = Exclude<NewThreadField, 'project' | 'priority'>;
+type TextField = Exclude<NewThreadField, 'project' | 'priority' | 'submit'>;
 
-const isText = (field: NewThreadField): field is TextField => field !== 'project' && field !== 'priority';
+const isText = (field: NewThreadField): field is TextField => field !== 'project' && field !== 'priority' && field !== 'submit';
 
 const fieldText = (form: NewThreadForm, field: TextField) => (field === 'ticket' ? form.ticketKey : form[field]);
 

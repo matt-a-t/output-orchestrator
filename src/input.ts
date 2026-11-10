@@ -28,7 +28,7 @@ export type Edit = number | 'd' | null;
 /**
  * Apply a keypress to a form's focused text field, vim-style: `i`/⏎ edit at the end, `I` at the
  * start, `dd` clears it and edits, and esc stops editing. Undefined if the key is for the form
- * (⏎ while editing, esc while not, moving fields, submitting), which should then set `edit` back to null.
+ * (⏎ while editing, esc while not, moving fields, shift-⏎ submitting), which should then set `edit` back to null.
  */
 export function fieldKey(value: string, edit: Edit, input: string, key: Key): { value: string; edit: Edit } | undefined {
 	if (typeof edit === 'number') {
@@ -36,7 +36,7 @@ export function fieldKey(value: string, edit: Edit, input: string, key: Key): { 
 		const next = editAt(value, Math.min(edit, value.length), input, key);
 		return next && { value: next.value, edit: next.cursor };
 	}
-	if (key.ctrl || key.meta || isSubmit(input, key, edit)) return;
+	if (key.ctrl || key.meta || isSubmit(key)) return;
 	if (input === 'i' || key.return) return { value, edit: value.length };
 	if (input === 'I') return { value, edit: 0 };
 	// Typed quickly, dd can arrive as one input.
@@ -46,9 +46,12 @@ export function fieldKey(value: string, edit: Edit, input: string, key: Key): { 
 
 // The keys every form shares, around fieldKey: it goes first, so these only see what it passes on.
 
-/** Submit the form: shift-⏎ (where the terminal sends it apart from ⏎), or `a` while not editing. */
-export function isSubmit(input: string, key: Key, edit: Edit): boolean {
-	return (key.return && key.shift) || (typeof edit !== 'number' && input === 'a' && !key.ctrl && !key.meta);
+/**
+ * Submit the form from any field: shift-⏎, where the terminal sends it apart from ⏎ (tmux doesn't
+ * without extended-keys). Every form also ends with a submit row that ⏎ submits from.
+ */
+export function isSubmit(key: Key): boolean {
+	return !!(key.return && key.shift);
 }
 
 /** Close the form: esc (once fieldKey has stopped any editing), or `q` while not editing. */
@@ -68,8 +71,8 @@ export function choiceStep(input: string, key: Key): number {
 
 /**
  * ⏎ on field `index` of `count` once fieldKey has passed it on (while editing it, or on a choice):
- * the next field, edited at its end if it's text (`textLength` of it, undefined for a choice). The
- * last field stays, with editing stopped, since only the submit key submits.
+ * the next field, edited at its end if it's text (`textLength` of it, undefined for a choice or the
+ * submit row). The last one, the submit row, stays; the form submits from it before asking.
  */
 export function nextField(index: number, count: number, textLength: (index: number) => number | undefined): { field: number; edit: Edit } {
 	if (index + 1 >= count) return { field: index, edit: null };
