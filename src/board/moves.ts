@@ -13,7 +13,7 @@ import { syncWorktree } from './worktree.js';
 export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS)[number]) {
 	if (thread.column === column) return;
 	// Its branch is checked out in the project's checkout, not its worktree, until it comes back. Opening its PR works from there.
-	if (thread.local && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — t brings it back to the board first`);
+	if (thread.local && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — o brings it back to the board first`);
 	const problem = moveProblem(board.state(), thread, column);
 	if (problem) return board.setMessage(problem);
 	const status = board.statuses()[thread.id];

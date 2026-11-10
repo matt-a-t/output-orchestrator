@@ -369,7 +369,7 @@ export function moveProblem(state: State, thread: Thread, column: Column): strin
 /** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
 export function boardOnlyMove(thread: Thread, column: Column): string | undefined {
 	if (column === 'pr') return `Moving #${thread.id} to PR opens its PR — use oo thread pr, or do it from the board`;
-	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or t on the board)`;
+	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or o on the board)`;
 }
 
 /** The state being changed: the board's, or state.json when it isn't running. */

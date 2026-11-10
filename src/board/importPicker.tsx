@@ -30,7 +30,7 @@ export function ImportProject({ board, active, onPick, onClose }: ProjectProps) 
 			itemKey={p => p.name}
 			title={
 				<>
-					Import — which project? <Text dimColor>(j/k move  ⏎ choose  esc/q/i cancel, or click, double-click, scroll)</Text>
+					Import — which project? <Text dimColor>(j/k move  ⏎ choose  esc/q/N cancel, or click, double-click, scroll)</Text>
 				</>
 			}
 			row={row}
@@ -38,7 +38,7 @@ export function ImportProject({ board, active, onPick, onClose }: ProjectProps) 
 			active={active}
 			onActivate={pick}
 			onInput={(input, key) => {
-				if (input !== 'q' && input !== 'i' && !key.escape) return;
+				if (input !== 'q' && input !== 'N' && !key.escape) return;
 				onClose();
 				board.setMessage('Cancelled');
 			}}
@@ -102,7 +102,7 @@ export function ImportList({ board, project, threads, active, onClose, onShow }:
 			itemHeight={entryHeight}
 			title={
 				<>
-					Import a {project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/i cancel, or click, double-click, scroll)</Text>
+					Import a {project} thread <Text dimColor>(j/k move  ⏎ import  esc/q/N cancel, or click, double-click, scroll)</Text>
 				</>
 			}
 			row={row}
@@ -110,7 +110,7 @@ export function ImportList({ board, project, threads, active, onClose, onShow }:
 			active={active}
 			onActivate={importThread}
 			onInput={(input, key) => {
-				if (input === 'q' || input === 'i' || key.escape) onClose();
+				if (input === 'q' || input === 'N' || key.escape) onClose();
 			}}
 			renderItem={(s, selected) => {
 				const linked = linkedThread(s);

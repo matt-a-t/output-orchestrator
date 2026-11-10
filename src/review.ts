@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
-import { diffArgs, hunkLocations, type DiffKind } from './git.js';
+import { diffArgs, type DiffKind } from './git.js';
 import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogin, type PrDetails, type ReviewComment, type ReviewEvent } from './github.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
@@ -48,7 +48,7 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 	const keys: ViewKey[] = [...(approvable ? [{ key: 'a', status: APPROVE_STATUS, hint: 'approve' }] : []), { key: 'S', status: DELTA_STATUS, hint: 'styling' }];
 	const response = thread.transcriptPath && lastAssistantText(thread.transcriptPath);
 	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
-	const command = viewerShellCommand(dir, { cwd, args, intro: { label: 'Claude', text: response || "No response from claude yet." }, keys });
+	const command = viewerShellCommand(dir, { cwd, args, intro: { label: 'Claude', text: response || "No response from claude yet." }, keys, closeKey: kind === 'step' ? 'd' : 'D' });
 	try {
 		for (;;) {
 			const status = await popup(command, { cwd, title: ` ${label} ` });
@@ -65,7 +65,7 @@ export type PrAction = { action: 'merge' } | { action: 'review'; event: ReviewEv
 
 /**
  * Show a PR as GitHub has it: its title, state, checks, reviews and description, then its diff, with
- * n/N jumping between files and hunks like `showDiff`. `o` opens it in the browser and `S` sets up
+ * n/N jumping between files and hunks like `showDiff`. `b` opens it in the browser and `S` sets up
  * delta's styles. Your own PR can be merged with `m`; someone else's approved (`a`), sent back with
  * changes requested (`x`) or commented on (`c`), the last two written in vim (see `writeReview`).
  */
@@ -83,7 +83,7 @@ export async function showPr(cwd: string, number: number): Promise<'closed' | Pr
 					{ key: 'x', status: REQUEST_CHANGES_STATUS, hint: 'request changes' },
 					{ key: 'c', status: COMMENT_STATUS, hint: 'comment' },
 				]),
-		{ key: 'o', status: BROWSER_STATUS, hint: 'browser' },
+		{ key: 'b', status: BROWSER_STATUS, hint: 'browser' },
 		{ key: 'S', status: DELTA_STATUS, hint: 'styling' },
 	];
 	// The popup is 90% of the client, less its border.
@@ -95,6 +95,7 @@ export async function showPr(cwd: string, number: number): Promise<'closed' | Pr
 		fetch: { args: ['origin', `pull/${number}/head`, `refs/heads/${details.baseRefName}`], diff: ['diff', '--merge-base', `origin/${details.baseRefName}`, details.headRefOid] },
 		intro: { label: 'PR', text: header },
 		keys,
+		closeKey: 'v',
 		delta: PR_DELTA,
 		accent: 'magenta',
 	});
@@ -237,25 +238,6 @@ export function prHeader(pr: PrDetails, width = 80): string {
 	]
 		.filter((line, i) => line || i > 3)
 		.join('\n');
-}
-
-/**
- * Open vim on the changed hunks, as a quickfix list (`:cn`/`:cp` to move, `:copen` to list):
- * the step's changes, or the whole thread's if the step has none. Returns false if there are none.
- */
-export async function openChanges(cwd: string, thread: Thread): Promise<boolean> {
-	const args = (await diffArgs(cwd, 'step', thread)) ?? (await diffArgs(cwd, 'thread', thread));
-	const locations = args ? await hunkLocations(cwd, args) : [];
-	if (locations.length === 0) return false;
-	const dir = mkdtempSync(join(tmpdir(), 'oo-'));
-	const file = join(dir, 'changes.qf');
-	writeFileSync(file, locations.join('\n') + '\n');
-	try {
-		await popup(`${VIM} -q ${shellQuote(file)}`, { cwd, title: ' changes — :cn/:cp next/prev  :copen list ' });
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-	return true;
 }
 
 const COMMENT = '>>';

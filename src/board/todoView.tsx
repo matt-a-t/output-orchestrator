@@ -35,7 +35,7 @@ export function TodoView({ thread, active, onClose }: Props) {
 
 	useInput(
 		(input, key) => {
-			if (input === 'q' || input === 'T' || key.escape) return onClose();
+			if (input === 'q' || input === 't' || key.escape) return onClose();
 			if (input === 'j' || key.downArrow) return scrollTo(top + 1);
 			if (input === 'k' || key.upArrow) return scrollTo(top - 1);
 			if (input === 'g') return scrollTo(0);
@@ -65,7 +65,7 @@ export function TodoView({ thread, active, onClose }: Props) {
 				<Text bold>
 					#{thread.id} {thread.title}
 				</Text>{' '}
-				<Text dimColor>(j/k scroll  g/G top/bottom  esc/q/T close, or scroll)</Text>
+				<Text dimColor>(j/k scroll  g/G top/bottom  esc/q/t close, or scroll)</Text>
 			</Text>
 			<Text dimColor>
 				todo {todoProgress(todos)}

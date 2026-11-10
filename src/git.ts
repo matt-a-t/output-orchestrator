@@ -209,30 +209,6 @@ export async function diffArgs(cwd: string, kind: DiffKind, thread: Thread): Pro
 	return quiet.exitCode === 0 ? null : args;
 }
 
-/** Quickfix entries (`file:line:text`) for the first changed line of each hunk in the diff. */
-export async function hunkLocations(cwd: string, args: string[]): Promise<string[]> {
-	const { stdout } = await git(cwd, [args[0]!, '-U0', '--no-color', '--no-ext-diff', ...args.slice(1)]);
-	const locations: string[] = [];
-	let file: string | undefined;
-	let remaining = 0; // lines left in the current hunk
-	let hunk: number | undefined; // new-side line of a hunk whose first change we haven't seen yet
-	for (const line of stdout.split('\n')) {
-		if (remaining > 0) {
-			remaining--;
-			if (hunk !== undefined && file) locations.push(`${file}:${hunk}:${line}`);
-			hunk = undefined;
-		} else if (line.startsWith('+++ ')) {
-			file = line === '+++ /dev/null' ? undefined : line.slice('+++ b/'.length);
-		} else {
-			const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
-			if (!m) continue;
-			remaining = Number(m[1] ?? 1) + Number(m[3] ?? 1);
-			hunk = Math.max(1, Number(m[2]));
-		}
-	}
-	return locations;
-}
-
 export async function commit(cwd: string, message: string): Promise<void> {
 	await execa('git', ['-C', cwd, 'commit', '-F', '-'], { input: message });
 }

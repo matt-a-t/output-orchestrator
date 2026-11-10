@@ -23,7 +23,7 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               with it and no --title, the title is the thread's. Needs the board running.
   oo thread local [id] [in|out]
                               put the thread in Local, checking its branch out in the project's own checkout,
-                              or bring it back (no direction: toggle, like t on the board). Needs the board running.
+                              or bring it back (no direction: toggle, like o on the board). Needs the board running.
   oo thread plan [id] --plan-file <path>|-
                               replace the thread's plan
   oo thread priority [id] <${PRIORITIES.join('|')}>
@@ -494,7 +494,7 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: st
 /** What a thread's claude is told as it starts in Local, which the move into it restarts claude for. Imported threads don't move. */
 function localBriefing(state: State, t: Thread): string | undefined {
 	if (!t.local || t.cwd) return;
-	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or t on the board) brings it back to its worktree.`;
+	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or o on the board) brings it back to its worktree.`;
 }
 
 /** What a thread's claude is told as it starts about the project's other open threads, so it knows who it can tell about its work. */
