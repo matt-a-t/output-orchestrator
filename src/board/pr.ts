@@ -131,7 +131,10 @@ export async function openPrFromBoard(board: Board, thread: Thread) {
 export function quizMessage(message: string, quiz: QuizOutcome | null): string {
 	if (!quiz) return message;
 	if (quiz.result === 'failed') return `⚠ Pop quiz failed (${quiz.score}) — PR not opened`;
-	if (quiz.result === 'skipped') return `${message} · ⚠ no pop quiz: claude couldn't write one`;
+	if (quiz.result === 'skipped') {
+		if (quiz.reason === 'claude') return `${message} · ⚠ no pop quiz: claude couldn't write one`;
+		return `${message} · ${quiz.reason === 'small' ? `no pop quiz: only ${quiz.lines} lines changed` : 'pop quiz skipped'}`;
+	}
 	return `${message} · pop quiz ${quiz.score}${quiz.result === 'overridden' ? ', opened anyway' : ''}`;
 }
 

@@ -3,7 +3,10 @@
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import type { Thread } from './state.js';
-import { CLOSED, type ProgressPopup } from './tmux.js';
+import { parseAnswerReply, parseResultsReply, QUIZ_FORM, score, type QuizFormInput } from './quizForm.js';
+import { CLOSED, SKIPPED, type ProgressPopup } from './tmux.js';
+
+export { score };
 
 export type ChoiceQuestion = { kind: 'choice'; question: string; choices: string[]; answer: number; why: string };
 export type TextQuestion = { kind: 'text'; question: string; answer: string };
@@ -12,7 +15,8 @@ export type Quiz = [ChoiceQuestion, ChoiceQuestion, TextQuestion];
 export type Answers = (number | null | string)[];
 export type Grade = { correct: boolean; note: string };
 
-const OVERRIDE = 'open the PR anyway?';
+/** Changes smaller than this (lines added and removed) skip the quiz. */
+export const QUIZ_MIN_LINES = 30;
 
 /** Have claude write a quiz on the thread's changes since `base`. undefined if it fails or replies with something else. */
 export async function draftQuiz(cwd: string, thread: Thread, base: string, signal?: AbortSignal): Promise<Quiz | undefined> {
@@ -72,44 +76,6 @@ export function parseQuiz(reply: string, random = Math.random): Quiz | undefined
 	return [first, second, { kind: 'text', question, answer }];
 }
 
-/** The quiz to answer in the editor: an x in one box per choice question, and the written answer under the last. */
-export function quizText(quiz: Quiz, thread: Thread): string {
-	const lines = [
-		`# Pop quiz on #${thread.id} ${thread.title}, before its PR opens.`,
-		'# Put an x in the box of one answer to each of 1 and 2, and write your answer to 3 under it.',
-		'# Lines starting "# " are ignored. Save and quit when you\'re done; q in the popup cancels the PR.',
-		'',
-	];
-	quiz.forEach((q, i) => {
-		lines.push(`${i + 1}. ${q.question}`);
-		if (q.kind === 'choice') lines.push(...q.choices.map(c => `   [ ] ${c}`));
-		lines.push('');
-	});
-	return lines.join('\n');
-}
-
-/** Read back quizText once answered. */
-export function parseAnswers(text: string, quiz: Quiz): Answers {
-	const lines = text.split('\n').filter(l => !l.startsWith('# '));
-	// Each question's lines run from its number to the next one's; the last one's to the end.
-	const starts: number[] = [];
-	for (let i = 0, from = 0; i < quiz.length; i++) {
-		const at = lines.findIndex((l, n) => n >= from && l.startsWith(`${i + 1}. `));
-		starts.push(at);
-		if (at !== -1) from = at + 1;
-	}
-	return quiz.map((q, i) => {
-		const start = starts[i]!;
-		if (start === -1) return q.kind === 'choice' ? null : '';
-		const end = starts.slice(i + 1).find(s => s !== -1) ?? lines.length;
-		const section = lines.slice(start + 1, end);
-		if (q.kind === 'text') return section.join('\n').trim();
-		const boxes = section.filter(l => /^\s*\[.?\]/.test(l));
-		const ticked = boxes.flatMap((l, n) => (/^\s*\[\s?\]/.test(l) ? [] : [n]));
-		return ticked.length === 1 ? ticked[0]! : null;
-	});
-}
-
 /** Have claude grade a written answer against the quiz's. undefined if it fails or doesn't say PASS or FAIL. */
 export async function gradeAnswer(cwd: string, question: TextQuestion, answer: string, signal?: AbortSignal): Promise<Grade | undefined> {
 	const prompt = [
@@ -138,62 +104,50 @@ export function gradeChoices(quiz: Quiz, answers: Answers): Grade[] {
 	return quiz.flatMap((q, i) => (q.kind === 'choice' ? [{ correct: answers[i] === q.answer, note: q.why }] : []));
 }
 
-export const score = (grades: Grade[]) => `${grades.filter(g => g.correct).length}/${grades.length}`;
+export type QuizOutcome =
+	| { result: 'passed' | 'overridden' | 'failed'; score: string }
+	// You skipped it, the change was too small to bother, or claude couldn't write one.
+	| { result: 'skipped'; reason: 'you' | 'claude' } | { result: 'skipped'; reason: 'small'; lines: number };
 
-/** What you got right and wrong, and (if anything's wrong) the line that opens the PR anyway. */
-export function resultsText(quiz: Quiz, answers: Answers, grades: Grade[]): string {
-	const passed = grades.every(g => g.correct);
-	const lines = [
-		`# Pop quiz: ${score(grades)}.`,
-		passed ? '# Save and quit to go on to the PR description.' : `# Change the n below to y to open the PR anyway; anything else cancels it.`,
-		'',
-		...(passed ? [] : [`${OVERRIDE} n`, '']),
-	];
-	quiz.forEach((q, i) => {
-		const grade = grades[i]!;
-		const answer = answers[i];
-		lines.push(`${i + 1}. ${grade.correct ? '✓' : '✗'} ${q.question}`);
-		if (q.kind === 'choice') {
-			lines.push(`   you: ${typeof answer === 'number' ? q.choices[answer] : '(no answer)'}`);
-			if (!grade.correct) lines.push(`   answer: ${q.choices[q.answer]}`);
-		} else {
-			lines.push(`   you: ${typeof answer === 'string' && answer ? answer.replace(/\s+/g, ' ') : '(no answer)'}`);
-			lines.push(`   answer: ${q.answer}`);
-		}
-		if (grade.note) lines.push(`   ${grade.note}`);
-		lines.push('');
-	});
-	return lines.join('\n');
+/** Lines added plus removed, from `git diff --shortstat`. */
+export function shortstatLines(stat: string): number {
+	const count = (word: string) => Number(stat.match(new RegExp(`(\\d+) ${word}`))?.[1] ?? 0);
+	return count('insertion') + count('deletion');
 }
-
-/** Whether resultsText was changed to open the PR anyway. */
-export function parseOverride(text: string): boolean {
-	const line = text.split('\n').find(l => l.startsWith(OVERRIDE));
-	return line?.slice(OVERRIDE.length).trim().toLowerCase() === 'y';
-}
-
-export type QuizOutcome = { result: 'passed' | 'overridden' | 'failed'; score: string } | { result: 'skipped' };
 
 /**
- * In `progress`, have claude write a quiz on the thread's changes since `base`, take your answers in the
- * editor, grade them and show how you did. null if cancelled; skipped if claude couldn't write one.
+ * In `progress`, have claude write a quiz on the thread's changes since `base`, take your answers in the quiz
+ * form, grade them and show how you did. null if cancelled; skipped if you skipped it, the change is under
+ * QUIZ_MIN_LINES or claude couldn't write one.
  */
 export async function popQuiz(progress: ProgressPopup, cwd: string, thread: Thread, base: string): Promise<QuizOutcome | null> {
-	const quiz = await progress.cancellable('claude is writing your pop quiz', signal => draftQuiz(cwd, thread, base, signal), { accept: false });
+	const lines = shortstatLines((await execa('git', ['-C', cwd, 'diff', '--shortstat', `${base}...HEAD`])).stdout);
+	if (lines < QUIZ_MIN_LINES) return { result: 'skipped', reason: 'small', lines };
+	const quiz = await progress.cancellable('claude is writing your pop quiz', signal => draftQuiz(cwd, thread, base, signal), { accept: false, skip: 'skip the quiz' });
 	if (quiz === CLOSED) return null;
-	if (!quiz) return { result: 'skipped' };
-	const answered = await progress.edit(quizText(quiz, thread));
+	if (quiz === SKIPPED) return { result: 'skipped', reason: 'you' };
+	if (!quiz) return { result: 'skipped', reason: 'claude' };
+	const title = `#${thread.id} ${thread.title}`;
+	const form = (input: QuizFormInput) => progress.edit(JSON.stringify(input), QUIZ_FORM);
+	const answered = await form({ mode: 'answer', title, quiz });
 	if (answered === CLOSED) return null;
-	const answers = parseAnswers(answered, quiz);
-	const written = answers[2] as string;
+	const reply = parseAnswerReply(answered, quiz);
+	if (reply === 'skipped') return { result: 'skipped', reason: 'you' };
+	if (!reply) return null;
+	const { answers } = reply;
+	const written = (answers[2] as string).trim();
 	const graded = written
 		? await progress.cancellable('claude is grading your answer', signal => gradeAnswer(cwd, quiz[2], written, signal), { accept: false })
 		: { correct: false, note: '' };
 	if (graded === CLOSED) return null;
 	// Not held against you when claude can't grade it.
 	const grades = [...gradeChoices(quiz, answers), graded ?? { correct: true, note: "claude couldn't grade this one; check it against the answer." }];
-	const results = await progress.edit(resultsText(quiz, answers, grades));
+	const results = await form({ mode: 'results', title, quiz, answers, grades });
 	if (results === CLOSED) return null;
-	const result = grades.every(g => g.correct) ? 'passed' : parseOverride(results) ? 'overridden' : 'failed';
+	const passed = grades.every(g => g.correct);
+	const open = parseResultsReply(results);
+	// Cancelling a quiz you passed cancels the PR, as q does anywhere else in the popup.
+	if (passed && !open) return null;
+	const result = passed ? 'passed' : open ? 'overridden' : 'failed';
 	return { result, score: score(grades) };
 }

@@ -89,17 +89,20 @@ The mouse wheel scrolls too.
 
 ## In a form
 
-The new thread (`n`), thread (`e`), project (`P`) and commit forms. Text fields are only typed into
+The new thread (`n`), thread (`e`), project (`P`), commit and pop quiz forms. Text fields are only typed into
 once you start editing one, vim-style, so letters are keys until then.
 
 | Key | |
 |---|---|
 | `j`/`k` `↑`/`↓` `tab` | move between fields (`shift-tab` back too) |
 | `h`/`l` `←`/`→` `space` | on a choice field: change it (project, colour, priority, …; `space` goes forward). On the new thread's ticket: pick one of your recent tickets |
+| `1`–`4` | in the pop quiz: pick that choice |
+| `s` | in the pop quiz: skip it (also while claude is writing it) |
+| `y` / `n` | on the pop quiz results, when you got any wrong: open the PR anyway / don't |
 | `i` / `I` | edit a text field, cursor at the end / at the start |
 | `dd` | clear it and edit |
 | `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). On the thread's plan: open `$EDITOR` |
-| `a` / `shift-⏎` | submit: create the thread (starting its claude on the initial prompt if there is one), save, or commit. `a` only while not editing; `shift-⏎` from any field, editing or not, where the terminal sends it apart from `⏎` (inside tmux it usually doesn't without extended-keys, so use `a`) |
+| `a` / `shift-⏎` | submit: create the thread (starting its claude on the initial prompt if there is one), save, commit or hand in the quiz. `a` only while not editing; `shift-⏎` from any field, editing or not, where the terminal sends it apart from `⏎` (inside tmux it usually doesn't without extended-keys, so use `a`) |
 | `q` / `esc` | cancel the form. While editing, `esc` stops editing, keeping the text, and `q` is just typed |
 | `←`/`→` `ctrl-a`/`ctrl-e` | while editing: move the cursor / to the start or end |
 | `ctrl-u` / `ctrl-w` | while editing: delete back to the start / back over a word |

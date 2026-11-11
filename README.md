@@ -281,10 +281,12 @@ from the thread's commits and diff (with the ticket added, see [Tickets](#ticket
 cancels). Press `a` while claude is still writing to open the PR with what it writes, skipping vim.
 Before that, the board gives you a pop quiz on the thread's changes, to check you read what you
 approved: claude writes two multiple-choice questions and one to answer in a sentence or two, about
-what the change does rather than what its files are called. In vim, put an `x` in one box for each of the first two and
-write your answer under the third, then save. claude grades the written answer. If you get any wrong,
-the results show the right answers and the PR isn't opened unless you change `open the PR anyway? n` to
-`y`. `q` while claude is writing or grading cancels the whole move. Only opening a new PR from the
+what the change does rather than what its files are called. You answer in a form: `1`–`4` (or `h`/`l`)
+picks a choice, `j`/`k` moves between questions, `⏎` or `i` edits the written answer and `a` hands it in.
+claude grades the written answer. If you get any wrong, the results show the right answers and the PR
+isn't opened unless you press `y` to open it anyway. `s` skips the quiz, while claude is writing it or in
+the form, and a change of under 30 lines (added plus removed) skips it on its own. `q` while claude is
+writing or grading, or in the form, cancels the whole move. Only opening a new PR from the
 board quizzes you: a thread whose PR is already open just pushes, and `oo thread pr` skips it.
 A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board

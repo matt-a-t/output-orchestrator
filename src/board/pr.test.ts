@@ -254,5 +254,7 @@ test('quizMessage says how the pop quiz went, and that a failed one stopped the 
 	assert.equal(quizMessage(opened, { result: 'passed', score: '3/3' }), `${opened} · pop quiz 3/3`);
 	assert.equal(quizMessage(opened, { result: 'overridden', score: '1/3' }), `${opened} · pop quiz 1/3, opened anyway`);
 	assert.equal(quizMessage('Cancelled', { result: 'failed', score: '1/3' }), '⚠ Pop quiz failed (1/3) — PR not opened');
-	assert.equal(quizMessage(opened, { result: 'skipped' }), `${opened} · ⚠ no pop quiz: claude couldn't write one`);
+	assert.equal(quizMessage(opened, { result: 'skipped', reason: 'claude' }), `${opened} · ⚠ no pop quiz: claude couldn't write one`);
+	assert.equal(quizMessage(opened, { result: 'skipped', reason: 'small', lines: 12 }), `${opened} · no pop quiz: only 12 lines changed`);
+	assert.equal(quizMessage(opened, { result: 'skipped', reason: 'you' }), `${opened} · pop quiz skipped`);
 });
