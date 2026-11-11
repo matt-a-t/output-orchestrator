@@ -3,7 +3,7 @@ import { Box, Text, useInput, useWindowSize } from 'ink';
 import { editPlan } from './editor.js';
 import { errorMessage, messageColor } from './errors.js';
 import { hasWorktree, renameBranch, worktreePath } from './git.js';
-import { FieldText, EDITING_HELP, FIELD_HELP, formHelp, SubmitRow, submitHelp } from './fieldText.js';
+import { FieldText, EDITING_HELP, FIELD_HELP, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { COLORS, COLUMN_LABELS, LOCAL_LABEL, PRIORITIES, PRIORITY_COLORS, type Priority, type State, type Thread } from './state.js';
 import { priorityOf, withPriority } from './threads.js';
@@ -26,9 +26,6 @@ type Props = {
 };
 
 const LABEL_WIDTH = 13;
-// The [ Save ] row after the fields, and how many rows j/k go through.
-const SUBMIT = FIELDS.length;
-const ROWS = FIELDS.length + 1;
 
 /** Full-screen form for one thread: edits what's safe to change by hand and shows the rest. */
 export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
@@ -83,8 +80,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 	useInput((input, key) => {
 		if (editing || saving || !thread || !draft) return;
 		setMessage('');
-		// undefined on the submit row.
-		const name = FIELDS[field];
+		const name = FIELDS[field]!;
 		if (name === 'title' || name === 'ticket' || name === 'base') {
 			const next = fieldKey(draft[name], edit, input, key);
 			if (next) {
@@ -94,9 +90,9 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		}
 		setEdit(null);
 		if (isBack(input, key, edit)) return onClose('Cancelled');
-		if (isSubmit(key) || (key.return && field === SUBMIT)) return save(thread, draft);
+		if (isSubmit(input, key, edit)) return save(thread, draft);
 		const move = fieldStep(input, key);
-		if (move) return setField(loop(field, move, ROWS));
+		if (move) return setField(loop(field, move, FIELDS.length));
 		const delta = choiceStep(input, key);
 		if (name === 'plan') {
 			if (!key.return && delta !== 1) return;
@@ -108,8 +104,8 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			return;
 		}
 		if (key.return) {
-			const next = nextField(field, ROWS, i => {
-				const f = FIELDS[i];
+			const next = nextField(field, FIELDS.length, i => {
+				const f = FIELDS[i]!;
 				return f === 'title' || f === 'ticket' || f === 'base' ? draft[f].length : undefined;
 			});
 			setField(next.field);
@@ -159,7 +155,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 	].filter(([, v]) => v) as [string, string][];
 	// What fits between the fields and the info below: the rest of the window, less the board's title bar,
 	// the #id header, the fields, the info and its margin, and the message and help lines.
-	const planRoom = Math.max(1, rows - (1 + 1 + ROWS + 1 + info.length + 2));
+	const planRoom = Math.max(1, rows - (1 + 1 + FIELDS.length + 1 + info.length + 2));
 	// A plan too long for that ends with how much is left, for $EDITOR.
 	const shownPlan = planLines.length > planRoom ? planLines.slice(0, planRoom - 1) : planLines;
 	const hiddenPlan = planLines.length - shownPlan.length;
@@ -194,7 +190,6 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 					{' '.repeat(LABEL_WIDTH)}… {hiddenPlan} more lines — ⏎ on plan opens $EDITOR
 				</Text>
 			) : null}
-			<SubmitRow label="Save" active={field === SUBMIT} indent={LABEL_WIDTH} />
 			<Box flexDirection="column" marginTop={1}>
 				{info.map(([label, v]) => (
 					<Text key={label} wrap="truncate" dimColor>
@@ -209,9 +204,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 			<Text dimColor>
 				{typeof edit === 'number'
 					? EDITING_HELP
-					: field === SUBMIT
-						? submitHelp('save')
-						: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' || FIELDS[field] === 'priority' ? 'h/l change' : FIELDS[field] === 'plan' ? '⏎/l opens $EDITOR' : FIELD_HELP}  ${formHelp('save')}`}
+					: `${FIELDS[field] === 'project' || FIELDS[field] === 'color' || FIELDS[field] === 'priority' ? 'h/l change' : FIELDS[field] === 'plan' ? '⏎/l opens $EDITOR' : FIELD_HELP}  ${formHelp('save')}`}
 			</Text>
 		</Box>
 	);

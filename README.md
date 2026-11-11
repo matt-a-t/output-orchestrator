@@ -41,7 +41,7 @@ oo                               # open the board
 
 On the board, `n` opens the new thread form: a project, a ticket if the project has a tracker, a
 title, an initial prompt and a priority (normal unless you change it). Its fields are edited vim-style: `i` to type into one, ⏎ on to the
-next, ⏎ on **[ Create ]** after the last field to create it (or shift-⏎ from any field, where the terminal sends it) and `q` or esc to cancel. The thread starts in Planned, and `e` adds a plan if you want one.
+next, `a` to create it (or shift-⏎ from any field, where the terminal sends it) and `q` or esc to cancel. The thread starts in Planned, and `e` adds a plan if you want one.
 With an initial prompt, its claude starts straight away in the background, in plan mode, on that
 prompt; without one, Enter opens its claude when you're ready. `Ctrl-b b` (or `Alt-q` in a thread's window) brings you back to the
 board. `?` on the board lists every key, and so does [KEYS.md](KEYS.md).

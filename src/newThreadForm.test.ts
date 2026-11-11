@@ -31,11 +31,9 @@ test('j/k, tab and ↑/↓ move through the fields, skipping the ticket without 
 	const web = newThreadForm('web');
 	assert.equal(press(web, ['', { tab: true }]).field, 'ticket');
 	assert.equal(press(web, ['j']).field, 'ticket');
-	// Up from the top is the [ Create ] row, after the priority.
-	assert.equal(press(web, ['', { upArrow: true }]).field, 'submit');
-	assert.equal(press(web, ['k']).field, 'submit');
-	assert.equal(press(web, ['', { tab: true, shift: true }]).field, 'submit');
-	assert.equal(press(web, ['k'], ['k']).field, 'priority');
+	assert.equal(press(web, ['', { upArrow: true }]).field, 'priority');
+	assert.equal(press(web, ['k']).field, 'priority');
+	assert.equal(press(web, ['', { tab: true, shift: true }]).field, 'priority');
 	assert.equal(press(newThreadForm('notes'), ['', { downArrow: true }]).field, 'title');
 });
 
@@ -50,18 +48,16 @@ test('text is only typed once a field is being edited: i at the end, I at the st
 	assert.equal(press(title, ['i'], ['', { escape: true }]).edit, null);
 });
 
-test('⏎ saves the field and edits the next one, then lands on [ Create ]', () => {
+test('⏎ saves the field and edits the next one, stopping on the last', () => {
 	let form = press(newThreadForm('web'), ['', { return: true }]);
 	assert.deepEqual([form.field, form.edit], ['ticket', 0]);
 	form = press(form, ['7'], ['', { return: true }], ['Fix'], ['', { return: true }], ['go']);
 	assert.deepEqual([form.ticketKey, form.title, form.prompt, form.field, form.edit], ['7', 'Fix', 'go', 'prompt', 2]);
-	// The priority is a choice, so ⏎ lands on it without editing, then on the submit row.
+	// The priority is a choice, so ⏎ lands on it without editing, and stays there.
 	form = press(form, ['', { return: true }]);
 	assert.deepEqual([form.field, form.edit], ['priority', null]);
-	form = press(form, ['', { return: true }]);
-	assert.deepEqual([form.field, form.edit], ['submit', null]);
-	// h/l and the text keys do nothing there.
-	assert.deepEqual(press(form, ['l'], ['i'], ['x']), form);
+	const again = press(form, ['', { return: true }]);
+	assert.deepEqual([again.field, again.edit], ['priority', null]);
 	// Not editing, ⏎ on a text field edits it.
 	assert.equal(press({ ...form, field: 'prompt' }, ['', { return: true }]).edit, 2);
 });
@@ -106,9 +102,8 @@ test('typing a ticket key forgets the picked one', () => {
 	assert.deepEqual([typed.ticketKey, typed.ticket], ['AV-13', -1]);
 });
 
-test('⏎ on [ Create ] and shift-⏎ submit with the key normalized and the picked ticket, or say what is missing', () => {
-	const submit = (form: Partial<NewThreadForm>, project = 'web') =>
-		newThreadKey({ ...newThreadForm(project), field: 'submit', ...form }, '', key({ return: true }), ctx);
+test('a and shift-⏎ submit with the key normalized and the picked ticket, or say what is missing', () => {
+	const submit = (form: Partial<NewThreadForm>, project = 'web') => newThreadKey({ ...newThreadForm(project), ...form }, 'a', key(), ctx);
 	assert.deepEqual(submit({ ticketKey: '2', title: 'Add export', prompt: ' go ' }), {
 		done: { project: 'web', ticketKey: 'AV-2', ticket: tickets[1], title: 'Add export', prompt: 'go', priority: 'normal' },
 	});
@@ -121,11 +116,11 @@ test('⏎ on [ Create ] and shift-⏎ submit with the key normalized and the pic
 		done: { project: 'notes', ticketKey: undefined, ticket: undefined, title: 'Notes', prompt: '', priority: 'normal' },
 	});
 	const editing = { ...newThreadForm('notes'), field: 'title' as const, title: 'Notes', edit: 5 };
-	// a isn't a submit key any more.
-	assert.deepEqual(newThreadKey({ ...editing, edit: null }, 'a', key(), ctx), { ...editing, edit: null });
 	assert.deepEqual(newThreadKey(editing, '', key({ return: true, shift: true }), ctx), {
 		done: { project: 'notes', ticketKey: undefined, ticket: undefined, title: 'Notes', prompt: '', priority: 'normal' },
 	});
+	// While editing, a is just typed.
+	assert.equal((newThreadKey(editing, 'a', key(), ctx) as NewThreadForm).title, 'Notesa');
 });
 
 test('q and esc cancel, once nothing is being edited', () => {

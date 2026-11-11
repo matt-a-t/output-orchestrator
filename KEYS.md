@@ -99,9 +99,8 @@ once you start editing one, vim-style, so letters are keys until then.
 | `h`/`l` `←`/`→` `space` | on a choice field: change it (project, colour, priority, …; `space` goes forward). On the new thread's ticket: pick one of your recent tickets |
 | `i` / `I` | edit a text field, cursor at the end / at the start |
 | `dd` | clear it and edit |
-| `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (after the last field, onto the submit row). On the thread's plan: open `$EDITOR` |
-| `⏎` on the submit row | submit: the **[ Create ]** / **[ Save ]** / **[ Commit ]** row after the last field creates the thread (starting its claude on the initial prompt if there is one), saves, or commits |
-| `shift-⏎` | submit from any field, editing or not, where the terminal sends it apart from `⏎` (inside tmux it usually doesn't, so use the submit row) |
+| `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). On the thread's plan: open `$EDITOR` |
+| `a` / `shift-⏎` | submit: create the thread (starting its claude on the initial prompt if there is one), save, or commit. `a` only while not editing; `shift-⏎` from any field, editing or not, where the terminal sends it apart from `⏎` (inside tmux it usually doesn't without extended-keys, so use `a`) |
 | `q` / `esc` | cancel the form. While editing, `esc` stops editing, keeping the text, and `q` is just typed |
 | `←`/`→` `ctrl-a`/`ctrl-e` | while editing: move the cursor / to the start or end |
 | `ctrl-u` / `ctrl-w` | while editing: delete back to the start / back over a word |
