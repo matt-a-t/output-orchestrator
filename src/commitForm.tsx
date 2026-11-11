@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { useState } from 'react';
 import { Box, render, Text, useApp, useInput, type Key } from 'ink';
-import { EDITING_HELP, FIELD_HELP, FieldText, formHelp, SubmitRow, submitHelp } from './fieldText.js';
-import { fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
+import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
+import { fieldKey, fieldStep, isBack, isSubmit, nextField, type Edit } from './input.js';
 import { OO_COMMAND } from './status.js';
 
 /**
@@ -29,30 +29,24 @@ export function parseCommitForm(text: string): CommitForm | null {
 	}
 }
 
-/** `field` 2 is the [ Commit ] row. `edit` is the focused field's (see fieldKey). */
-export type FormState = { values: [string, string]; field: 0 | 1 | 2; edit: Edit };
-
-const SUBMIT = 2;
+/** `edit` is the focused field's (see fieldKey). */
+export type FormState = { values: [string, string]; field: 0 | 1; edit: Edit };
 
 /** Apply a keypress to the form: the new state, or what it ends with (null if cancelled). */
 export function formKey(state: FormState, input: string, key: Key): FormState | { done: CommitForm | null } {
-	const { field: at } = state;
-	if (at !== SUBMIT) {
-		const next = fieldKey(state.values[at], state.edit, input, key);
-		if (next) {
-			const values: [string, string] = [...state.values];
-			values[at] = next.value;
-			return { ...state, values, edit: next.edit };
-		}
+	const next = fieldKey(state.values[state.field], state.edit, input, key);
+	if (next) {
+		const values: [string, string] = [...state.values];
+		values[state.field] = next.value;
+		return { ...state, values, edit: next.edit };
 	}
 	if (isBack(input, key, state.edit)) return { done: null };
-	if (isSubmit(key) || (key.return && at === SUBMIT)) return { done: { message: state.values[0], notes: state.values[1] } };
+	if (isSubmit(input, key, state.edit)) return { done: { message: state.values[0], notes: state.values[1] } };
 	if (key.return) {
-		const { field, edit } = nextField(at, SUBMIT + 1, i => state.values[i]?.length);
-		return { ...state, field: field as FormState['field'], edit };
+		const { field, edit } = nextField(state.field, 2, i => state.values[i]!.length);
+		return { ...state, field: field as 0 | 1, edit };
 	}
-	const step = fieldStep(input, key);
-	if (step) return { ...state, field: loop(at, step, SUBMIT + 1) as FormState['field'], edit: null };
+	if (fieldStep(input, key)) return { ...state, field: state.field === 0 ? 1 : 0, edit: null };
 	return { ...state, edit: null };
 }
 
@@ -78,11 +72,10 @@ function Form({ initial, note, onDone }: { initial: string; note?: string; onDon
 					<FieldText value={state.values[i]!} edit={i === state.field ? state.edit : null} />
 				</Text>
 			))}
-			<SubmitRow label="Commit" active={state.field === SUBMIT} indent={LABEL_WIDTH - 2} />
 			{note ? <Text color="yellow">{note}</Text> : null}
 			<Box flexGrow={1} />
 			<Text dimColor>
-				{typeof state.edit === 'number' ? EDITING_HELP : state.field === SUBMIT ? submitHelp('commit') : `${FIELD_HELP}  ${formHelp('commit')}`}
+				{typeof state.edit === 'number' ? EDITING_HELP : `${FIELD_HELP}  ${formHelp('commit')}`}
 			</Text>
 		</Box>
 	);

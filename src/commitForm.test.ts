@@ -18,21 +18,15 @@ test('a field is typed into after i, and tab, ↑, ↓, j and k switch fields', 
 	assert.deepEqual(formKey(formKey(switched, 'i', key()) as FormState, 'x', key()), { values: ['Fix', 'x'], field: 1, edit: 1 });
 	assert.equal((formKey(switched, 'k', key()) as FormState).field, 0);
 	assert.equal((formKey(start, '', key({ downArrow: true })) as FormState).field, 1);
-	// Through the [ Commit ] row and round to the top.
-	assert.equal((formKey(switched, 'j', key()) as FormState).field, 2);
-	assert.equal((formKey({ ...start, field: 2 }, 'j', key()) as FormState).field, 0);
-	assert.equal((formKey(start, 'k', key()) as FormState).field, 2);
 });
 
-test('⏎ edits the field, then goes on to editing the notes and the [ Commit ] row, which ⏎ or shift-⏎ submit', () => {
+test('⏎ edits the field, then goes on to editing the notes, and a or shift-⏎ submits both', () => {
 	const done = { done: { message: 'Fix', notes: 'also b' } };
 	const values: FormState['values'] = ['Fix', 'also b'];
 	assert.deepEqual(formKey({ values, field: 0, edit: null }, '', key({ return: true })), { values, field: 0, edit: 3 });
 	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, '', key({ return: true })), { values, field: 1, edit: 6 });
-	assert.deepEqual(formKey({ values, field: 1, edit: 6 }, '', key({ return: true })), { values, field: 2, edit: null });
-	assert.deepEqual(formKey({ values, field: 2, edit: null }, '', key({ return: true })), done);
-	// a doesn't submit any more.
-	assert.deepEqual(formKey({ values, field: 1, edit: null }, 'a', key()), { values, field: 1, edit: null });
+	assert.deepEqual(formKey({ values, field: 1, edit: 6 }, '', key({ return: true })), { values, field: 1, edit: null });
+	assert.deepEqual(formKey({ values, field: 1, edit: null }, 'a', key()), done);
 	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, '', key({ return: true, shift: true })), done);
 	// Typed while editing, a is just a letter.
 	assert.deepEqual(formKey({ values, field: 0, edit: 3 }, 'a', key()), { values: ['Fixa', 'also b'], field: 0, edit: 4 });

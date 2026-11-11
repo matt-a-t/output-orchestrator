@@ -19,17 +19,4 @@ export const EDITING_HELP = '←/→ move  ctrl-u/ctrl-w delete  ⏎ next  esc d
 /** The text field keys for a form's help line when it isn't being edited. */
 export const FIELD_HELP = 'i/⏎ edit  I edit from start  dd clear';
 /** The end of a form's help line when nothing is being edited: moving, submitting (`verb`, e.g. save) and closing. */
-export const formHelp = (verb: string) => `j/k field  shift-⏎ ${verb}  q/esc cancel`;
-/** The help line on a form's submit row. */
-export const submitHelp = (verb: string) => `⏎ ${verb}  j/k field  q/esc cancel`;
-
-/** The row after a form's last field that ⏎ submits from, e.g. [ Save ]; `indent` lines it up under the values. */
-export function SubmitRow({ label, active, indent }: { label: string; active: boolean; indent: number }) {
-	return (
-		<Text>
-			{active ? '› ' : '  '}
-			{' '.repeat(indent)}
-			<Text inverse={active} dimColor={!active} bold={active}>{`[ ${label} ]`}</Text>
-		</Text>
-	);
-}
+export const formHelp = (verb: string) => `j/k field  a ${verb}  q/esc cancel`;
