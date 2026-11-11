@@ -143,9 +143,6 @@ async function prDiff(cwd: string, number: number): Promise<string> {
 	return content;
 }
 
-/** Bitbucket's merge strategies, in the order GitHub's are tried (merge commit, squash, rebase). */
-const STRATEGIES = ['merge_commit', 'squash', 'fast_forward'] as const;
-
 const noReviews = (): never => {
 	throw new Error('reviewing Bitbucket PRs is done in its web UI (b opens the PR)');
 };
@@ -187,22 +184,10 @@ export const bitbucket: PrHost = {
 	viewerLogin: noReviews,
 	submitReview: noReviews,
 
-	/**
-	 * Merge with the first strategy the repo allows, waiting for Bitbucket to finish. A strategy the repo
-	 * doesn't allow is refused, so on to the next; any other failure (conflicts, missing approvals) is final.
-	 */
+	/** Merge with a merge commit, waiting for Bitbucket to finish. A failure (conflicts, approvals, the repo not allowing merge commits) is Bitbucket's to explain. */
 	async mergePr(cwd: string, number: number) {
-		let refused: unknown;
-		for (const strategy of STRATEGIES) {
-			try {
-				await twg(cwd, ['pull-requests', 'merge', '--pull-request', String(number), '--merge-strategy', strategy, '--wait']);
-				return strategy.replace('_', ' ');
-			} catch (err) {
-				if (!/strateg/i.test(String(err))) throw err;
-				refused = err;
-			}
-		}
-		throw refused;
+		await twg(cwd, ['pull-requests', 'merge', '--pull-request', String(number), '--merge-strategy', 'merge_commit', '--wait']);
+		return 'merge commit';
 	},
 
 	headRef: pr => `refs/heads/${pr.headRefName}`,

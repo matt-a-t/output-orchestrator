@@ -127,19 +127,16 @@ test('status comes from the PR and its mergeability checks', async t => {
 	assert.deepEqual(await bitbucket.prStatus('.', { number: 49, url: '' }), { state: 'OPEN', mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' });
 });
 
-test("merging moves on from a strategy the repo doesn't allow, but not from other failures", async t => {
-	const refused = { stdout: JSON.stringify({ ok: false, error: { code: 'BAD_REQUEST', summary: 'Merge strategy merge_commit is not allowed' } }), exitCode: 1 };
+test('merging makes a merge commit, and a failure is final', async t => {
 	const twg = fakeCommand(t, 'twg', {
-		'bitbucket pull-requests merge --pull-request 49 --merge-strategy merge_commit': refused,
-		'bitbucket pull-requests merge --pull-request 49 --merge-strategy squash': { stdout: JSON.stringify({ ...PR, state: 'MERGED' }) },
+		[`bitbucket pull-requests merge --pull-request 49 --merge-strategy merge_commit --wait ${ARGS}`]: { stdout: JSON.stringify({ ...PR, state: 'MERGED' }) },
 	});
-	assert.equal(await bitbucket.mergePr('.', 49), 'squash');
-	assert.equal(twg.calls().length, 2);
+	assert.equal(await bitbucket.mergePr('.', 49), 'merge commit');
 	twg.answer({
-		'bitbucket pull-requests merge': { stdout: JSON.stringify({ ok: false, error: { summary: 'The pull request has conflicts' } }), exitCode: 1 },
+		'bitbucket pull-requests merge': { stdout: JSON.stringify({ ok: false, error: { summary: 'Merge strategy merge_commit is not allowed' } }), exitCode: 1 },
 	});
-	await assert.rejects(bitbucket.mergePr('.', 49), { message: 'Bitbucket: The pull request has conflicts' });
-	assert.equal(twg.calls().length, 3);
+	await assert.rejects(bitbucket.mergePr('.', 49), { message: 'Bitbucket: Merge strategy merge_commit is not allowed' });
+	assert.equal(twg.calls().length, 2);
 });
 
 test("reviewing isn't offered for Bitbucket", () => {
