@@ -3,7 +3,7 @@ import { relative, resolve, isAbsolute } from 'node:path';
 import { killRunSessions, runPrefix } from './commands.js';
 import { unknownProject } from './errors.js';
 import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
-import { prState, retargetPr } from './github.js';
+import { prHost, prState, retargetPr } from './prHost.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
 import { COLUMN_LABELS, hidden, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
@@ -244,7 +244,7 @@ export async function unstackChildren(project: Project, store: Store, parent: Th
 			? ''
 			: retargeted
 				? ` Its PR now goes into ${base}.`
-				: ` Its PR still goes into ${parent.branch}; the user can point it at ${base} (gh pr edit ${child.pr.number} --base ${base}).`;
+				: ` Its PR still goes into ${parent.branch}; the user can point it at ${base} (${(await prHost(project.path)).retargetCommand(child.pr, base)}).`;
 		const commits = merged
 			? `Its branch still has #${parent.id}'s commits under its own until the user presses u on the board, which moves only this thread's own commits onto origin/${base}.`
 			: `#${parent.id}'s commits on its branch are now part of this thread's work; u on the board rebases them all onto origin/${base}.`;

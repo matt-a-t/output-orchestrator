@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Box, Text } from 'ink';
 import { messageColor } from '../errors.js';
-import { mergeLabel, type PrStatus } from '../github.js';
+import { mergeLabel, type PrStatus } from '../prHost.js';
 import type { Thread } from '../state.js';
 import { LEGEND } from './card.js';
 import { TodoList } from './todoList.js';

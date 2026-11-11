@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checksLabel, withTicket } from './github.js';
+import { checksLabel, hostOf, withTicket } from './prHost.js';
+
+test('the host comes from the remote, in any of its forms', () => {
+	assert.equal(hostOf('https://mattarmstrong1@bitbucket.org/solutiontree/behaviorsolutions.git'), 'Bitbucket');
+	assert.equal(hostOf('https://bitbucket.org/solutiontree/behaviorsolutions'), 'Bitbucket');
+	assert.equal(hostOf('git@bitbucket.org:solutiontree/behaviorsolutions.git'), 'Bitbucket');
+	assert.equal(hostOf('ssh://git@bitbucket.org/solutiontree/behaviorsolutions.git'), 'Bitbucket');
+	assert.equal(hostOf('https://github.com/matt-a-t/output-orchestrator.git'), 'GitHub');
+	assert.equal(hostOf('git@github.com:solution-tree/avanti.git'), 'GitHub');
+	// Only the host counts, not a repo that happens to be named after it.
+	assert.equal(hostOf('https://github.com/someone/bitbucket.org-mirror'), 'GitHub');
+	assert.equal(hostOf(''), 'GitHub');
+});
 
 const jira = { key: 'AV-123', url: 'https://example.atlassian.net/browse/AV-123' };
 const github = { key: '#45', url: 'https://github.com/o/r/issues/45' };

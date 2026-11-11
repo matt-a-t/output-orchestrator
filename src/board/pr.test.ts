@@ -5,7 +5,7 @@ import { test, type TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { execa } from 'execa';
 import { currentRef } from '../git.js';
-import type { PrStatus } from '../github.js';
+import type { PrStatus } from '../prHost.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
 import { fakeBoard, fakeGh, fakeTmux, fixture, git, gitFixture, type FakeAnswer } from '../testHelpers.js';

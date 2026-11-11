@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Box, Text, measureElement, useWindowSize, type DOMElement } from 'ink';
-import type { PrStatus } from '../github.js';
+import type { PrStatus } from '../prHost.js';
 import { mouse, type MouseEvent } from '../mouse.js';
 import { COLUMN_LABELS, type Column, type Thread } from '../state.js';
 import { threadWindowName } from '../tmux.js';
