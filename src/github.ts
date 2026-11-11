@@ -1,7 +1,7 @@
 // PRs on GitHub, through gh. What isn't particular to GitHub is in prHost.ts.
 
 import { execa } from 'execa';
-import type { Pr, PrDetails, PrHost, PrStatus, ReviewComment, ReviewEvent, ReviewRequest } from './prHost.js';
+import type { Pr, PrDetails, PrHost, PrStatus, ReviewComment, ReviewEvent } from './prHost.js';
 import { parseUntrusted } from './sanitize.js';
 import type { Thread } from './state.js';
 
@@ -61,16 +61,6 @@ export function viewerLogin(cwd: string): Promise<string> {
 	return login;
 }
 
-/** Open PRs in the repo that ask you (or a team you're on) for a review, most recently updated first. */
-export async function reviewRequests(cwd: string): Promise<ReviewRequest[]> {
-	const { stdout } = await execa(
-		'gh',
-		['pr', 'list', '--search', 'review-requested:@me sort:updated-desc', '--json', 'number,title,url,author,updatedAt,isDraft'],
-		{ cwd },
-	);
-	return parseUntrusted<ReviewRequest[]>(stdout);
-}
-
 const API_EVENTS: Record<ReviewEvent, string> = { approve: 'APPROVE', 'request-changes': 'REQUEST_CHANGES', comment: 'COMMENT' };
 
 /**
@@ -112,7 +102,6 @@ export const github: PrHost = {
 	prDetails,
 	prDiff,
 	viewerLogin,
-	reviewRequests,
 	submitReview,
 	mergePr,
 	headRef: pr => `pull/${pr.number}/head`,

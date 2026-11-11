@@ -97,7 +97,7 @@ const REQUIRED = [
 	['claude', 'https://docs.anthropic.com/en/docs/claude-code'],
 ] as const;
 const OPTIONAL = [
-	['gh', 'moving a thread to PR', 'https://cli.github.com'],
+	['gh', 'moving a thread to PR on GitHub', 'https://cli.github.com'],
 	['delta', 'reviewing diffs (d, D, v)', 'https://github.com/dandavison/delta'],
 	['vim', 'commenting on diffs (o, c)', 'https://www.vim.org'],
 ] as const;

@@ -47,10 +47,7 @@ export const KEY_SECTIONS: KeySection[] = [
 	},
 	{
 		title: 'Reviewing',
-		keys: [
-			...bindingRows('Reviewing'),
-			['R', 'PRs waiting for your review (⏎/v view, b browser, r refresh)'],
-		],
+		keys: bindingRows('Reviewing'),
 	},
 	{
 		title: 'In a diff',

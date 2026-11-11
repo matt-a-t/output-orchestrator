@@ -64,15 +64,17 @@ export async function showDiff(cwd: string, kind: DiffKind, thread: Thread): Pro
 export type PrAction = { action: 'merge' } | { action: 'review'; event: ReviewEvent; body: string; comments: ReviewComment[] };
 
 /**
- * Show a PR as GitHub has it: its title, state, checks, reviews and description, then its diff, with
+ * Show a PR as its host has it: its title, state, checks, reviews and description, then its diff, with
  * n/N jumping between files and hunks like `showDiff`. `b` opens it in the browser and `S` sets up
  * delta's styles. Your own PR can be merged with `m`; someone else's approved (`a`), sent back with
  * changes requested (`x`) or commented on (`c`), the last two written in vim (see `writeReview`).
+ * Where the host's PRs are reviewed on its site instead (Bitbucket), any PR can be merged and none reviewed.
  */
 export async function showPr(cwd: string, number: number): Promise<'closed' | PrAction> {
 	const host = await prHost(cwd);
-	const [details, diff, me] = await Promise.all([host.prDetails(cwd, number), host.prDiff(cwd, number), host.viewerLogin(cwd)]);
-	const own = details.author.login === me;
+	const [details, diff, me] = await Promise.all([host.prDetails(cwd, number), host.prDiff(cwd, number), host.canReview ? host.viewerLogin(cwd) : undefined]);
+	// Without reviews here, every PR gets your own's keys: merge, and the host decides whether you may.
+	const own = !host.canReview || details.author.login === me;
 	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
 	const patch = join(dir, 'pr.diff');
 	writeFileSync(patch, diff ? diff + '\n' : '');

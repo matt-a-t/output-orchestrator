@@ -185,7 +185,6 @@ export const bitbucket: PrHost = {
 	prDiff,
 
 	viewerLogin: noReviews,
-	reviewRequests: noReviews,
 	submitReview: noReviews,
 
 	/**

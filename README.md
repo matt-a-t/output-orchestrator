@@ -17,7 +17,8 @@ Works on macOS, Linux and WSL.
 | [tmux](https://github.com/tmux/tmux/wiki/Installing) | 3.2+ | the board and every thread's window | `brew install tmux` / `apt install tmux` |
 | git | any recent | worktrees and branches | usually already there |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | | the threads themselves | `npm i -g @anthropic-ai/claude-code` |
-| [GitHub CLI](https://cli.github.com) | | opening PRs and noticing when they merge; run `gh auth login` once | `brew install gh` / [cli.github.com](https://github.com/cli/cli#installation) |
+| [GitHub CLI](https://cli.github.com) | | opening PRs on GitHub and noticing when they merge; run `gh auth login` once | `brew install gh` / [cli.github.com](https://github.com/cli/cli#installation) |
+| [twg](https://developer.atlassian.com/cloud/twg-cli/) | | the same for repos on bitbucket.org; run `twg setup bitbucket` once | [installation](https://developer.atlassian.com/cloud/twg-cli/getting-started/installation/) |
 | [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `v`) | `brew install git-delta` / `apt install git-delta` |
 | vim | | commenting on diffs (`c`) | usually already there |
 
@@ -201,7 +202,7 @@ thread on another's branch from the outset, use `oo thread add <title> --from <i
 blocker at most, and taking that one off puts its base back on the default branch.
 
 When the thread it builds on merges (or is moved to Done), the thread goes back onto the default branch: its
-base, and its PR if it has one (`gh pr edit --base`), and its claude is told. Its branch still has the other
+base, and its PR if it has one (`gh pr edit --base`, or twg on Bitbucket), and its claude is told. Its branch still has the other
 thread's commits under its own, which a squash merge leaves behind, so the next `u` moves only the thread's own
 commits onto `origin/main`. If the other thread is archived instead, the thread's base goes back the same way but its
 PR is left alone, and those commits count as its own work.
@@ -273,7 +274,7 @@ a thread), with the same care needed quoting them.
 ### PRs, Follow-up and Done
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
-`gh pr create`. A thread that builds on another's branch (see [Blocked threads](#blocked-threads)) opens its
+`gh pr create` (or twg, for a repo on bitbucket.org: see [Bitbucket](#bitbucket)). A thread that builds on another's branch (see [Blocked threads](#blocked-threads)) opens its
 PR into that branch instead, so the PR shows only its own work. That branch has to be pushed with all its
 commits first, which opening the other thread's PR does. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
@@ -288,7 +289,7 @@ board quizzes you: a thread whose PR is already open just pushes, and `oo thread
 A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
 running), skipping vim: it uses the description you pass, or claude's draft if you don't, so a thread's
-claude can open the PR when you ask it to. `v` shows the PR as GitHub has it: title, merge state,
+claude can open the PR when you ask it to. `v` shows the PR as its host has it: title, merge state,
 checks, reviews and description in the viewer's first tab, then its files and diff like `d` (`+` / `-`
 fetch the PR's commits first to show more context).
 `m` there merges it, using a merge commit, squash or rebase, whichever the repo allows first, and the
@@ -307,9 +308,18 @@ wait in Follow-up: `L` from PR moves a thread there by hand once its PR has merg
 GitHub won't let you approve your own PR, so on someone else's the viewer has `a` approve,
 `x` request changes and `c` comment instead of `m`. The last two open the PR's diff in vim, like
 `c` on the board: write the main comment above the diff and `>>` notes under the lines they're
-about, which go on the PR as comments on those lines. Leave it untouched, or `:cq`, to go back. `R` lists the open PRs asking you, or a team you're on, for a review,
-across every project with a repo; `⏎` opens one in the viewer, and once you've reviewed it, it
-drops off the list.
+about, which go on the PR as comments on those lines. Leave it untouched, or `:cq`, to go back.
+
+#### Bitbucket
+
+A project whose `origin` is on bitbucket.org has its PRs opened, followed and merged through
+[twg](https://developer.atlassian.com/cloud/twg-cli/) (`twg bitbucket pull-requests …`) rather than gh: moving
+a thread to PR, the card's merge state, stacked PRs being pointed at a new base, and `v` all work the same.
+Reviews and comments are left to Bitbucket's site, so the viewer has `m` merge on every PR (Bitbucket decides
+whether you may) and no `a`, `x` or `c`; `b` opens the PR there. twg needs a Bitbucket API token (`twg setup
+bitbucket`). If twg keeps saying the token is invalid even after setting it up again, give it the token in the
+environment instead, as `TWG_BBC_TOKEN` with `TWG_BBC_USER` set to your Atlassian email. The board runs in
+tmux, so set them there too (`tmux set-environment -g`).
 
 `u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
 branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread that builds on

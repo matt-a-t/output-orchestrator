@@ -16,7 +16,6 @@ import { KeysView } from './board/keysView.js';
 import { usePendingLocal } from './board/local.js';
 import { useMessageDelivery } from './board/messages.js';
 import { NewThread, useRecentTickets } from './board/newThread.js';
-import { fetchReviews, ReviewList, type Review } from './board/reviewList.js';
 import { TodoView } from './board/todoView.js';
 import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
@@ -34,7 +33,6 @@ type Screen =
 	| { kind: 'projects' } // P
 	| { kind: 'keys' } // ?
 	| { kind: 'edit'; threadId: string } // e, the thread form
-	| { kind: 'reviews'; requests: Review[] } // R
 	| { kind: 'todos'; threadId: string } // t, every todo of the thread
 	| { kind: 'importProject' } // N with no filter: which project to import from
 	| { kind: 'import'; project: string; threads: OutsideThread[] }; // N, the threads to import
@@ -86,7 +84,7 @@ export function App() {
 	// Every view but the keys screen takes its own keys, as do the overlays.
 	const ownKeys = (shown.kind !== 'board' && shown.kind !== 'keys') || !!overlay;
 	// Lists in place of the columns, under which the footer has no highlighted card to describe.
-	const coversCards = shown.kind === 'reviews' || shown.kind === 'todos' || shown.kind === 'importProject' || shown.kind === 'import';
+	const coversCards = shown.kind === 'todos' || shown.kind === 'importProject' || shown.kind === 'import';
 	// Views that take the whole window, footer and all.
 	const fullScreen = shown.kind === 'projects' || shown.kind === 'keys' || shown.kind === 'edit';
 	// The columns' measured height and scroll positions, kept while another screen covers them.
@@ -241,13 +239,6 @@ export function App() {
 			setScreen({ kind: 'import', project: project.name, threads });
 		}, 'looking for threads');
 
-	const openReviews = () =>
-		run(async () => {
-			const requests = await fetchReviews(board);
-			if (requests.length === 0) return setMessage(m => m || 'No PRs waiting for your review');
-			setScreen({ kind: 'reviews', requests });
-		}, 'looking for review requests');
-
 	/** Where the thread is shown with `f` as the filter and `q` as the search: its column, and its row there. */
 	const positionOf = (thread: Thread, f: string | null, q = search.query) => {
 		const col = shownColumns.indexOf(thread.column);
@@ -284,7 +275,7 @@ export function App() {
 	const pickingThread = picking ? state.threads.find(t => t.id === picking) : undefined;
 
 	useInput((input, key) => {
-		// The form, the import, review and todo lists and the import project picker take their own keys.
+		// The form, the import and todo lists and the import project picker take their own keys.
 		if (busy || ownKeys) return;
 		setMessage('');
 		if (shown.kind === 'keys') {
@@ -324,7 +315,6 @@ export function App() {
 		if (input === 'k' || key.upArrow) return setCursor({ col: cursor.col, row: loop(row, -1, colThreads.length) });
 		if (input === 'n') return newThread();
 		if (input === 'P') return setScreen({ kind: 'projects' });
-		if (input === 'R') return openReviews();
 		if (input === '?') return setScreen({ kind: 'keys' });
 		if (input === 'A') {
 			setShowArchived(!showArchived);
@@ -382,8 +372,6 @@ export function App() {
 				);
 			case 'keys':
 				return <KeysView active={!busy} />;
-			case 'reviews':
-				return <ReviewList board={board} requests={shown.requests} active={!busy} onClose={toBoard} />;
 			case 'todos':
 				return <TodoView thread={todosThread!} active={!busy} onClose={toBoard} />;
 			case 'importProject':

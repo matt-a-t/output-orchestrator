@@ -58,7 +58,6 @@ or for a thread with no worktree yet).
 | `s` | claude with a shell beside it |
 | `c` | comment on the diff in vim |
 | `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
-| `R` | PRs waiting for your review, across projects (`j`/`k` move, `⏎` or `v` views one, `b` opens it in your browser, `r` refreshes, `R`/`q`/`esc` close) |
 | `b` | open the PR in your browser |
 
 ## In a diff

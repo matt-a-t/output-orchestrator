@@ -136,8 +136,6 @@ export function checksLabel(checks: PrCheck[]): [string, string] | undefined {
 	return [`checks: ${counts}`, failing ? 'red' : pending ? 'yellow' : 'green'];
 }
 
-export type ReviewRequest = { number: number; title: string; url: string; author: { login: string }; updatedAt: string; isDraft: boolean };
-
 export const REVIEW_EVENTS = ['approve', 'request-changes', 'comment'] as const;
 export type ReviewEvent = (typeof REVIEW_EVENTS)[number];
 
@@ -167,7 +165,6 @@ export type PrHost = {
 	prDetails(cwd: string, number: number): Promise<PrDetails>;
 	prDiff(cwd: string, number: number): Promise<string>;
 	viewerLogin(cwd: string): Promise<string>;
-	reviewRequests(cwd: string): Promise<ReviewRequest[]>;
 	submitReview(cwd: string, number: number, event: ReviewEvent, body: string, comments?: ReviewComment[]): Promise<void>;
 	mergePr(cwd: string, number: number): Promise<string>;
 	/** The ref to fetch for the PR's commits: GitHub keeps one per PR, Bitbucket only has the branch. */
@@ -203,7 +200,6 @@ export const prState = async (cwd: string, pr: Pr): Promise<PrState> => (await p
 export const prDetails = async (cwd: string, number: number) => (await prHost(cwd)).prDetails(cwd, number);
 export const prDiff = async (cwd: string, number: number) => (await prHost(cwd)).prDiff(cwd, number);
 export const viewerLogin = async (cwd: string) => (await prHost(cwd)).viewerLogin(cwd);
-export const reviewRequests = async (cwd: string) => (await prHost(cwd)).reviewRequests(cwd);
 export const submitReview = async (cwd: string, number: number, event: ReviewEvent, body: string, comments: ReviewComment[] = []) =>
 	(await prHost(cwd)).submitReview(cwd, number, event, body, comments);
 export const mergePr = async (cwd: string, number: number) => (await prHost(cwd)).mergePr(cwd, number);
