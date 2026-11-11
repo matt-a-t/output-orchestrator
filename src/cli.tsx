@@ -8,6 +8,7 @@ import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, isHome, isRepo, loadState, projectPro
 import { THREAD_USAGE, threadCommand } from './threadCommand.js';
 import { mouseStdin, reportMouse } from './mouse.js';
 import { commitFormCommand } from './commitForm.js';
+import { quizFormCommand } from './quizForm.js';
 import { deltaCommand, noStyling } from './delta.js';
 import { viewCommand } from './viewer.js';
 import { OO_COMMAND, writeClaudeSettings, writeOoSkill } from './status.js';
@@ -155,6 +156,8 @@ if (cmd === 'project') {
 	process.exit(await viewCommand(args));
 } else if (cmd === 'commit-form') {
 	process.exit(await commitFormCommand(args));
+} else if (cmd === 'quiz-form') {
+	process.exit(await quizFormCommand(args));
 } else if (cmd) {
 	console.error(USAGE);
 	process.exit(1);

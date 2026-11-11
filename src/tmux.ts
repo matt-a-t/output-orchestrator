@@ -336,6 +336,8 @@ export async function popup(command: string, opts: PopupOptions = {}): Promise<n
 }
 
 export const CLOSED = Symbol('closed');
+/** What a cancellable resolves with when s skips it (see its `skip` option). */
+export const SKIPPED = Symbol('skipped');
 
 /** A popup the board keeps open through a slow flow: it shows a status, opens an editor when asked, and closes when told. */
 export type ProgressPopup = {
@@ -343,20 +345,23 @@ export type ProgressPopup = {
 	status(text: string): void;
 	/**
 	 * Show `text` while fn runs, which q, esc or ctrl-c cancel: then fn's signal aborts and this resolves with CLOSED.
-	 * `accept: false` turns off a (see accepted) for a result there's nothing to take as it is from.
+	 * `accept: false` turns off a (see accepted) for a result there's nothing to take as it is from. `skip` labels
+	 * an s key that aborts fn too but resolves with SKIPPED, for a step the flow can go on without.
 	 */
 	cancellable<T>(text: string, fn: (signal: AbortSignal) => Promise<T>, opts?: { accept?: boolean }): Promise<T | typeof CLOSED>;
+	cancellable<T>(text: string, fn: (signal: AbortSignal) => Promise<T>, opts: { accept?: boolean; skip: string }): Promise<T | typeof CLOSED | typeof SKIPPED>;
 	/** Whether a was pressed during a cancellable that allows it, to take its result without editing it. */
 	accepted(): boolean;
-	/** Open `editor` on `text`; resolves with what was saved, or CLOSED if the popup closed first. */
-	edit(text: string): Promise<string | typeof CLOSED>;
+	/** Open the popup's editor (or `editor`, for this once) on `text`; resolves with what was saved, or CLOSED if the popup closed first. */
+	edit(text: string, editor?: string): Promise<string | typeof CLOSED>;
 	/** Resolves once the popup has closed, whether by close() or by being cancelled. */
 	closed: Promise<typeof CLOSED>;
 	close(): Promise<void>;
 };
 
 // Talks to the board through files in $1: shows status (and "q cancel" while cancellable exists, and a to toggle
-// accept while acceptable does), runs the editor on edit.md each time go appears, and exits once done appears. Cancelling exits with 3.
+// accept while acceptable does, and s to skip while skippable does, which holds what it skips), runs the editor (or the
+// one in the editor file, if there is one) on edit.md each time go appears, and exits once done appears. Cancelling exits with 3.
 const PROGRESS_SCRIPT = `
 dir=$1 editor=$2 frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) i=0
 cancel() { [ -e "$dir/cancellable" ] && exit 3; }
@@ -368,7 +373,7 @@ while [ ! -e "$dir/done" ]; do
 		# The status line has no newline after it, and an editor that doesn't take the whole screen draws from there.
 		clear
 		tput cnorm
-		$editor "$dir/edit.md"
+		if [ -e "$dir/editor" ]; then $(cat "$dir/editor") "$dir/edit.md"; else $editor "$dir/edit.md"; fi
 		touch "$dir/edited"
 		clear
 		tput civis
@@ -379,12 +384,14 @@ while [ ! -e "$dir/done" ]; do
 		if [ ! -e "$dir/acceptable" ]; then hint="   q cancel"
 		elif [ -e "$dir/accept" ]; then hint="   ✓ using claude's (a to edit)  q cancel"
 		else hint="   a use claude's  q cancel"; fi
+		[ -e "$dir/skippable" ] && hint="   s $(cat "$dir/skippable")$hint"
 	fi
 	printf '\\r\\033[K %s %s\\033[2m%s\\033[0m' "\${frames[i++ % 10]}" "$(cat "$dir/status" 2>/dev/null)" "$hint"
 	if read -rsn1 -t 0.15 key; then
 		case $key in
 		q) cancel ;;
 		a) [ -e "$dir/acceptable" ] && { [ -e "$dir/accept" ] && rm -f "$dir/accept" || touch "$dir/accept"; } ;;
+		s) [ -e "$dir/skippable" ] && touch "$dir/skip" ;;
 		# A lone esc cancels; one followed straight away by more is a key like an arrow, which is swallowed.
 		$'\\e') read -rsn1 -t 0.05 _ || cancel && read -rsn8 -t 0.01 _ ;;
 		esac
@@ -404,29 +411,42 @@ export function progressPopup(title: string, editor: string): ProgressPopup {
 		status(text) {
 			writeFileSync(file('status'), text);
 		},
-		async cancellable(text, fn, { accept = true } = {}) {
+		async cancellable<T>(text: string, fn: (signal: AbortSignal) => Promise<T>, { accept = true, skip }: { accept?: boolean; skip?: string } = {}) {
 			writeFileSync(file('status'), text);
 			if (accept) writeFileSync(file('acceptable'), '');
+			if (skip) writeFileSync(file('skippable'), skip);
 			writeFileSync(file('cancellable'), '');
 			const abort = new AbortController();
 			const work = fn(abort.signal);
 			// It can still fail after being cancelled, when nothing's waiting on it.
 			work.catch(() => {});
+			let waiting = true;
+			// Settles only if s is pressed.
+			const skipped = new Promise<typeof SKIPPED>(resolve => {
+				void (async () => {
+					while (skip && waiting) {
+						if (existsSync(file('skip'))) return resolve(SKIPPED);
+						await setTimeout(100);
+					}
+				})();
+			});
 			try {
-				const result = await Promise.race([work, closed]);
-				if (result === CLOSED) abort.abort();
+				const result = await Promise.race([work, closed, skipped]);
+				if (result === CLOSED || result === SKIPPED) abort.abort();
 				return result;
 			} finally {
-				rmSync(file('cancellable'), { force: true });
-				rmSync(file('acceptable'), { force: true });
+				waiting = false;
+				for (const name of ['cancellable', 'acceptable', 'skippable', 'skip']) rmSync(file(name), { force: true });
 			}
 		},
 		accepted() {
 			return existsSync(file('accept'));
 		},
-		async edit(text) {
+		async edit(text, editor) {
 			rmSync(file('edited'), { force: true });
 			writeFileSync(file('edit.md'), text);
+			if (editor) writeFileSync(file('editor'), editor);
+			else rmSync(file('editor'), { force: true });
 			writeFileSync(file('go'), '');
 			while (!existsSync(file('edited'))) {
 				if (!open) return CLOSED;
