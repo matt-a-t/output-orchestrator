@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { EDITOR, parsePr, prText } from '../editor.js';
 import { errorMessage, resultMessage, unknownProject } from '../errors.js';
 import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart } from '../git.js';
-import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../github.js';
+import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../prHost.js';
 import { runColumnHook } from '../hooks.js';
 import { popQuiz, type QuizOutcome } from '../quiz.js';
 import { showPr } from '../review.js';

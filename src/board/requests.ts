@@ -2,7 +2,7 @@ import { unwatchFile, watchFile } from 'node:fs';
 import { useEffect } from 'react';
 import { errorMessage, resultMessage } from '../errors.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from '../requests.js';
-import { draftPr, withTicket } from '../github.js';
+import { draftPr, withTicket } from '../prHost.js';
 import { applyRequest, moveProblem } from '../threads.js';
 import type { Board, Outcome } from './board.js';
 import { enterLocal, leaveLocal, localProblem } from './local.js';

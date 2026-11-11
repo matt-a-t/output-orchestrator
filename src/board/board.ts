@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { RunStatus } from '../commands.js';
-import type { PrStatus } from '../github.js';
+import type { PrStatus } from '../prHost.js';
 import type { Column, Project, State, Thread } from '../state.js';
 import type { Status } from '../status.js';
 import type { Store } from '../threads.js';

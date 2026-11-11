@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import type { PrStatus } from '../github.js';
+import type { PrStatus } from '../prHost.js';
 import { PRIORITY_COLORS, PRIORITY_MARKS, type Column, type Project, type Thread } from '../state.js';
 import type { Status } from '../status.js';
 import { followUps, preMergeDone, todosDone, undelivered } from '../threads.js';

@@ -4,7 +4,7 @@ import { delimiter, join } from 'node:path';
 import type { TestContext } from 'node:test';
 import { execa } from 'execa';
 import type { Board } from './board/board.js';
-import type { PrStatus } from './github.js';
+import type { PrStatus } from './prHost.js';
 import { COLUMNS, saveState, type State, type Thread } from './state.js';
 import { setColumn } from './threads.js';
 

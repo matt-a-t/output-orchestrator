@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import { useState } from 'react';
 import { Text } from 'ink';
-import { openPrInBrowser, reviewRequests, type ReviewRequest } from '../github.js';
+import { openPrInBrowser, reviewRequests, type ReviewRequest } from '../prHost.js';
 import type { Project } from '../state.js';
 import { timeAgo } from '../transcripts.js';
 import type { Board } from './board.js';

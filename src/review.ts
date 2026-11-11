@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import { diffArgs, type DiffKind } from './git.js';
-import { checksLabel, mergeLabel, openPrInBrowser, prDetails, prDiff, viewerLogin, type PrDetails, type ReviewComment, type ReviewEvent } from './github.js';
+import { checksLabel, mergeLabel, openPrInBrowser, prHost, type PrDetails, type ReviewComment, type ReviewEvent } from './prHost.js';
 import type { Thread } from './state.js';
 import { OO_COMMAND } from './status.js';
 import { commitFormText, parseCommitForm, type CommitForm } from './commitForm.js';
@@ -70,7 +70,8 @@ export type PrAction = { action: 'merge' } | { action: 'review'; event: ReviewEv
  * changes requested (`x`) or commented on (`c`), the last two written in vim (see `writeReview`).
  */
 export async function showPr(cwd: string, number: number): Promise<'closed' | PrAction> {
-	const [details, diff, me] = await Promise.all([prDetails(cwd, number), prDiff(cwd, number), viewerLogin(cwd)]);
+	const host = await prHost(cwd);
+	const [details, diff, me] = await Promise.all([host.prDetails(cwd, number), host.prDiff(cwd, number), host.viewerLogin(cwd)]);
 	const own = details.author.login === me;
 	const dir = mkdtempSync(join(tmpdir(), 'oo-view-'));
 	const patch = join(dir, 'pr.diff');
@@ -92,7 +93,7 @@ export async function showPr(cwd: string, number: number): Promise<'closed' | Pr
 		cwd,
 		patch,
 		// +/- need the PR's commits, which may not be here yet.
-		fetch: { args: ['origin', `pull/${number}/head`, `refs/heads/${details.baseRefName}`], diff: ['diff', '--merge-base', `origin/${details.baseRefName}`, details.headRefOid] },
+		fetch: { args: ['origin', host.headRef(details), `refs/heads/${details.baseRefName}`], diff: ['diff', '--merge-base', `origin/${details.baseRefName}`, details.headRefOid] },
 		intro: { label: 'PR', text: header },
 		keys,
 		closeKey: 'v',

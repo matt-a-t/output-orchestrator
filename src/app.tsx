@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import { errorMessage, resultMessage } from './errors.js';
-import type { PrStatus } from './github.js';
+import type { PrStatus } from './prHost.js';
 import { loop } from './input.js';
 import { ProjectsView } from './projects.js';
 import { SearchBox, useSearch } from './search.js';

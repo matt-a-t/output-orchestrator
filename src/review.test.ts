@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PrDetails } from './github.js';
+import type { PrDetails } from './prHost.js';
 import { parsePrReview, prHeader } from './review.js';
 
 const pr: PrDetails = {

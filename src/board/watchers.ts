@@ -4,7 +4,7 @@ import { readFileSync, unwatchFile, watchFile } from 'node:fs';
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { runStatuses, type RunStatus } from '../commands.js';
 import { isDirty, restoreChanges } from '../git.js';
-import type { PrStatus } from '../github.js';
+import type { PrStatus } from '../prHost.js';
 import { STATE_FILE, loadState, saveState, type State, type Thread } from '../state.js';
 import { EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from '../status.js';
 import { noRepo, threadDir } from '../threads.js';
