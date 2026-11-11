@@ -10,7 +10,7 @@ import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
 import { fakeBoard, fakeGh, fakeTmux, fixture, git, gitFixture, type FakeAnswer } from '../testHelpers.js';
 import { enterLocal } from './local.js';
-import { checkPr, openPr, quizMessage, type PrSteps } from './pr.js';
+import { checkPr, openPr, quizMessage, showLastQuiz, type PrSteps } from './pr.js';
 
 const BRANCH = 'oo/the-thing';
 const URL = 'https://github.com/o/r/pull/5';
@@ -257,4 +257,11 @@ test('quizMessage says how the pop quiz went, and that a failed one stopped the 
 	assert.equal(quizMessage(opened, { result: 'skipped', reason: 'claude' }), `${opened} · ⚠ no pop quiz: claude couldn't write one`);
 	assert.equal(quizMessage(opened, { result: 'skipped', reason: 'small', lines: 12 }), `${opened} · no pop quiz: only 12 lines changed`);
 	assert.equal(quizMessage(opened, { result: 'skipped', reason: 'you' }), `${opened} · pop quiz skipped`);
+});
+
+test('z on a thread that has had no pop quiz says so', () => {
+	const { state } = fixture([{ column: 'pr' }]);
+	const board = fakeBoard(state);
+	showLastQuiz(board, state.threads[0]!);
+	assert.deepEqual(board.messages, ['No pop quiz on #1 yet — one runs when its PR opens from the board']);
 });

@@ -3,6 +3,9 @@
 import { execa } from 'execa';
 import { askClaude, truncateDiff } from './claude.js';
 import type { Thread } from './state.js';
+
+/** A graded quiz as it's kept on the thread, for z to show again. */
+export type QuizRecord = NonNullable<Thread['quiz']>;
 import { parseAnswerReply, parseResultsReply, QUIZ_FORM, score, type QuizFormInput } from './quizForm.js';
 import { CLOSED, SKIPPED, type ProgressPopup } from './tmux.js';
 
@@ -105,7 +108,8 @@ export function gradeChoices(quiz: Quiz, answers: Answers): Grade[] {
 }
 
 export type QuizOutcome =
-	| { result: 'passed' | 'overridden' | 'failed'; score: string }
+	// record is left out only by tests of how it's reported.
+	| { result: 'passed' | 'overridden' | 'failed'; score: string; record?: QuizRecord }
 	// You skipped it, the change was too small to bother, or claude couldn't write one.
 	| { result: 'skipped'; reason: 'you' | 'claude' } | { result: 'skipped'; reason: 'small'; lines: number };
 
@@ -149,5 +153,6 @@ export async function popQuiz(progress: ProgressPopup, cwd: string, thread: Thre
 	// Cancelling a quiz you passed cancels the PR, as q does anywhere else in the popup.
 	if (passed && !open) return null;
 	const result = passed ? 'passed' : open ? 'overridden' : 'failed';
-	return { result, score: score(grades) };
+	const record: QuizRecord = { questions: quiz, answers, grades, result, score: score(grades), at: new Date().toISOString() };
+	return { result, score: record.score, record };
 }

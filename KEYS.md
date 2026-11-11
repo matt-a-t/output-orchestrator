@@ -59,6 +59,7 @@ or for a thread with no worktree yet).
 | `c` | comment on the diff in vim |
 | `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
 | `b` | open the PR in your browser |
+| `z` | its last pop quiz: your answers and how they were graded |
 
 ## In a diff
 

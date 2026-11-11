@@ -148,6 +148,22 @@ const ThreadSchema = z.preprocess(
 		// Messages the thread's claude wrote ahead of review (see `oo thread draft`), so the commit and PR
 		// forms open filled in instead of waiting on a fresh draft. Each is cleared once used.
 		drafts: z.object({ commit: z.string().optional(), pr: z.object({ title: z.string(), body: z.string() }).optional() }).optional(),
+		// The last pop quiz taken before opening its PR (see quiz.ts), with how it went, for z to show again.
+		quiz: z
+			.object({
+				questions: z.array(
+					z.discriminatedUnion('kind', [
+						z.object({ kind: z.literal('choice'), question: z.string(), choices: z.array(z.string()), answer: z.number(), why: z.string() }),
+						z.object({ kind: z.literal('text'), question: z.string(), answer: z.string() }),
+					]),
+				),
+				answers: z.array(z.union([z.number(), z.string(), z.null()])),
+				grades: z.array(z.object({ correct: z.boolean(), note: z.string() })),
+				result: z.enum(['passed', 'overridden', 'failed']),
+				score: z.string(),
+				at: z.string(),
+			})
+			.optional(),
 		// Threads this one waits on; dropped as each reaches Done or is archived (see threads.ts).
 		blockedBy: z.array(z.string()).optional(),
 		// The blocker (also in blockedBy) whose branch this thread's branch builds on; its base is that branch.

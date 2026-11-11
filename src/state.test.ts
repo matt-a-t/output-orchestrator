@@ -47,3 +47,21 @@ test('projects saved before commands load with none', () => {
 	writeFileSync(file, JSON.stringify({ version: 1, projects: [{ name: 'p', path: project, color: 'cyan' }], threads: [] }));
 	assert.deepEqual(loadState(file).projects[0]!.commands, []);
 });
+
+test("a thread's last pop quiz is saved and loaded with it", () => {
+	const quiz = {
+		questions: [
+			{ kind: 'choice' as const, question: 'Who is told?', choices: ['Nobody', 'The board'], answer: 1, why: 'It sets a message.' },
+			{ kind: 'text' as const, question: 'Why only once?', answer: 'Second failures are real.' },
+		],
+		answers: [0, 'flaky'],
+		grades: [{ correct: false, note: 'It sets a message.' }, { correct: true, note: 'Right idea.' }],
+		result: 'overridden' as const,
+		score: '1/2',
+		at: '2026-11-11T00:00:00.000Z',
+	};
+	const { dir, state } = fixture([{ quiz }]);
+	const file = join(dir, 'data', 'state.json');
+	saveState(state, file);
+	assert.deepEqual(loadState(file).threads[0]!.quiz, quiz);
+});

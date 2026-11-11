@@ -286,7 +286,8 @@ picks a choice, `j`/`k` moves between questions, `⏎` or `i` edits the written 
 claude grades the written answer. If you get any wrong, the results show the right answers and the PR
 isn't opened unless you press `y` to open it anyway. `s` skips the quiz, while claude is writing it or in
 the form, and a change of under 30 lines (added plus removed) skips it on its own. `q` while claude is
-writing or grading, or in the form, cancels the whole move. Only opening a new PR from the
+writing or grading, or in the form, cancels the whole move. The thread keeps its last quiz, passed
+or not, and `z` on its card shows it again. Only opening a new PR from the
 board quizzes you: a thread whose PR is already open just pushes, and `oo thread pr` skips it.
 A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board

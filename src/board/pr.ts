@@ -1,17 +1,20 @@
 // A thread's pull request: opening it, keeping up with its merge status, and showing it.
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { EDITOR, parsePr, prText } from '../editor.js';
 import { errorMessage, resultMessage, unknownProject } from '../errors.js';
 import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart } from '../git.js';
 import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../prHost.js';
 import { runColumnHook } from '../hooks.js';
-import { popQuiz, type QuizOutcome } from '../quiz.js';
+import { popQuiz, type Quiz, type QuizOutcome } from '../quiz.js';
+import { QUIZ_FORM, type QuizFormInput } from '../quizForm.js';
 import { showPr } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
 import { applyRequest, followUps, unblockedNote, unstackChildren, withDrafts } from '../threads.js';
-import { CLOSED, progressPopup, type ProgressPopup } from '../tmux.js';
+import { CLOSED, popup as tmuxPopup, progressPopup, shellQuote, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
 import { leaveLocalForDone, localProblem } from './local.js';
@@ -106,6 +109,8 @@ export async function openPrFromBoard(board: Board, thread: Thread) {
 		status: text => popup().status(text),
 		describe: async (cwd, thread, base) => {
 			quiz = await popQuiz(popup(), cwd, thread, base);
+			// Kept whether or not the PR opens, so z can show how it went.
+			if (quiz?.result !== 'skipped' && quiz?.record) board.updateThread(thread.id, { quiz: quiz.record });
 			if (!quiz || quiz.result === 'failed') return null;
 			const saved = board.state().threads.find(t => t.id === thread.id)?.drafts?.pr;
 			const written = saved ?? (await popup().cancellable('claude is writing the PR description', signal => draftPr(cwd, thread, base, signal)));
@@ -228,7 +233,25 @@ export function browsePr(board: Board, thread: Thread) {
 	}, 'opening PR in the browser');
 }
 
+/** Show the thread's last pop quiz, with your answers and how they were graded, in the quiz form. */
+export function showLastQuiz(board: Board, thread: Thread) {
+	const { quiz } = thread;
+	if (!quiz) return board.setMessage(`No pop quiz on #${thread.id} yet — one runs when its PR opens from the board`);
+	const dir = mkdtempSync(join(tmpdir(), 'oo-quiz-'));
+	const file = join(dir, 'quiz.json');
+	const input: QuizFormInput = { mode: 'review', title: `#${thread.id} ${thread.title}`, quiz: quiz.questions as Quiz, answers: quiz.answers, grades: quiz.grades };
+	writeFileSync(file, JSON.stringify(input));
+	return board.run(async () => {
+		try {
+			await tmuxPopup(`${QUIZ_FORM} ${shellQuote(file)}`, { title: ` pop quiz ${quiz.score} ` });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}, 'showing the pop quiz');
+}
+
 export const prKeys: Binding[] = [
 	{ key: 'v', run: onThread(viewThreadPr), help: { section: 'Reviewing', what: 'view the PR (m merges it)' } },
 	{ key: 'b', run: onThread(browsePr, { hidden: true }), help: { section: 'Reviewing', what: 'open the PR in your browser' } },
+	{ key: 'z', run: onThread(showLastQuiz), help: { section: 'Reviewing', what: 'its last pop quiz: your answers and how they were graded' } },
 ];
