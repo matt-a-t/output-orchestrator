@@ -31,6 +31,8 @@ export type Board = {
 	// The project commands' run sessions (r), by session name.
 	runs: () => Map<string, RunStatus>;
 	refreshRuns: () => Promise<void>;
+	/** Check the thread for uncommitted changes now, after a git action of the board's own on it. */
+	recheckUnreviewed: (id: string) => void;
 	setMerge: Dispatch<SetStateAction<Record<string, PrStatus>>>;
 	// `oo thread local` moves waiting for the thread's claude to finish its turn: thread id → entering.
 	pendingLocal: Map<string, boolean>;

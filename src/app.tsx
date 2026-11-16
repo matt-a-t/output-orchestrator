@@ -73,7 +73,7 @@ export function App() {
 	const { statuses, statusesRef, sessionStarts, statusSince } = useStatuses(stateRef, setState);
 	const { liveWindowsRef, refreshWindows } = useLiveWindows();
 	const { runsRef, refreshRuns } = useRuns();
-	const unreviewed = useUnreviewed(stateRef);
+	const { unreviewed, recheckUnreviewed } = useUnreviewed(stateRef, statuses, liveWindowsRef);
 	useRestoreCarried(stateRef);
 	const pendingLocal = useRef(new Map<string, boolean>());
 	// The merge status of open PRs, from the PR poll; not saved, since the poll refills it on startup.
@@ -198,6 +198,7 @@ export function App() {
 		refreshWindows,
 		runs: () => runsRef.current,
 		refreshRuns,
+		recheckUnreviewed,
 		setMerge,
 		pendingLocal: pendingLocal.current,
 		setMessage,

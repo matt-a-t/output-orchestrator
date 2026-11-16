@@ -7,8 +7,9 @@ import { isDirty, restoreChanges } from '../git.js';
 import type { PrStatus } from '../prHost.js';
 import { STATE_FILE, loadState, saveState, type State, type Thread } from '../state.js';
 import { EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from '../status.js';
-import { noRepo, threadDir } from '../threads.js';
+import { threadDir } from '../threads.js';
 import { windowNames } from '../tmux.js';
+import { CHECK_CONCURRENCY, SWEEP_INTERVAL, eachLimited, settled, threadsToCheck } from './unreviewed.js';
 
 type SetState = Dispatch<SetStateAction<State>>;
 
@@ -131,33 +132,53 @@ export function useRuns() {
 	return { runsRef, refreshRuns };
 }
 
-/** Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved. */
-export function useUnreviewed(stateRef: RefObject<State>) {
+/**
+ * Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved. A thread is checked
+ * when its claude stops working and after the board's own git actions on it (`recheck`). Every thread
+ * whose files can change is also swept every SWEEP_INTERVAL, for edits made outside claude.
+ */
+export function useUnreviewed(stateRef: RefObject<State>, statuses: Record<string, Status>, liveWindowsRef: RefObject<Set<string>>) {
 	const [unreviewed, setUnreviewed] = useState<Set<string>>(new Set());
-	useEffect(() => {
-		let checking = false;
-		const check = async () => {
-			if (checking) return;
-			checking = true;
-			try {
-				const dirty = new Set<string>();
-				const threads = stateRef.current.threads.filter(t => t.column !== 'archived' && !noRepo(stateRef.current, t));
-				await Promise.all(
-					threads.map(async t => {
-						const dir = threadDir(stateRef.current, t);
-						if (dir && (await isDirty(dir).catch(() => false))) dirty.add(t.id);
-					}),
-				);
-				setUnreviewed(prev => (prev.size === dirty.size && [...dirty].every(id => prev.has(id)) ? prev : dirty));
-			} finally {
-				checking = false;
+	// What's waiting to be checked: some threads, or 'all' for a sweep. One check runs at a time.
+	const pending = useRef<Set<string> | 'all'>(new Set());
+	const running = useRef(false);
+	const recheck = useRef(async (ids: string[] | 'all') => {
+		if (ids === 'all') pending.current = 'all';
+		else if (pending.current !== 'all') for (const id of ids) pending.current.add(id);
+		if (running.current) return;
+		running.current = true;
+		try {
+			while (pending.current === 'all' || pending.current.size > 0) {
+				const want = pending.current;
+				pending.current = new Set();
+				const candidates = threadsToCheck(stateRef.current, liveWindowsRef.current);
+				const ids = want === 'all' ? [...candidates.keys()] : [...want].filter(id => candidates.has(id));
+				const dirty = new Map<string, boolean>();
+				await eachLimited(ids, CHECK_CONCURRENCY, async id => void dirty.set(id, await isDirty(candidates.get(id)!).catch(() => false)));
+				setUnreviewed(prev => {
+					const next = new Set(prev);
+					// Threads that can't change any more (Done, closed) drop their mark.
+					for (const id of prev) if (!candidates.has(id)) next.delete(id);
+					for (const [id, d] of dirty) d ? next.add(id) : next.delete(id);
+					return next.size === prev.size && [...next].every(id => prev.has(id)) ? prev : next;
+				});
 			}
-		};
-		check();
-		const timer = setInterval(check, 3000);
+		} finally {
+			running.current = false;
+		}
+	}).current;
+	useEffect(() => {
+		void recheck('all');
+		const timer = setInterval(() => void recheck('all'), SWEEP_INTERVAL);
 		return () => clearInterval(timer);
 	}, []);
-	return unreviewed;
+	const lastStatuses = useRef(statuses);
+	useEffect(() => {
+		const stopped = settled(lastStatuses.current, statuses);
+		lastStatuses.current = statuses;
+		if (stopped.length > 0) void recheck(stopped);
+	}, [statuses]);
+	return { unreviewed, recheckUnreviewed: (id: string) => void recheck([id]) };
 }
 
 /** Keep open PRs' merge status current with `checkPr` (the latest render's), which also moves threads whose PR has merged to Done. */
