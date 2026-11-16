@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { threadEnv } from './hooks.js';
+import { currentSessionId } from './tmux.js';
 import type { Project, ProjectCommand, Thread } from './state.js';
 
 export const RUN_PREFIX = 'oo-run';
@@ -41,6 +42,29 @@ export function parseRunStatuses(stdout: string): Map<string, RunStatus> {
 export async function runStatuses(): Promise<Map<string, RunStatus>> {
 	const result = await execa('tmux', ['list-sessions', '-F', '#{session_name}\t#{@oo-exit}\t#{session_attached}'], { reject: false });
 	return result.exitCode === 0 ? parseRunStatuses(result.stdout) : new Map();
+}
+
+/** What the board polls tmux for: the windows in its own session, and the run sessions' statuses. */
+export type TmuxSnapshot = { windows: string[]; runs: Map<string, RunStatus> };
+
+const SNAPSHOT_FORMAT = ['#{session_id}', '#{window_name}', '#{session_name}', '#{@oo-exit}', '#{session_attached}'].join('\t');
+
+/** `list-windows -a` output in SNAPSHOT_FORMAT as a snapshot, the windows being those of `session` (an ID). */
+export function parseSnapshot(stdout: string, session: string): TmuxSnapshot {
+	const windows: string[] = [];
+	const sessions: string[] = [];
+	for (const line of stdout.split('\n').filter(Boolean)) {
+		const [id, window = '', ...rest] = line.split('\t');
+		if (id === session) windows.push(window);
+		sessions.push(rest.join('\t'));
+	}
+	return { windows, runs: parseRunStatuses(sessions.join('\n')) };
+}
+
+/** Both of the board's tmux polls in one call. */
+export async function tmuxSnapshot(): Promise<TmuxSnapshot> {
+	const [session, { stdout }] = await Promise.all([currentSessionId(), execa('tmux', ['list-windows', '-a', '-F', SNAPSHOT_FORMAT])]);
+	return parseSnapshot(stdout, session);
 }
 
 /** Whether any of the thread's commands are running (the ▶ on its card). */

@@ -2,13 +2,12 @@
 
 import { unwatchFile, watchFile } from 'node:fs';
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { runStatuses, type RunStatus } from '../commands.js';
+import { tmuxSnapshot, type RunStatus } from '../commands.js';
 import { isDirty, restoreChanges } from '../git.js';
 import type { PrStatus } from '../prHost.js';
 import { STATE_FILE, loadState, saveState, stillSaved, type Saved, type State, type Thread } from '../state.js';
 import { EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from '../status.js';
 import { threadDir } from '../threads.js';
-import { windowNames } from '../tmux.js';
 import { CHECK_CONCURRENCY, SWEEP_INTERVAL, eachLimited, settled, threadsToCheck } from './unreviewed.js';
 
 type SetState = Dispatch<SetStateAction<State>>;
@@ -101,41 +100,32 @@ export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 	return { statuses, statusesRef, sessionStarts: sessionStarts.current, statusSince: statusSince.current };
 }
 
-/** The open tmux windows; badges only mean something while the thread's window is open. */
-export function useLiveWindows() {
+/**
+ * What the board polls tmux for, in one call every 2s: the open windows (badges only mean something
+ * while the thread's window is open) and the project commands' run sessions (r) and how each is going,
+ * for the run picker and the ▶ on cards.
+ */
+export function useTmux() {
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
 	const liveWindowsRef = useRef(liveWindows);
 	liveWindowsRef.current = liveWindows;
-	const refreshWindows = () =>
-		windowNames()
-			.then(names => setLiveWindows(new Set(names)))
-			.catch(() => {});
-	useEffect(() => {
-		refreshWindows();
-		const timer = setInterval(refreshWindows, 2000);
-		return () => clearInterval(timer);
-	}, []);
-	return { liveWindows, liveWindowsRef, refreshWindows };
-}
-
-/** The project commands' run sessions (r) and how each is going, for the run picker and the ▶ on cards. */
-export function useRuns() {
-	const [runs, setRuns] = useState<Map<string, RunStatus>>(new Map());
-	const runsRef = useRef(runs);
-	runsRef.current = runs;
-	const refreshRuns = () =>
-		runStatuses()
-			.then(next => {
-				runsRef.current = next;
-				setRuns(next);
+	const runsRef = useRef(new Map<string, RunStatus>());
+	// Cards read the runs from runsRef; this only redraws them when one of the runs changed.
+	const [, setRunsKey] = useState('');
+	const refresh = () =>
+		tmuxSnapshot()
+			.then(({ windows, runs }) => {
+				runsRef.current = runs;
+				setRunsKey(JSON.stringify([...runs]));
+				setLiveWindows(prev => (prev.size === windows.length && windows.every(w => prev.has(w)) ? prev : new Set(windows)));
 			})
 			.catch(() => {});
 	useEffect(() => {
-		refreshRuns();
-		const timer = setInterval(refreshRuns, 2000);
+		refresh();
+		const timer = setInterval(refresh, 2000);
 		return () => clearInterval(timer);
 	}, []);
-	return { runsRef, refreshRuns };
+	return { liveWindows, liveWindowsRef, refreshWindows: refresh, runsRef, refreshRuns: refresh };
 }
 
 /**

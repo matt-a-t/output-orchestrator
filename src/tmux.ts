@@ -59,6 +59,10 @@ export async function renameCurrentWindow(name: string): Promise<void> {
 	await execa('tmux', ['rename-window', name]);
 }
 
+let sessionId: Promise<string> | undefined;
+/** The ID ($3) of the tmux session this process runs in, the one `list-windows` lists without -a. */
+export const currentSessionId = () => (sessionId ??= execa('tmux', ['display-message', '-p', '#{session_id}']).then(r => r.stdout.trim()));
+
 export async function windowNames(): Promise<string[]> {
 	const { stdout } = await execa('tmux', ['list-windows', '-F', '#{window_name}']);
 	return stdout.split('\n');

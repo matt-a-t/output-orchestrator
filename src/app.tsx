@@ -20,7 +20,7 @@ import { TodoView } from './board/todoView.js';
 import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
 import { RunPicker, runTarget, type RunTarget } from './board/runPicker.js';
-import { useLiveWindows, usePrPoll, useRestoreCarried, useRuns, useStateFile, useStatuses, useUnreviewed } from './board/watchers.js';
+import { usePrPoll, useRestoreCarried, useStateFile, useStatuses, useTmux, useUnreviewed } from './board/watchers.js';
 import { killRunSessions } from './commands.js';
 import { COLUMNS, PRIORITIES, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
@@ -71,8 +71,7 @@ export function App() {
 	const closeOverlay = () => setOverlay(null);
 	const recent = useRecentTickets();
 	const { statuses, statusesRef, sessionStarts, statusSince } = useStatuses(stateRef, setState);
-	const { liveWindowsRef, refreshWindows } = useLiveWindows();
-	const { runsRef, refreshRuns } = useRuns();
+	const { liveWindowsRef, refreshWindows, runsRef, refreshRuns } = useTmux();
 	const { unreviewed, recheckUnreviewed } = useUnreviewed(stateRef, statuses, liveWindowsRef);
 	useRestoreCarried(stateRef);
 	const pendingLocal = useRef(new Map<string, boolean>());
