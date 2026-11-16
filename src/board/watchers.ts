@@ -1,11 +1,11 @@
 // The board's background polls: each keeps a bit of what's shown in step with the world outside.
 
-import { readFileSync, unwatchFile, watchFile } from 'node:fs';
+import { unwatchFile, watchFile } from 'node:fs';
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { runStatuses, type RunStatus } from '../commands.js';
 import { isDirty, restoreChanges } from '../git.js';
 import type { PrStatus } from '../prHost.js';
-import { STATE_FILE, loadState, saveState, type State, type Thread } from '../state.js';
+import { STATE_FILE, loadState, saveState, stillSaved, type Saved, type State, type Thread } from '../state.js';
 import { EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from '../status.js';
 import { threadDir } from '../threads.js';
 import { windowNames } from '../tmux.js';
@@ -21,14 +21,17 @@ export function useStateFile() {
 	const [state, setState] = useState<State>(loadState);
 	const stateRef = useRef(state);
 	stateRef.current = state;
-	const lastWritten = useRef<string | null>(null);
+	const saved = useRef<Saved | null>(null);
 	useEffect(() => {
-		lastWritten.current = saveState(state);
+		saved.current = saveState(state);
 	}, [state]);
 	useEffect(() => {
-		watchFile(STATE_FILE, { interval: 1000 }, () => {
+		// watchFile stats the file; only a write by something else is worth reading the whole file for.
+		watchFile(STATE_FILE, { interval: 1000 }, curr => {
+			// A zeroed stat: the file's gone (mid-rename, or deleted), so there's nothing to load.
+			if (curr.mtimeMs === 0 || stillSaved(saved.current, curr)) return;
 			try {
-				if (readFileSync(STATE_FILE, 'utf8') !== lastWritten.current) setState(loadState());
+				setState(loadState());
 			} catch {}
 		});
 		return () => unwatchFile(STATE_FILE);
