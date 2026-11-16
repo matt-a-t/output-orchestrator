@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Box, Text } from 'ink';
 import type { PrStatus } from '../prHost.js';
 import { PRIORITY_COLORS, PRIORITY_MARKS, type Column, type Project, type Thread } from '../state.js';
@@ -36,6 +37,7 @@ export const cardHeight = (column: Column) => (column === 'done' || column === '
 export const LOCAL_BORDER_LINES = 2;
 export const cardLines = (t: Thread) => cardHeight(t.column) + (t.local ? LOCAL_BORDER_LINES : 0);
 
+export type CardProps = Props;
 type Props = {
 	thread: Thread;
 	selected: boolean;
@@ -55,7 +57,18 @@ type Props = {
 };
 
 /** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
-export function Card({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running }: Props) {
+export const Card = memo(CardLines, sameCard);
+
+/**
+ * Whether a redraw would draw the card the same. Every prop but `blockers` keeps its identity while unchanged;
+ * blockers is worked out afresh on each render, so compare the threads in it.
+ */
+export function sameCard(a: Props, b: Props): boolean {
+	for (const key of Object.keys(b) as (keyof Props)[]) if (key !== 'blockers' && a[key] !== b[key]) return false;
+	return a.blockers.length === b.blockers.length && a.blockers.every((t, i) => t === b.blockers[i]);
+}
+
+function CardLines({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running }: Props) {
 	const oneLine = cardHeight(t.column) === 1;
 	const color = t.color ?? project?.color;
 	// Changes aren't ready to review until claude stops working on them.

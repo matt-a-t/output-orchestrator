@@ -67,13 +67,16 @@ export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 			const dirs = new Map(stateRef.current.threads.map(t => [t.id, threadDir(stateRef.current, t)]));
 			const events = reader.read().filter(e => fromThreadDir(e, dirs.get(e.thread)));
 			if (events.length === 0) return;
+			let changed = false;
 			for (const e of events) {
 				const status = nextStatus(latest[e.thread], e);
 				if (!status || status === latest[e.thread]) continue;
 				latest[e.thread] = status;
 				statusSince.current.set(e.thread, Date.parse(e.ts) || Date.now());
+				changed = true;
 			}
-			setStatuses({ ...latest });
+			// Most events (each tool call while working) change nothing, and a new object would redraw the board.
+			if (changed) setStatuses({ ...latest });
 			const started = new Map<string, { sessionId: string; transcriptPath?: string }>();
 			for (const e of events) {
 				if (e.event === 'SessionStart') sessionStarts.current.set(e.thread, (sessionStarts.current.get(e.thread) ?? 0) + 1);
