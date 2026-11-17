@@ -37,7 +37,14 @@ export const inWorktree = (
 		const reason = git && noRepo(board.state(), thread);
 		if (reason) return board.setMessage(`⚠ ${reason} — it has no branch of its own for git to work on`);
 		const dir = threadDir(board.state(), thread);
-		if (dir) return await fn(dir);
+		if (dir) {
+			try {
+				return await fn(dir);
+			} finally {
+				// A commit or rebase changes what's left to review.
+				if (git) board.recheckUnreviewed(thread.id);
+			}
+		}
 		if (thread.local) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
 		board.setMessage(`#${thread.id} has no worktree — open it or move it out of Planned`);
 	}, label);

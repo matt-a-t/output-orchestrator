@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { statSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { fixture } from './testHelpers.js';
-import { loadState, projectProblem, saveState, withHome } from './state.js';
+import { loadState, projectProblem, saveState, stillSaved, withHome } from './state.js';
 
 test('worktrees need the project to be a git repo', async () => {
 	const { project, state } = fixture();
@@ -64,4 +64,15 @@ test("a thread's last pop quiz is saved and loaded with it", () => {
 	const file = join(dir, 'data', 'state.json');
 	saveState(state, file);
 	assert.deepEqual(loadState(file).threads[0]!.quiz, quiz);
+});
+
+test('a save is compact and recognised as its own until something else writes the file', () => {
+	const { dir, state } = fixture([{}]);
+	const file = join(dir, 'data', 'state.json');
+	const saved = saveState(state, file);
+	assert.equal(readFileSync(file, 'utf8'), JSON.stringify(state));
+	assert.ok(stillSaved(saved, statSync(file)));
+	writeFileSync(file, JSON.stringify({ ...state, threads: [] }));
+	assert.ok(!stillSaved(saved, statSync(file)));
+	assert.ok(!stillSaved(null, statSync(file)));
 });

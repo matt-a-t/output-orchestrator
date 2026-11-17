@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execaSync } from 'execa';
@@ -222,13 +222,22 @@ export function withHome(state: State, home = homedir()): State {
 	return { ...state, projects: [...state.projects, project] };
 }
 
-export function saveState(state: State, file = STATE_FILE): string {
+/** What the state file looked like right after a save, to tell that save apart from another program's write. */
+export type Saved = { mtimeMs: number; size: number };
+
+/** Save the state, compactly: it's rewritten on every change, and the board, the CLI and claude's hooks all parse it. */
+export function saveState(state: State, file = STATE_FILE): Saved {
 	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 	const tmp = `${file}.tmp`;
-	const json = JSON.stringify(state, null, 2);
-	writeFileSync(tmp, json, { mode: PRIVATE_FILE });
+	writeFileSync(tmp, JSON.stringify(state), { mode: PRIVATE_FILE });
 	renameSync(tmp, file);
-	return json;
+	const { mtimeMs, size } = statSync(file);
+	return { mtimeMs, size };
+}
+
+/** Whether the file, as `stat` sees it now, is still the one `saved` wrote, so there's nothing new to load. */
+export function stillSaved(saved: Saved | null, stat: Saved): boolean {
+	return !!saved && stat.mtimeMs === saved.mtimeMs && stat.size === saved.size;
 }
 
 /** Whether `path` is in a git repo. */

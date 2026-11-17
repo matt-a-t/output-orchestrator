@@ -1,14 +1,14 @@
 // The board's background polls: each keeps a bit of what's shown in step with the world outside.
 
-import { readFileSync, unwatchFile, watchFile } from 'node:fs';
+import { unwatchFile, watchFile } from 'node:fs';
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { runStatuses, type RunStatus } from '../commands.js';
+import { tmuxSnapshot, type RunStatus } from '../commands.js';
 import { isDirty, restoreChanges } from '../git.js';
-import type { PrStatus } from '../prHost.js';
-import { STATE_FILE, loadState, saveState, type State, type Thread } from '../state.js';
+import { prHost, type PrStatus } from '../prHost.js';
+import { STATE_FILE, loadState, saveState, stillSaved, type Saved, type State, type Thread } from '../state.js';
 import { EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from '../status.js';
-import { noRepo, threadDir } from '../threads.js';
-import { windowNames } from '../tmux.js';
+import { threadDir } from '../threads.js';
+import { CHECK_CONCURRENCY, SWEEP_INTERVAL, eachLimited, settled, threadsToCheck } from './unreviewed.js';
 
 type SetState = Dispatch<SetStateAction<State>>;
 
@@ -20,14 +20,17 @@ export function useStateFile() {
 	const [state, setState] = useState<State>(loadState);
 	const stateRef = useRef(state);
 	stateRef.current = state;
-	const lastWritten = useRef<string | null>(null);
+	const saved = useRef<Saved | null>(null);
 	useEffect(() => {
-		lastWritten.current = saveState(state);
+		saved.current = saveState(state);
 	}, [state]);
 	useEffect(() => {
-		watchFile(STATE_FILE, { interval: 1000 }, () => {
+		// watchFile stats the file; only a write by something else is worth reading the whole file for.
+		watchFile(STATE_FILE, { interval: 1000 }, curr => {
+			// A zeroed stat: the file's gone (mid-rename, or deleted), so there's nothing to load.
+			if (curr.mtimeMs === 0 || stillSaved(saved.current, curr)) return;
 			try {
-				if (readFileSync(STATE_FILE, 'utf8') !== lastWritten.current) setState(loadState());
+				setState(loadState());
 			} catch {}
 		});
 		return () => unwatchFile(STATE_FILE);
@@ -63,13 +66,16 @@ export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 			const dirs = new Map(stateRef.current.threads.map(t => [t.id, threadDir(stateRef.current, t)]));
 			const events = reader.read().filter(e => fromThreadDir(e, dirs.get(e.thread)));
 			if (events.length === 0) return;
+			let changed = false;
 			for (const e of events) {
 				const status = nextStatus(latest[e.thread], e);
 				if (!status || status === latest[e.thread]) continue;
 				latest[e.thread] = status;
 				statusSince.current.set(e.thread, Date.parse(e.ts) || Date.now());
+				changed = true;
 			}
-			setStatuses({ ...latest });
+			// Most events (each tool call while working) change nothing, and a new object would redraw the board.
+			if (changed) setStatuses({ ...latest });
 			const started = new Map<string, { sessionId: string; transcriptPath?: string }>();
 			for (const e of events) {
 				if (e.event === 'SessionStart') sessionStarts.current.set(e.thread, (sessionStarts.current.get(e.thread) ?? 0) + 1);
@@ -94,71 +100,87 @@ export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 	return { statuses, statusesRef, sessionStarts: sessionStarts.current, statusSince: statusSince.current };
 }
 
-/** The open tmux windows; badges only mean something while the thread's window is open. */
-export function useLiveWindows() {
+/**
+ * What the board polls tmux for, in one call every 2s: the open windows (badges only mean something
+ * while the thread's window is open) and the project commands' run sessions (r) and how each is going,
+ * for the run picker and the ▶ on cards.
+ */
+export function useTmux() {
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
 	const liveWindowsRef = useRef(liveWindows);
 	liveWindowsRef.current = liveWindows;
-	const refreshWindows = () =>
-		windowNames()
-			.then(names => setLiveWindows(new Set(names)))
-			.catch(() => {});
-	useEffect(() => {
-		refreshWindows();
-		const timer = setInterval(refreshWindows, 2000);
-		return () => clearInterval(timer);
-	}, []);
-	return { liveWindows, liveWindowsRef, refreshWindows };
-}
-
-/** The project commands' run sessions (r) and how each is going, for the run picker and the ▶ on cards. */
-export function useRuns() {
-	const [runs, setRuns] = useState<Map<string, RunStatus>>(new Map());
-	const runsRef = useRef(runs);
-	runsRef.current = runs;
-	const refreshRuns = () =>
-		runStatuses()
-			.then(next => {
-				runsRef.current = next;
-				setRuns(next);
+	const runsRef = useRef(new Map<string, RunStatus>());
+	// Cards read the runs from runsRef; this only redraws them when one of the runs changed.
+	const [, setRunsKey] = useState('');
+	const refresh = () =>
+		tmuxSnapshot()
+			.then(({ windows, runs }) => {
+				runsRef.current = runs;
+				setRunsKey(JSON.stringify([...runs]));
+				setLiveWindows(prev => (prev.size === windows.length && windows.every(w => prev.has(w)) ? prev : new Set(windows)));
 			})
 			.catch(() => {});
 	useEffect(() => {
-		refreshRuns();
-		const timer = setInterval(refreshRuns, 2000);
+		refresh();
+		const timer = setInterval(refresh, 2000);
 		return () => clearInterval(timer);
 	}, []);
-	return { runsRef, refreshRuns };
+	return { liveWindows, liveWindowsRef, refreshWindows: refresh, runsRef, refreshRuns: refresh };
 }
 
-/** Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved. */
-export function useUnreviewed(stateRef: RefObject<State>) {
+/**
+ * Threads with uncommitted changes, i.e. a step waiting to be reviewed and approved. A thread is checked
+ * when its claude stops working and after the board's own git actions on it (`recheck`). Every thread
+ * whose files can change is also swept every SWEEP_INTERVAL, for edits made outside claude.
+ */
+export function useUnreviewed(stateRef: RefObject<State>, statuses: Record<string, Status>, liveWindowsRef: RefObject<Set<string>>) {
 	const [unreviewed, setUnreviewed] = useState<Set<string>>(new Set());
-	useEffect(() => {
-		let checking = false;
-		const check = async () => {
-			if (checking) return;
-			checking = true;
-			try {
-				const dirty = new Set<string>();
-				const threads = stateRef.current.threads.filter(t => t.column !== 'archived' && !noRepo(stateRef.current, t));
-				await Promise.all(
-					threads.map(async t => {
-						const dir = threadDir(stateRef.current, t);
-						if (dir && (await isDirty(dir).catch(() => false))) dirty.add(t.id);
-					}),
-				);
-				setUnreviewed(prev => (prev.size === dirty.size && [...dirty].every(id => prev.has(id)) ? prev : dirty));
-			} finally {
-				checking = false;
+	// What's waiting to be checked: some threads, or 'all' for a sweep. One check runs at a time.
+	const pending = useRef<Set<string> | 'all'>(new Set());
+	const running = useRef(false);
+	const recheck = useRef(async (ids: string[] | 'all') => {
+		if (ids === 'all') pending.current = 'all';
+		else if (pending.current !== 'all') for (const id of ids) pending.current.add(id);
+		if (running.current) return;
+		running.current = true;
+		try {
+			while (pending.current === 'all' || pending.current.size > 0) {
+				const want = pending.current;
+				pending.current = new Set();
+				const candidates = threadsToCheck(stateRef.current, liveWindowsRef.current);
+				const ids = want === 'all' ? [...candidates.keys()] : [...want].filter(id => candidates.has(id));
+				const dirty = new Map<string, boolean>();
+				await eachLimited(ids, CHECK_CONCURRENCY, async id => void dirty.set(id, await isDirty(candidates.get(id)!).catch(() => false)));
+				setUnreviewed(prev => {
+					const next = new Set(prev);
+					// Threads that can't change any more (Done, closed) drop their mark.
+					for (const id of prev) if (!candidates.has(id)) next.delete(id);
+					for (const [id, d] of dirty) d ? next.add(id) : next.delete(id);
+					return next.size === prev.size && [...next].every(id => prev.has(id)) ? prev : next;
+				});
 			}
-		};
-		check();
-		const timer = setInterval(check, 3000);
+		} finally {
+			running.current = false;
+		}
+	}).current;
+	useEffect(() => {
+		void recheck('all');
+		const timer = setInterval(() => void recheck('all'), SWEEP_INTERVAL);
 		return () => clearInterval(timer);
 	}, []);
-	return unreviewed;
+	const lastStatuses = useRef(statuses);
+	useEffect(() => {
+		const stopped = settled(lastStatuses.current, statuses);
+		lastStatuses.current = statuses;
+		if (stopped.length > 0) void recheck(stopped);
+	}, [statuses]);
+	return { unreviewed, recheckUnreviewed: (id: string) => void recheck([id]) };
 }
+
+/** Whether a PR last checked at `last` (ms, never if undefined) is due another check, allowing for the poll's own jitter. */
+export const prPollDue = (last: number | undefined, now: number, every: number) => last === undefined || now - last >= every - PR_POLL / 2;
+
+const PR_POLL = 60_000;
 
 /** Keep open PRs' merge status current with `checkPr` (the latest render's), which also moves threads whose PR has merged to Done. */
 export function usePrPoll(stateRef: RefObject<State>, setMerge: Dispatch<SetStateAction<Record<string, PrStatus>>>, checkPr: (thread: Thread) => Promise<void>) {
@@ -166,20 +188,29 @@ export function usePrPoll(stateRef: RefObject<State>, setMerge: Dispatch<SetStat
 	checkPrRef.current = checkPr;
 	useEffect(() => {
 		let polling = false;
+		// When each thread's PR was last checked, for hosts that are checked less often than the poll runs.
+		const lastPolled = new Map<string, number>();
 		const poll = async () => {
 			if (polling) return;
 			polling = true;
 			try {
-				const threads = stateRef.current.threads;
+				const { threads, projects } = stateRef.current;
 				// Threads that left PR (by hand, or closed) no longer have a status worth showing.
 				setMerge(m => Object.fromEntries(Object.entries(m).filter(([id]) => threads.some(t => t.id === id && t.column === 'pr' && t.pr))));
-				for (const thread of threads) await checkPrRef.current(thread);
+				for (const thread of threads) {
+					const project = projects.find(p => p.name === thread.project);
+					if (thread.column !== 'pr' || !thread.pr || !project) continue;
+					const host = await prHost(project.path);
+					if (!prPollDue(lastPolled.get(thread.id), Date.now(), host.pollEvery)) continue;
+					lastPolled.set(thread.id, Date.now());
+					await checkPrRef.current(thread);
+				}
 			} finally {
 				polling = false;
 			}
 		};
 		poll();
-		const timer = setInterval(poll, 60_000);
+		const timer = setInterval(poll, PR_POLL);
 		return () => clearInterval(timer);
 	}, []);
 }

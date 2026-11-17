@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { commandsText, parseCommands, parseRunStatuses, runPrefix, runSessionName, terminalCommand, threadRunning, tmuxAttach } from './commands.js';
+import { commandsText, parseCommands, parseRunStatuses, parseSnapshot, runPrefix, runSessionName, terminalCommand, threadRunning, tmuxAttach } from './commands.js';
 import type { Project, Thread } from './state.js';
 
 const project = { name: 'my.web' } as Project;
@@ -75,4 +75,14 @@ test("commands are edited a line each, the name up to the first colon", () => {
 		commands: [{ name: 'test', command: 'npm test' }],
 		problems: ['"oops" isn\'t name: command', '"empty:" isn\'t name: command', 'a second "test"'],
 	});
+});
+
+test("parseSnapshot keeps the board session's windows and every run session's status", () => {
+	const lines = ['$0\too-board\too\t\t1', '$0\too-12\too\t\t1', '$4\tdev\too-run_web_12_dev\t\t1', '$5\tsh\too-run_web_main_lint\t2\t0', '$5\tother\too-run_web_main_lint\t2\t0', '$6\tvim\tmine\t\t1'];
+	const { windows, runs } = parseSnapshot(lines.join('\n'), '$0');
+	assert.deepEqual(windows, ['oo-board', 'oo-12']);
+	assert.deepEqual([...runs], [
+		['oo-run_web_12_dev', { running: true, attached: 1 }],
+		['oo-run_web_main_lint', { running: false, exit: 2, attached: 0 }],
+	]);
 });

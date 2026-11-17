@@ -71,6 +71,7 @@ export function fakeBoard(state: State, overrides: Partial<Board> = {}): Board &
 		liveWindows: () => new Set(),
 		sessionStarts: new Map(),
 		refreshWindows: async () => {},
+		recheckUnreviewed: () => {},
 		setMerge: next => void (merge = typeof next === 'function' ? next(merge) : next),
 		pendingLocal: new Map(),
 		setMessage: message => void messages.push(message),
