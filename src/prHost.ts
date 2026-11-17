@@ -158,6 +158,8 @@ export type PrHost = {
 	name: 'GitHub' | 'Bitbucket';
 	/** Whether PRs can be reviewed from the viewer; Bitbucket's are reviewed in its web UI. */
 	canReview: boolean;
+	/** How long the board leaves between checks on an open PR (ms), from what a check costs. */
+	pollEvery: number;
 	findPr(cwd: string, branch: string): Promise<Pr | undefined>;
 	createPr(cwd: string, thread: Thread, title: string, body: string, base?: string): Promise<Pr>;
 	retargetPr(cwd: string, pr: Pr, base: string): Promise<void>;

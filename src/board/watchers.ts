@@ -4,7 +4,7 @@ import { unwatchFile, watchFile } from 'node:fs';
 import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { tmuxSnapshot, type RunStatus } from '../commands.js';
 import { isDirty, restoreChanges } from '../git.js';
-import type { PrStatus } from '../prHost.js';
+import { prHost, type PrStatus } from '../prHost.js';
 import { STATE_FILE, loadState, saveState, stillSaved, type Saved, type State, type Thread } from '../state.js';
 import { EVENTS_FILE, EventReader, fromThreadDir, nextStatus, type Status } from '../status.js';
 import { threadDir } from '../threads.js';
@@ -177,26 +177,40 @@ export function useUnreviewed(stateRef: RefObject<State>, statuses: Record<strin
 	return { unreviewed, recheckUnreviewed: (id: string) => void recheck([id]) };
 }
 
+/** Whether a PR last checked at `last` (ms, never if undefined) is due another check, allowing for the poll's own jitter. */
+export const prPollDue = (last: number | undefined, now: number, every: number) => last === undefined || now - last >= every - PR_POLL / 2;
+
+const PR_POLL = 60_000;
+
 /** Keep open PRs' merge status current with `checkPr` (the latest render's), which also moves threads whose PR has merged to Done. */
 export function usePrPoll(stateRef: RefObject<State>, setMerge: Dispatch<SetStateAction<Record<string, PrStatus>>>, checkPr: (thread: Thread) => Promise<void>) {
 	const checkPrRef = useRef(checkPr);
 	checkPrRef.current = checkPr;
 	useEffect(() => {
 		let polling = false;
+		// When each thread's PR was last checked, for hosts that are checked less often than the poll runs.
+		const lastPolled = new Map<string, number>();
 		const poll = async () => {
 			if (polling) return;
 			polling = true;
 			try {
-				const threads = stateRef.current.threads;
+				const { threads, projects } = stateRef.current;
 				// Threads that left PR (by hand, or closed) no longer have a status worth showing.
 				setMerge(m => Object.fromEntries(Object.entries(m).filter(([id]) => threads.some(t => t.id === id && t.column === 'pr' && t.pr))));
-				for (const thread of threads) await checkPrRef.current(thread);
+				for (const thread of threads) {
+					const project = projects.find(p => p.name === thread.project);
+					if (thread.column !== 'pr' || !thread.pr || !project) continue;
+					const host = await prHost(project.path);
+					if (!prPollDue(lastPolled.get(thread.id), Date.now(), host.pollEvery)) continue;
+					lastPolled.set(thread.id, Date.now());
+					await checkPrRef.current(thread);
+				}
 			} finally {
 				polling = false;
 			}
 		};
 		poll();
-		const timer = setInterval(poll, 60_000);
+		const timer = setInterval(poll, PR_POLL);
 		return () => clearInterval(timer);
 	}, []);
 }

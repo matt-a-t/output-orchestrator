@@ -95,6 +95,8 @@ export async function mergePr(cwd: string, number: number): Promise<string> {
 export const github: PrHost = {
 	name: 'GitHub',
 	canReview: true,
+	// gh is cheap to run.
+	pollEvery: 60_000,
 	findPr,
 	createPr,
 	retargetPr,

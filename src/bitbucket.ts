@@ -151,6 +151,8 @@ const noReviews = (): never => {
 export const bitbucket: PrHost = {
 	name: 'Bitbucket',
 	canReview: false,
+	// Each check is two twg runs, ~2.3 CPU-seconds each just to start, so merges outside the board show up late.
+	pollEvery: 15 * 60_000,
 
 	async findPr(cwd: string, branch: string) {
 		const open = await twg<BitbucketPr[]>(cwd, ['pull-requests', 'query', '--source', branch, '--state', 'OPEN', '--limit', '1']);
