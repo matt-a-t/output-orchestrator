@@ -18,7 +18,6 @@ Works on macOS, Linux and WSL.
 | git | any recent | worktrees and branches | usually already there |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | | the threads themselves | `npm i -g @anthropic-ai/claude-code` |
 | [GitHub CLI](https://cli.github.com) | | opening PRs on GitHub and noticing when they merge; run `gh auth login` once | `brew install gh` / [cli.github.com](https://github.com/cli/cli#installation) |
-| [twg](https://developer.atlassian.com/cloud/twg-cli/) | | the same for repos on bitbucket.org; run `twg setup bitbucket` once | [installation](https://developer.atlassian.com/cloud/twg-cli/getting-started/installation/) |
 | [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `v`) | `brew install git-delta` / `apt install git-delta` |
 | vim | | commenting on diffs (`c`) | usually already there |
 
@@ -227,7 +226,7 @@ thread on another's branch from the outset, use `oo thread add <title> --from <i
 blocker at most, and taking that one off puts its base back on the default branch.
 
 When the thread it builds on merges (or is moved to Done), the thread goes back onto the default branch: its
-base, and its PR if it has one (`gh pr edit --base`, or twg on Bitbucket), and its claude is told. Its branch still has the other
+base, and its PR if it has one (`gh pr edit --base`, or Bitbucket's API), and its claude is told. Its branch still has the other
 thread's commits under its own, which a squash merge leaves behind, so the next `u` moves only the thread's own
 commits onto `origin/main`. If the other thread is archived instead, the thread's base goes back the same way but its
 PR is left alone, and those commits count as its own work.
@@ -299,7 +298,7 @@ a thread), with the same care needed quoting them.
 ### PRs, Follow-up and Done
 
 Moving a thread to PR pushes its branch and opens a PR into the repo's default branch with
-`gh pr create` (or twg, for a repo on bitbucket.org: see [Bitbucket](#bitbucket)). A thread that builds on another's branch (see [Blocked threads](#blocked-threads)) opens its
+`gh pr create` (or Bitbucket's API, for a repo on bitbucket.org: see [Bitbucket](#bitbucket)). A thread that builds on another's branch (see [Blocked threads](#blocked-threads)) opens its
 PR into that branch instead, so the PR shows only its own work. That branch has to be pushed with all its
 commits first, which opening the other thread's PR does. claude drafts the title and description
 from the thread's commits and diff (with the ticket added, see [Tickets](#tickets)), and they open in vim for you to change first (an empty title
@@ -342,14 +341,21 @@ about, which go on the PR as comments on those lines. Leave it untouched, or `:c
 
 #### Bitbucket
 
-A project whose `origin` is on bitbucket.org has its PRs opened, followed and merged through
-[twg](https://developer.atlassian.com/cloud/twg-cli/) (`twg bitbucket pull-requests …`) rather than gh: moving
-a thread to PR, the card's merge state, stacked PRs being pointed at a new base, and `v` all work the same.
-Reviews and comments are left to Bitbucket's site, so the viewer has `m` merge on every PR (Bitbucket decides
-whether you may) and no `a`, `x` or `c`; `b` opens the PR there. twg needs a Bitbucket API token (`twg setup
-bitbucket`). If twg keeps saying the token is invalid even after setting it up again, give it the token in the
-environment instead, as `TWG_BBC_TOKEN` with `TWG_BBC_USER` set to your Atlassian email. The board runs in
-tmux, so set them there too (`tmux set-environment -g`).
+A project whose `origin` is on bitbucket.org has its PRs opened, followed and merged through Bitbucket's REST
+API (`api.bitbucket.org/2.0`) rather than gh: moving a thread to PR, the card's merge state, stacked PRs being
+pointed at a new base, and `v` all work the same. Reviews and comments are left to Bitbucket's site, so the viewer
+has `m` merge on every PR (Bitbucket decides whether you may) and no `a`, `x` or `c`; `b` opens the PR there.
+
+The board needs an [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens) made with
+Bitbucket scopes (create it "with scopes", pick Bitbucket, and give it read and write on pull requests and read on
+repositories). Set it as `BITBUCKET_API_TOKEN`, with `BITBUCKET_EMAIL` set to your Atlassian email, in the shell you
+start `oo` from. The board runs in tmux, so set them there too (`tmux set-environment -g`). They're only ever sent
+to api.bitbucket.org; a 401 means one of them is wrong.
+
+Bitbucket doesn't publish its merge checks, so the card's merge state is read from what the API does say: a file
+in conflict shows "conflicts with base", changes requested or a failed build "blocked", and anything else "ready to
+merge". A rule of the repo's own (required approvals, open tasks, commits behind) isn't shown; merging then fails
+with Bitbucket's explanation.
 
 `u` brings a thread up to date: it fetches the repo's default branch and rebases the thread's
 branch on `origin/main` (or whatever the default is), keeping uncommitted changes. A thread that builds on
