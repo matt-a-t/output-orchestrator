@@ -7,7 +7,7 @@ import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, P
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
 import { contextUse, describeContext, worthFreshStart } from './transcripts.js';
 import { sanitize } from './sanitize.js';
-import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
+import { fetchTicket, normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>] [--from <id>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -27,6 +27,9 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               or bring it back (no direction: toggle, like o on the board). Needs the board running.
   oo thread plan [id] --plan-file <path>|-
                               replace the thread's plan
+  oo thread ticket [id] (<key> | --clear)
+                              set or replace the thread's ticket (as add --ticket takes it), or clear it;
+                              the branch is renamed after it unless it's been pushed or has a PR
   oo thread priority [id] <${PRIORITIES.join('|')}>
                               high threads sit at the top of their column on the board, low ones at the bottom
   oo thread todo [id] set --file <path>|-
@@ -294,6 +297,23 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (!boardRunning(ctx.dir)) return fail('Opening a PR needs the board running');
 		// claude drafting the description and the push can take a few minutes.
 		return report(await sendRequest({ op: 'pr', thread, title, body }, { dir: ctx.dir, timeoutMs: 5 * 60_000 }));
+	}
+	if (sub === 'ticket') {
+		const { positional, has } = parseArgs(rest, [], ['clear']);
+		const clear = has('clear');
+		if (positional.length > (clear ? 1 : 2) || (!clear && !positional.length)) throw new UsageError('oo thread ticket [id] (<key> | --clear)');
+		const key = clear ? undefined : positional.at(-1);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === (clear ? 1 : 2) ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
+		const projectName = state.threads.find(t => t.id === thread)!.project;
+		const project = state.projects.find(p => p.name === projectName);
+		if (!project) return fail(unknownProject(projectName));
+		const ref = await resolveTicket(project, key);
+		// What it says, for show to quote, when the tracker can be read; it's still set without.
+		const ticket = ref && { ...ref, ...(await fetchTicket(project, ref.key).catch(() => undefined)) };
+		const response = await change({ op: 'ticket', thread, ticket: ticket ?? null }, ctx);
+		if (!response.ok) return fail(response.message);
+		console.log(response.message);
+		return 0;
 	}
 	if (sub === 'priority') {
 		const { positional } = parseArgs(rest, [], []);
