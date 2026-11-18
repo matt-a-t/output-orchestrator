@@ -70,7 +70,10 @@ in Local or have uncommitted changes. `x` archives an idea you're done with.
 Leaving Planned (or opening a thread) gives it its own worktree and branch (`av-123-<title>` from its ticket, or `oo/<title>` without one),
 under `~/.local/share/output-orchestrator/worktrees/`, and claude runs there. If a thread in
 Planned has claude make a plan and you approve it, the plan is saved to the thread and the thread
-moves to Active.
+moves to Active. If planning ran to 50k tokens of context or more, that claude only saves the plan's
+checkpoints and stops. The board then starts a fresh claude on the plan and checkpoints to do the work, so
+every turn of the implementation doesn't carry everything planning read. The planning conversation stays
+on disk for `claude --resume`.
 
 Thread numbers (`#12`) only mean something on this machine's board, so they stay out of git:
 branches and PRs are named after the thread's ticket instead (see [Tickets](#tickets)).
@@ -319,7 +322,9 @@ if the checkout has uncommitted changes, it stays in PR until they're dealt with
 
 A merged thread with `after merge:` checkpoints left goes to **Follow-up** instead. It keeps its worktree,
 and its claude is told the PR merged and which steps are left: right away if it's closed (resumed in the
-background), otherwise once its turn ends. It works through them like any other checkpoints, showing you any
+background), otherwise once its turn ends. A conversation of 50k tokens or more isn't resumed for this: by
+the time a PR merges its cache has usually gone cold. A fresh claude on the plan and checkpoints is started
+instead, after closing the old one if it's at its prompt. It works through them like any other checkpoints, showing you any
 query or command against shared or production systems before running it and committing nothing. Its card
 shows ⤳ with how many are left, then ✓ done, and you move it on to Done yourself (`L` or `F`). Anything can
 wait in Follow-up: `L` from PR moves a thread there by hand once its PR has merged.
