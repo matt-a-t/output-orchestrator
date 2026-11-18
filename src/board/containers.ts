@@ -16,8 +16,8 @@ export function useContainerSweep(board: Board) {
 		void (async () => {
 			const containers = await threadContainers();
 			const stray = strayContainers(containers, threads, projects);
-			for (const name of stray) await removeContainer(name);
-			for (const name of containers.keys()) if (!stray.includes(name)) knownPorts.set(name, await publishedPorts(name));
+			const kept = [...containers.keys()].filter(name => !stray.includes(name));
+			await Promise.all([...stray.map(removeContainer), ...kept.map(async name => knownPorts.set(name, await publishedPorts(name)))]);
 			await restoreForwards(board);
 			if (stray.length) board.setMessage(`Removed ${stray.length} container${stray.length === 1 ? '' : 's'} no thread needs any more`);
 			setFound(n => n + 1);

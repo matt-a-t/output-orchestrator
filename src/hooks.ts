@@ -1,6 +1,5 @@
 // Per-project hooks: shell commands set in the project's settings (P) for things that happen on the board.
-import { execa } from 'execa';
-import { containerScript, stopKeyed } from './container.js';
+import { paneCommand, recordPaneContainer, stopPaneContainer } from './container.js';
 import { errorMessage } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { HOOK_LABELS, type Column, type Project, type ProjectHook, type Thread } from './state.js';
@@ -40,20 +39,11 @@ export type HookOptions = { container?: string };
  * hook itself in `container`, then a line saying how it exited and a shell on the host to read its output in.
  */
 export function hookScript(env: string[], cwd: string, window: string, container?: string): string {
-	const command = container ? containerScript({ name: container, cwd, env, key: window }, 'OO_HOOK') : 'sh -c "$OO_HOOK"';
+	const command = paneCommand('OO_HOOK', container ? { name: container, cwd, env, key: window } : undefined);
 	return `${command}; status=$?; echo; echo "[oo] $OO_HOOK_NAME hook exited with status $status"; exec "\${SHELL:-sh}"`;
 }
 
-// The tmux option a hook's window keeps its container's name in, so the next hook of its kind can stop it there.
-const CONTAINER_OPTION = '@oo-container';
-
-/** Close the hook's window, stopping what it started in a container too: closing the window alone leaves that running. */
-async function stopHook(window: string): Promise<void> {
-	const option = await execa('tmux', ['show-options', '-w', '-v', '-t', `:${window}`, CONTAINER_OPTION], { reject: false });
-	const container = option.exitCode === 0 ? option.stdout.trim() : '';
-	if (container) await stopKeyed(container, window);
-	await killWindow(window);
-}
+const windowTarget = (window: string) => ['-w', '-t', `:${window}`];
 
 /**
  * Run the project's `hook` for the thread in `cwd`, in a background tmux window that stays open
@@ -71,10 +61,12 @@ export async function runHook(
 	const command = project.hooks[hook]?.trim();
 	if (!command) return;
 	const window = hookWindowName(project, hook);
-	await stopHook(window);
+	// Closing the window alone would leave what the last hook started in a container running there.
+	if (project.container) await stopPaneContainer(windowTarget(window), window);
+	await killWindow(window);
 	const env = { OO_HOOK: command, ...hookEnv(project, hook, thread, extraEnv) };
 	await openWindow(window, `hook:${project.name}`, cwd, ['sh', '-c', hookScript(Object.keys(env), cwd, window, container)], env, { background: true });
-	if (container) await execa('tmux', ['set-option', '-w', '-t', `:${window}`, CONTAINER_OPTION, container]);
+	if (container) await recordPaneContainer(windowTarget(window), container);
 	return `running ${project.name}'s ${HOOK_LABELS[hook]} hook in window ${window}${container ? ` (in ${container})` : ''}`;
 }
 

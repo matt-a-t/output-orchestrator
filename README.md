@@ -255,10 +255,11 @@ ports again when it restarts.
 
 What a container sees:
 
-- Its worktree, and the project's `.git`, so it can commit. `.git/hooks` and `.git/config` are read-only, since
-  git on your machine runs them.
-- oo's data folder (`~/.local/share/output-orchestrator`), so `oo thread` works from inside, but none of the
-  other threads' worktrees.
+- Its worktree, and the project's `.git`, so it can commit, push and set up tracking branches. `.git/hooks` is
+  read-only, since git on your machine runs them.
+- oo's data folder (`~/.local/share/output-orchestrator`), read-only, so `oo thread` works from inside, but none
+  of the other threads' worktrees. Only the two files `oo thread` and claude's hooks add to, `requests.jsonl` and
+  `events.jsonl`, are writable: `state.json` and the claude settings your other claudes run hooks from aren't.
 - From `~/.claude`, only this worktree's transcripts and the project's memory, plus your settings, `CLAUDE.md`,
   skills, agents, commands and keybindings read-only. Not your credentials or other projects' transcripts.
 - Your `~/.gitconfig`, read-only. Your git name and email are passed in too.
@@ -269,11 +270,19 @@ oo uses only to start the firewall) can use those. The firewall (`docker/init-fi
 outgoing traffic except DNS, claude's own services, GitHub, the npm registry and the project's egress hosts.
 Host names are looked up when the container starts, so a host whose addresses change needs a restart (a
 stopped and started container picks them up). If the firewall can't start, the container is removed rather
-than left open.
+than left open, and oo checks it's up each time it uses a running container.
 
-One gap remains: `state.json` is writable from the container, as it has to be for `oo thread` to work. So a
-container could still change another thread's record on the board, though not its worktree. The rule that a
-thread's claude changes only its own thread is still a convention, as it is without containers.
+Changing a project's container settings (`P`) remakes its threads' containers, but not under anything running
+in one: a container is made again once its claude, shells and commands have stopped, e.g. when claude idles out.
+
+Two gaps remain:
+
+- `requests.jsonl` is writable, as it has to be for `oo thread` to work, so a container can ask the board to do
+  anything a thread's claude can ask, for any thread (move it, message it, edit its plan). The rule that a
+  thread's claude changes only its own thread is still a convention, as it is without containers.
+- `.git` is shared and writable, since the thread works in git. A container can change the repo's git config
+  and other threads' branches, and git on your machine (the board's, or yours in the project) reads that
+  config, so a setting that runs a command could get one run outside the container.
 
 ### Blocked threads
 

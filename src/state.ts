@@ -123,6 +123,8 @@ const ThreadSchema = z.preprocess(
 		column: ColumnSchema,
 		// In Local: the branch is checked out in the project's own checkout, and claude works there (one per project).
 		local: z.boolean().optional(),
+		// In Local by forwarding its project's ports to its container, not by checking its branch out (see board/local.ts).
+		forwarded: z.boolean().optional(),
 		color: z.enum(COLORS).optional(),
 		// Left out for normal, which most threads are.
 		priority: z.enum(PRIORITIES).optional(),

@@ -3,16 +3,17 @@
 // Everything is mounted at its host path, so worktree paths, transcripts and `--resume` mean the same inside.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, userInfo } from 'node:os';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
-import { shellQuote } from './tmux.js';
-import { DATA_DIR, PRIVATE_FILE, type ContainerSetting, type Project, type Thread } from './state.js';
+import { currentSessionId, shellQuote, threadWindowName } from './tmux.js';
+import { transcriptDir } from './transcripts.js';
+import { DATA_DIR, hidden, PRIVATE_FILE, type ContainerSetting, type Project, type Thread } from './state.js';
 
 /** The checkout oo runs from (its dist, and the node_modules that needs), mounted read-only for claude's hooks and `oo`. */
-export const OO_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const OO_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 /** Claude's long-lived token, from `claude setup-token`: the container gets it in place of ~/.claude's credentials. */
 export const TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
@@ -23,11 +24,14 @@ export type Paths = { home: string; dataDir: string; ooDir: string; uid: number;
 /** Your git name and email, as the host's git has them for the project. */
 export type GitIdentity = { name?: string; email?: string };
 
-/** The project's git identity on the host, which may come from includes and places the container doesn't see. */
-export async function gitIdentity(repo: string): Promise<GitIdentity> {
+const identities = new Map<string, Promise<GitIdentity>>();
+
+/** The project's git identity on the host, which may come from includes and places the container doesn't see. Read once per repo. */
+function gitIdentity(repo: string): Promise<GitIdentity> {
 	const get = (key: string) => execa('git', ['-C', repo, 'config', key], { reject: false }).then(r => r.stdout.trim() || undefined);
-	const [name, email] = await Promise.all([get('user.name'), get('user.email')]);
-	return { name, email };
+	let identity = identities.get(repo);
+	if (!identity) identities.set(repo, (identity = Promise.all([get('user.name'), get('user.email')]).then(([name, email]) => ({ name, email }))));
+	return identity;
 }
 
 /** Git's own variables for the identity, so commits in the container are yours. */
@@ -36,14 +40,16 @@ const gitEnv = ({ name, email }: GitIdentity = {}) => [
 	...(email ? [`GIT_AUTHOR_EMAIL=${email}`, `GIT_COMMITTER_EMAIL=${email}`] : []),
 ];
 
-export const hostPaths = (): Paths => ({ home: homedir(), dataDir: DATA_DIR, ooDir: OO_DIR, uid: userInfo().uid, gid: userInfo().gid });
+const hostPaths = (): Paths => ({ home: homedir(), dataDir: DATA_DIR, ooDir: OO_DIR, uid: userInfo().uid, gid: userInfo().gid });
+
+export type ContainerProject = Project & { container: ContainerSetting };
 
 export type Mount = { kind: 'bind'; source: string; target: string; readonly?: boolean } | { kind: 'tmpfs'; target: string };
 
 export const containerName = (thread: Pick<Thread, 'project' | 'id'>) => `oo-${thread.project.replace(/[^a-zA-Z0-9_.-]/g, '-')}-${thread.id}`;
 
-/** Where claude keeps a directory's transcripts (see transcripts.ts), and the project's memory. */
-const claudeProjectDir = (home: string, cwd: string) => join(home, '.claude', 'projects', resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-'));
+/** Where claude keeps a directory's transcripts, and the project's memory. */
+const claudeProjectDir = (home: string, cwd: string) => transcriptDir(cwd, home);
 
 /**
  * The container's own home directory, on the host: claude's config and caches live there between runs.
@@ -59,13 +65,23 @@ const CLAUDE_READONLY = ['settings.json', 'CLAUDE.md', 'skills', 'agents', 'comm
 const GIT_READONLY = ['.gitconfig', '.config/git'];
 
 /**
+ * The only files in DATA_DIR a container writes: claude's hooks' events and `oo thread`'s requests. The rest
+ * (state.json, the claude settings host claudes run hooks from, bin/oo) is read-only, else a container could
+ * have the host run what it liked. Both are only ever appended to or emptied, never replaced, so their binds hold.
+ */
+const DATA_WRITABLE = ['events.jsonl', 'requests.jsonl'];
+
+/** Where init-firewall marks the firewall as up: a root-owned tmpfs, so it goes when the container stops (and its rules with it) and only root can write it. */
+const FIREWALL_DIR = '/run/oo';
+
+/**
  * What the container mounts, in order: a parent before what's mounted inside it.
- * - Its own home at $HOME, with DATA_DIR (state, requests, events) on top, but not the other threads' worktrees
- *   or homes, which tmpfs hides, and then only this thread's worktree.
- * - The project's .git, which the worktree's commits go into, with its hooks and config read-only: the host runs
- *   those, so a container writing them could get out.
+ * - Its own home at $HOME, with DATA_DIR (state, requests, events) on top, read-only but for DATA_WRITABLE, and
+ *   not the other threads' worktrees or homes, which tmpfs hides; then only this thread's worktree.
+ * - The project's .git, which the worktree's commits go into, with its hooks read-only, since git on the host runs
+ *   them. Its config stays writable: `git push -u` and tracking branches write there.
  * - Only this directory's transcripts and the project's memory from ~/.claude, not every project's or the credentials.
- * `existing` says which optional host paths are there (the ~/.claude bits and the project's .git/config).
+ * `existing` says which optional host paths are there (the ~/.claude bits and your git config).
  */
 export function mounts(project: Project, thread: Pick<Thread, 'project' | 'id'>, cwd: string, paths: Paths, existing: (path: string) => boolean = existsSync): Mount[] {
 	const bind = (path: string, readonly = false): Mount => ({ kind: 'bind', source: resolve(path), target: resolve(path), ...(readonly ? { readonly } : {}) });
@@ -73,13 +89,13 @@ export function mounts(project: Project, thread: Pick<Thread, 'project' | 'id'>,
 	const claude = join(paths.home, '.claude');
 	const all: Mount[] = [
 		{ kind: 'bind', source: containerHome(paths, thread), target: paths.home },
-		bind(paths.dataDir),
+		bind(paths.dataDir, true),
+		...DATA_WRITABLE.map(name => bind(join(paths.dataDir, name))),
 		{ kind: 'tmpfs', target: join(paths.dataDir, 'worktrees') },
 		{ kind: 'tmpfs', target: homesDir(paths) },
 		bind(cwd),
 		bind(git),
 		bind(join(git, 'hooks'), true),
-		...(existing(join(git, 'config')) ? [bind(join(git, 'config'), true)] : []),
 		bind(paths.ooDir, true),
 		bind(claudeProjectDir(paths.home, cwd)),
 		bind(join(claudeProjectDir(paths.home, project.path), 'memory')),
@@ -103,7 +119,7 @@ const mountArg = (m: Mount) =>
  * published on the host's loopback only, at ports docker picks (publishedPorts reads them).
  * The label `oo.config` is a hash of the rest, so a container made from different settings is made again.
  */
-export function runArgs(project: Project & { container: ContainerSetting }, thread: Pick<Thread, 'project' | 'id'>, cwd: string, paths: Paths, existing?: (path: string) => boolean): string[] {
+export function runArgs(project: ContainerProject, thread: Pick<Thread, 'project' | 'id'>, cwd: string, paths: Paths, existing?: (path: string) => boolean): string[] {
 	const args = [
 		'--name',
 		containerName(thread),
@@ -124,6 +140,8 @@ export function runArgs(project: Project & { container: ContainerSetting }, thre
 		'--security-opt',
 		'no-new-privileges',
 		...mounts(project, thread, cwd, paths, existing).flatMap(mountArg),
+		'--tmpfs',
+		`${FIREWALL_DIR}:mode=755`,
 		...project.container.ports.flatMap(port => ['-p', `127.0.0.1::${port}`]),
 		'--label',
 		`oo.thread=${thread.id}`,
@@ -142,9 +160,10 @@ export const configLabel = (args: string[]) => args.find(a => a.startsWith('oo.c
 /**
  * The command a tmux window or pane runs to have `command` run in the container, in `cwd`: `env` is set there,
  * DATA_DIR/bin (the `oo` wrapper) goes on the image's own PATH, and claude's token passes through by name, so
- * it's in no process's arguments.
+ * it's in no process's arguments. Like paneCommand, it records its session under `key` (the thread's window),
+ * for stopKeyed: closing the window doesn't end it.
  */
-export function execCommand(name: string, cwd: string, command: string[], env: Record<string, string>, { dataDir = DATA_DIR, interactive = true } = {}): string[] {
+export function execCommand(name: string, cwd: string, command: string[], env: Record<string, string>, { dataDir = DATA_DIR, interactive = true, key = name } = {}): string[] {
 	return [
 		'docker',
 		'exec',
@@ -157,7 +176,7 @@ export function execCommand(name: string, cwd: string, command: string[], env: R
 		name,
 		'sh',
 		'-c',
-		'PATH="$0:$PATH" exec "$@"',
+		`echo $$ >> ${pidFile(key)}; PATH="$0:$PATH" exec "$@"`,
 		join(dataDir, 'bin'),
 		...command,
 	];
@@ -181,6 +200,7 @@ export function parsePorts(stdout: string): Map<number, number> {
 export function prepareHome(project: Project, thread: Pick<Thread, 'project' | 'id'>, cwd: string, paths: Paths, existing: (path: string) => boolean = existsSync): void {
 	const home = containerHome(paths, thread);
 	mkdirSync(home, { recursive: true, mode: 0o700 });
+	for (const name of DATA_WRITABLE) appendFileSync(join(paths.dataDir, name), '', { mode: PRIVATE_FILE });
 	for (const m of mounts(project, thread, cwd, paths, existing)) {
 		if (m.kind !== 'bind') continue;
 		if (m.target === paths.home) continue;
@@ -212,12 +232,16 @@ async function inspect(name: string): Promise<{ running: boolean; config?: strin
 	return { running: running === 'true', config: config || undefined };
 }
 
-/** Lock egress down to the firewall's defaults and the project's hosts; the container goes if that fails, rather than run open. */
+/**
+ * Lock egress down to the firewall's defaults and the project's hosts, unless it's up already (init-firewall marks
+ * it in FIREWALL_DIR); the container goes if that fails, rather than run open.
+ */
 async function firewall(name: string, allow: string[]): Promise<void> {
-	const result = await docker(['exec', '-u', 'root', name, 'init-firewall', ...allow], { reject: false });
+	const script = `test -f ${FIREWALL_DIR}/firewall || exec init-firewall "$@"`;
+	const result = await docker(['exec', '-u', 'root', name, 'sh', '-c', script, 'sh', ...allow], { reject: false });
 	if (result.exitCode === 0) return;
 	await removeContainer(name);
-	const missing = /executable file not found|no such file/i.test(result.stderr);
+	const missing = /executable file not found|no such file|init-firewall: not found/i.test(result.stderr);
 	throw new Error(
 		missing
 			? `The image has no init-firewall, so ${name} can't be locked down — build it FROM the reference image (docker/thread.Dockerfile)`
@@ -229,33 +253,53 @@ async function firewall(name: string, allow: string[]): Promise<void> {
  * Have the thread's container running, making it (or making it again, if its settings changed since) or starting
  * it as needed, with its firewall up. Returns its published ports, container port → host port.
  */
-export async function ensureContainer(project: Project & { container: ContainerSetting }, thread: Thread, cwd: string, paths?: Paths): Promise<Map<number, number>> {
-	paths ??= { ...hostPaths(), git: await gitIdentity(project.path) };
+export function ensureContainer(project: ContainerProject, thread: Thread, cwd: string, paths?: Paths): Promise<Map<number, number>> {
+	// One at a time per container: two at once would both make it, and one would fail.
 	const name = containerName(thread);
+	const pending = ensuring.get(name);
+	if (pending) return pending;
+	const ensured = makeReady(project, thread, cwd, paths).finally(() => ensuring.delete(name));
+	ensuring.set(name, ensured);
+	return ensured;
+}
+
+const ensuring = new Map<string, Promise<Map<number, number>>>();
+
+async function makeReady(project: ContainerProject, thread: Thread, cwd: string, paths?: Paths): Promise<Map<number, number>> {
+	const name = containerName(thread);
+	const [git, inspected] = await Promise.all([paths ? undefined : gitIdentity(project.path), inspect(name)]);
+	paths ??= { ...hostPaths(), git };
 	const args = runArgs(project, thread, cwd, paths);
-	let current = await inspect(name);
-	if (current && current.config !== configLabel(args)) {
+	let current = inspected;
+	// Made from other settings: made again, but not under something running in it (claude, a shell, a command),
+	// which would go without warning. It's made again once they've stopped, e.g. when claude idles out.
+	if (current && current.config !== configLabel(args) && !(current.running && (await inUse(name)))) {
 		await removeContainer(name);
 		current = undefined;
 	}
 	if (!current) {
 		prepareHome(project, thread, cwd, paths);
-		await docker(args);
-		await firewall(name, project.container.allow);
-	} else if (!current.running) {
-		await docker(['start', name]);
-		// A stopped container loses its network, and the rules with it.
-		await firewall(name, project.container.allow);
-	}
+		const made = await docker(args, { reject: false });
+		// Another oo (`oo split` from a tmux key) may have just made it.
+		if (made.exitCode !== 0 && !/Conflict/i.test(made.stderr)) throw new Error(`docker couldn't make ${name}: ${made.stderr.trim()}`);
+	} else if (!current.running) await docker(['start', name]);
+	// Every time: a container left running without it (the board quit before it was up) mustn't be used open.
+	await firewall(name, project.container.allow);
 	const ports = await publishedPorts(name);
 	knownPorts.set(name, ports);
 	return ports;
 }
 
+/** Whether anything was started in the container with docker exec: those are the processes whose parent is outside it (0). */
+async function inUse(name: string): Promise<boolean> {
+	return (await containerProcesses(name)).split('\n').some(line => {
+		const [pid, ppid] = line.split(' ');
+		return ppid === '0' && pid !== '1';
+	});
+}
+
 /** Each container's published ports as ensureContainer last found them: read when it starts, never polled. */
 export const knownPorts = new Map<string, Map<number, number>>();
-
-export type ContainerProject = Project & { container: ContainerSetting };
 
 /** The project, if its threads run in containers. */
 export const containerProject = (project: Project | undefined): ContainerProject | undefined => (project?.container ? (project as ContainerProject) : undefined);
@@ -281,8 +325,29 @@ export async function forThread(
 	const withContainer = containerProject(project);
 	if (!withContainer) return { command, env };
 	if (needsToken && !token) throw new Error(NO_TOKEN);
+	if (token) await shareToken(token);
 	await ensureContainer(withContainer, thread, cwd);
-	return { command: execCommand(containerName(thread), cwd, command, env), env: { ...env, ...(token ? { [TOKEN_ENV]: token } : {}) } };
+	return { command: execCommand(containerName(thread), cwd, command, env, { key: threadWindowName(thread.id) }), env };
+}
+
+let sharedToken: string | undefined;
+
+/**
+ * Put claude's token in the tmux session's environment, which its new windows and panes get, so docker exec can
+ * pass it on by name. Through a private file tmux reads rather than its arguments, where any process could see it.
+ */
+async function shareToken(token: string): Promise<void> {
+	if (sharedToken === token) return;
+	if (!/^[\w.~+/=-]+$/.test(token)) throw new Error(`${TOKEN_ENV} has characters oo can't pass on safely — check it's what claude setup-token printed`);
+	const dir = mkdtempSync(join(tmpdir(), 'oo-token-'));
+	const file = join(dir, 'token.conf');
+	try {
+		writeFileSync(file, `set-environment -t ${await currentSessionId()} ${TOKEN_ENV} '${token}'\n`, { mode: PRIVATE_FILE });
+		await execa('tmux', ['source-file', file]);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+	sharedToken = token;
 }
 
 export async function publishedPorts(name: string): Promise<Map<number, number>> {
@@ -310,7 +375,9 @@ export function portsText(ports: Map<number, number> | undefined): string {
 
 /** Every process in the container as `pid ppid args`, like processList, for claudeShellRunning; its image may have no ps. */
 export async function containerProcesses(name: string): Promise<string> {
-	const script = 'for d in /proc/[0-9]*; do p=${d#/proc/}; pp=$(cut -d" " -f4 $d/stat 2>/dev/null) || continue; echo "$p $pp $(tr "\\0" " " < $d/cmdline 2>/dev/null)"; done';
+	// The parent pid is the second field after the name in its stat, which is in brackets and may have spaces in it.
+	// Not this script itself, which docker exec started too.
+	const script = 'for d in /proc/[0-9]*; do [ "${d#/proc/}" = $$ ] && continue; read -r s < $d/stat 2>/dev/null || continue; set -- ${s##*) }; echo "${d#/proc/} $2 $(tr "\\0" " " < $d/cmdline 2>/dev/null)"; done';
 	const result = await docker(['exec', name, 'sh', '-c', script], { reject: false });
 	return result.exitCode === 0 ? result.stdout : '';
 }
@@ -324,7 +391,7 @@ export function strayContainers(containers: Map<string, string>, threads: Thread
 		.filter(([name, id]) => {
 			const thread = threads.find(t => t.id === id && containerName(t) === name);
 			const project = thread && projects.find(p => p.name === thread.project);
-			return !thread || !project?.container || thread.column === 'done' || thread.column === 'archived' || thread.column === 'ideas';
+			return !thread || !project?.container || thread.column === 'done' || hidden(thread.column);
 		})
 		.map(([name]) => name);
 }
@@ -341,36 +408,59 @@ export async function threadContainers(): Promise<Map<string, string>> {
 	);
 }
 
-/** Where, in its container, a command containerScript started records its process group. */
+/** Where, in its container, the commands started under a key (paneCommand, execCommand) record their sessions, one pid a line. */
 const pidFile = (key: string) => `/tmp/oo-${key.replace(/[^\w.-]/g, '-')}.pid`;
 
+/** Where a tmux pane's command runs in a container: its name, the directory, the environment passed through by name, and the key it's stopped by. */
+export type PaneContainer = { name: string; cwd: string; env: string[]; key: string };
+
 /**
- * The shell line a tmux pane runs to have the command in `$variable` run in the container, in `cwd`, with each of
- * `env` passed through by name. docker exec doesn't pass a hangup on, so closing the pane would leave the command
- * running in the container: it records its process group (its pid, as the exec's session leader) under `key`,
- * for stopKeyed to end it by.
+ * The shell line a tmux pane runs for the command in `$variable` (which needs no quoting there): as it is, or in
+ * `container`. docker exec doesn't pass a hangup on, so closing the pane would leave the command running in the
+ * container: there it records its session (its pid, as the exec's session leader) under the key, for
+ * stopPaneContainer to end it by.
  */
-export function containerScript({ name, cwd, env, key }: { name: string; cwd: string; env: string[]; key: string }, variable: string): string {
-	const inner = `echo $$ > ${pidFile(key)}; exec sh -c "$${variable}"`;
+export function paneCommand(variable: string, container?: PaneContainer): string {
+	if (!container) return `sh -c "$${variable}"`;
+	const { name, cwd, env, key } = container;
+	const inner = `echo $$ >> ${pidFile(key)}; exec sh -c "$${variable}"`;
 	return `docker exec -it -w ${shellQuote(cwd)} ${env.map(v => `-e ${v}`).join(' ')} ${shellQuote(name)} sh -c ${shellQuote(inner)}`;
 }
 
 /**
- * The script that ends what containerScript started under `key`: TERM to its process group, then KILL if it's still
- * going after 5s, so a dev server started again finds its port free.
+ * The script that ends what was started in a container under `key`: each recorded docker exec is a session leader,
+ * so every process in its session (claude's shells, a dev server, an interactive shell's jobs) gets HUP and TERM,
+ * then KILL if any are still there after 5s, so a dev server started again finds its port free.
  */
 export function stopScript(key: string): string {
 	const file = pidFile(key);
 	return [
-		`pid=$(cat ${file} 2>/dev/null) || exit 0`,
-		'kill -TERM -$pid 2>/dev/null',
-		'i=0; while kill -0 -$pid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done',
-		'kill -KILL -$pid 2>/dev/null',
+		`leaders=$(cat ${file} 2>/dev/null) || exit 0`,
 		`rm -f ${file}`,
+		'members() { for d in /proc/[0-9]*; do read -r s < $d/stat 2>/dev/null || continue; set -- ${s##*) }; for l in $leaders; do [ "$4" = "$l" ] && echo ${d#/proc/}; done; done; }',
+		'm=$(members); [ -n "$m" ] || exit 0',
+		'kill -HUP $m 2>/dev/null; kill -TERM $m 2>/dev/null',
+		'i=0; while [ -n "$(members)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done',
+		'm=$(members); [ -z "$m" ] || kill -KILL $m 2>/dev/null; true',
 	].join('; ');
 }
 
-/** End what containerScript started under `key` in the container, if it's still going. */
+/** End what was started in the container under `key`, if any of it's still going. */
 export async function stopKeyed(name: string, key: string): Promise<void> {
 	await docker(['exec', name, 'sh', '-c', stopScript(key)], { reject: false });
+}
+
+// The tmux option a session or window running paneCommand in a container keeps the container's name in.
+const CONTAINER_OPTION = '@oo-container';
+
+/** Remember (or with no name, forget) which container the tmux `target` (e.g. `['-t', '=session:']`, or `['-w', '-t', ':window']`) runs its command in. */
+export async function recordPaneContainer(target: string[], name: string | undefined): Promise<void> {
+	await execa('tmux', ['set-option', ...(name ? [] : ['-u']), ...target, CONTAINER_OPTION, ...(name ? [name] : [])], { reject: false });
+}
+
+/** End what the tmux `target` started under `key` in its container (see recordPaneContainer), if it did and it's still going. */
+export async function stopPaneContainer(target: string[], key: string): Promise<void> {
+	const option = await execa('tmux', ['show-options', '-v', ...target, CONTAINER_OPTION], { reject: false });
+	const name = option.exitCode === 0 ? option.stdout.trim() : '';
+	if (name) await stopKeyed(name, key);
 }

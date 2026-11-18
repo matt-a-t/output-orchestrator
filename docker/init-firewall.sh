@@ -102,3 +102,8 @@ if curl -fsS --max-time 5 https://example.com >/dev/null 2>&1; then
 	warn "example.com is still reachable, so the firewall isn't working"
 	exit 1
 fi
+
+# Up: oo checks for this before using a running container. /run/oo is a tmpfs only root can write, emptied as the
+# container stops, which takes the rules with it.
+mkdir -p /run/oo
+touch /run/oo/firewall

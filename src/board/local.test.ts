@@ -158,12 +158,13 @@ test("with containers, Local forwards ports: no branch or clean checkout needed,
 	// The checkout's own changes and the thread's lack of a branch don't matter: neither moves.
 	writeFileSync(join(project, 'README'), 'yours\n');
 	assert.equal(await localProblem(board, { ...thread(), branch: undefined }, true), undefined);
-	board.updateThread('1', { local: true });
+	board.updateThread('1', { local: true, forwarded: true });
 	const before = await currentRef(project);
 	const left = await leaveLocal(board, thread());
 	assert.equal(left.ok, true);
 	assert.match(left.message, /out of Local; its ports are no longer forwarded/);
 	assert.equal(thread().local, undefined);
+	assert.equal(thread().forwarded, undefined);
 	assert.equal(await currentRef(project), before);
 	// The thread's worktree and its uncommitted work stay where they were.
 	await assertCarried(wt);

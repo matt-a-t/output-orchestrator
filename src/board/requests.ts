@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { errorMessage, resultMessage } from '../errors.js';
 import { RequestReader, requestsFile, respond, type Request, type Response } from '../requests.js';
 import { draftPr, withTicket } from '../prHost.js';
-import { applyRequest, moveProblem } from '../threads.js';
+import { applyRequest, forwardsPorts, moveProblem } from '../threads.js';
 import type { Board, Outcome } from './board.js';
 import { enterLocal, leaveLocal, localProblem } from './local.js';
 import { messageRequest } from './messages.js';
@@ -19,7 +19,7 @@ async function localRequest(board: Board, { id, thread: threadId, local }: Extra
 	const problem = await localProblem(board, thread, entering);
 	if (problem) return answer({ ok: false, message: problem });
 	// Nothing moves under a container's claude (its Local forwards ports), so it doesn't wait for one.
-	if (!thread.cwd && !board.project(thread.project)?.container && board.statuses()[thread.id] === 'working') {
+	if (!thread.cwd && !forwardsPorts(board.project(thread.project), thread) && board.statuses()[thread.id] === 'working') {
 		board.pendingLocal.set(thread.id, entering);
 		const where = entering ? 'goes into Local' : 'comes out of Local, back to its worktree,';
 		return answer({ ok: true, message: `#${thread.id} ${where} when its claude's turn ends` });

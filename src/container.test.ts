@@ -48,12 +48,18 @@ test('a container sees its own worktree, not the other threads\' or their homes'
 	for (const x of m.slice(1)) if (x.kind === 'bind') assert.equal(x.source, x.target);
 });
 
-test('the host runs .git\'s hooks and config, so the container can\'t change them', () => {
+test("the host runs .git's hooks and oo's settings, so the container can't change them", () => {
 	const m = mounts(project, thread, cwd, paths, all);
-	const readonly = (target: string) => m.find(x => x.target === target && x.kind === 'bind')?.kind === 'bind' && (m.find(x => x.target === target) as { readonly?: boolean }).readonly;
+	const readonly = (target: string) => (m.find(x => x.target === target && x.kind === 'bind') as { readonly?: boolean } | undefined)?.readonly;
 	assert.equal(readonly('/home/u/dev/app/.git'), undefined);
 	assert.equal(readonly('/home/u/dev/app/.git/hooks'), true);
-	assert.equal(readonly('/home/u/dev/app/.git/config'), true);
+	// git push -u and tracking branches write the config.
+	assert.ok(!m.some(x => x.target === '/home/u/dev/app/.git/config'));
+	// oo's data folder is read-only, state.json and the claude settings with it, but for what claude's hooks and oo thread write.
+	assert.equal(readonly(paths.dataDir), true);
+	assert.equal(readonly(`${paths.dataDir}/events.jsonl`), undefined);
+	assert.equal(readonly(`${paths.dataDir}/requests.jsonl`), undefined);
+	assert.ok(m.findIndex(x => x.target === paths.dataDir) < m.findIndex(x => x.target === `${paths.dataDir}/requests.jsonl`));
 	assert.equal(readonly(paths.ooDir), true);
 	// Your git config comes along read-only, so commits have your name.
 	assert.equal(readonly('/home/u/.gitconfig'), true);
@@ -107,10 +113,11 @@ test('a change to the image, ports or hosts changes the config label, so the con
 });
 
 test('commands run in the container with oo on PATH, and the token passed by name only', () => {
-	const command = execCommand('oo-app-7', cwd, ['claude', '--resume', 'abc'], { OO_THREAD_ID: '7' }, { dataDir: paths.dataDir });
+	const command = execCommand('oo-app-7', cwd, ['claude', '--resume', 'abc'], { OO_THREAD_ID: '7' }, { dataDir: paths.dataDir, key: 'oo-thread-7' });
+	// Its session is recorded under the window's key, since closing the window doesn't end it.
 	assert.deepEqual(command, [
 		'docker', 'exec', '-it', '-w', cwd, '-e', 'OO_THREAD_ID=7', '-e', 'CLAUDE_CODE_OAUTH_TOKEN', 'oo-app-7',
-		'sh', '-c', 'PATH="$0:$PATH" exec "$@"', `${paths.dataDir}/bin`, 'claude', '--resume', 'abc',
+		'sh', '-c', 'echo $$ >> /tmp/oo-oo-thread-7.pid; PATH="$0:$PATH" exec "$@"', `${paths.dataDir}/bin`, 'claude', '--resume', 'abc',
 	]);
 	assert.equal(execCommand('n', cwd, ['true'], {}, { interactive: false })[2], '-i');
 });

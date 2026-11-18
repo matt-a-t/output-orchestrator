@@ -64,6 +64,7 @@ export function useIdleClose(board: Board) {
 				if (candidates.length === 0) return;
 				const ps = await processList();
 				const closed: string[] = [];
+				const stopping: Promise<void>[] = [];
 				for (const { thread, stillQuiet } of candidates) {
 					const window = windows.find(w => w.name === threadWindowName(thread.id))!;
 					const project = containerProject(board.project(thread.project));
@@ -74,8 +75,9 @@ export function useIdleClose(board: Board) {
 					if (!(await closeClaude(board, thread))) continue;
 					closed.push(`#${thread.id}`);
 					// Its dev servers and databases stop using memory too, unless one of its commands or Local is using them.
-					if (project && !thread.local && !threadRunning(board.runs(), project, thread)) await stopContainer(containerName(thread));
+					if (project && !thread.local && !threadRunning(board.runs(), project, thread)) stopping.push(stopContainer(containerName(thread)));
 				}
+				await Promise.all(stopping);
 				if (closed.length) board.setMessage(`Closed idle claude for ${closed.join(', ')} · w or ⏎ resumes it`);
 			} catch {
 				// Not in tmux, or a window went as it was looked at: try again next time.

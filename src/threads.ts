@@ -16,7 +16,17 @@ import { killWindow, threadWindowName } from './tmux.js';
  * thread stays in its worktree.
  */
 export function inCheckout(project: Project | undefined, thread: Thread): boolean {
-	return !!thread.local && !thread.cwd && !project?.container;
+	return !!thread.local && !thread.cwd && !forwardsPorts(project, thread);
+}
+
+/**
+ * Whether Local, for this thread, forwards its project's ports to its container rather than move anything: as it
+ * went in, once it's in Local (so changing the project's setting meanwhile doesn't change how it comes out), else
+ * as its project is set up now.
+ */
+export function forwardsPorts(project: Project | undefined, thread: Thread): boolean {
+	if (thread.local) return !!thread.forwarded;
+	return !!project?.container && !thread.cwd;
 }
 
 /** Where the thread's work happens, if it has anywhere yet. */
@@ -382,16 +392,16 @@ export function moveProblem(state: State, thread: Thread, column: Column): strin
 /** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
 export function boardOnlyMove(project: Project | undefined, thread: Thread, column: Column): string | undefined {
 	if (column === 'pr') return `Moving #${thread.id} to PR opens its PR — use oo thread pr, or do it from the board`;
-	if (thread.local && !project?.container) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or o on the board)`;
-	return forwardedMoveProblem(thread, column);
+	if (thread.local && !forwardsPorts(project, thread)) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or o on the board)`;
+	return forwardedMoveProblem(project, thread, column);
 }
 
 /**
  * Why a thread in Local by port forwarding (see inCheckout) can't move to `column`, if it can't: Done and the hidden
  * columns remove its container, which Local's ports go to. Its other moves don't touch Local.
  */
-export function forwardedMoveProblem(thread: Thread, column: Column): string | undefined {
-	if (thread.local && (column === 'done' || hidden(column))) return `⚠ #${thread.id} is in Local — bring it back first (o on the board, or oo thread local out)`;
+export function forwardedMoveProblem(project: Project | undefined, thread: Thread, column: Column): string | undefined {
+	if (thread.local && forwardsPorts(project, thread) && (column === 'done' || hidden(column))) return `⚠ #${thread.id} is in Local — bring it back first (o on the board, or oo thread local out)`;
 }
 
 /** The state being changed: the board's, or state.json when it isn't running. */

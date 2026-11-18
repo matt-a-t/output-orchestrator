@@ -68,3 +68,21 @@ test("a port taken on the host stops Local, with none of the thread's ports left
 		taken.server.close();
 	}
 });
+
+test("leaving Local doesn't wait for connections still open, like a dev server's live reload", async () => {
+	const one = await echo('one');
+	const port = await freePort();
+	try {
+		await forward('1', [[port, one.port]]);
+		// Held open, as a browser tab's would be.
+		const held = connect(port, '127.0.0.1');
+		await new Promise(resolve => held.once('connect', resolve));
+		const closed = new Promise(resolve => held.once('close', resolve));
+		await unforward('1');
+		await closed;
+		assert.equal(forwarding('1'), false);
+	} finally {
+		await unforward('1');
+		await new Promise(resolve => one.server.close(resolve));
+	}
+});

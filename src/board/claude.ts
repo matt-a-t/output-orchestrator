@@ -5,9 +5,8 @@ import { useEffect, useRef } from 'react';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { stillWorking, unknownProject } from '../errors.js';
 import { DEFAULT_WAKE_PROMPT, hidden, type State, type Thread } from '../state.js';
-import type { Status } from '../status.js';
-import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE } from '../status.js';
-import { containerProject, forThread, threadShell } from '../container.js';
+import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE, type Status } from '../status.js';
+import { containerName, containerProject, forThread, stopKeyed, threadShell } from '../container.js';
 import { inCheckout, threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
 import { cacheLeft, contextUse, formatTokens, LARGE_CONTEXT, recentlyActive, shortDuration, type ContextUse } from '../transcripts.js';
@@ -118,8 +117,11 @@ export async function launchClaude(
 
 /** Close the thread's claude window, if it's open; returns whether it was. */
 export async function closeClaude(board: Board, thread: Thread): Promise<boolean> {
-	const open = (await windowNames()).includes(threadWindowName(thread.id));
-	await killWindow(threadWindowName(thread.id));
+	const window = threadWindowName(thread.id);
+	const open = (await windowNames()).includes(window);
+	// Closing the window doesn't end what it runs in a container (claude, its shells), so that's ended first.
+	if (open && containerProject(board.project(thread.project))) await stopKeyed(containerName(thread), window);
+	await killWindow(window);
 	await board.refreshWindows();
 	return open;
 }

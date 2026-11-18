@@ -2,7 +2,7 @@
 
 import { stillWorking } from '../errors.js';
 import { COLUMNS, type Thread } from '../state.js';
-import { doneProblem, forwardedMoveProblem, merged, moveProblem, moveWarning, shelveProblem, unblockedNote, unstackChildren } from '../threads.js';
+import { doneProblem, forwardedMoveProblem, forwardsPorts, merged, moveProblem, moveWarning, shelveProblem, unblockedNote, unstackChildren } from '../threads.js';
 import { threadWindowName } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -13,9 +13,10 @@ import { syncWorktree } from './worktree.js';
 export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS)[number]) {
 	if (thread.column === column) return;
 	// Its branch is checked out in the project's checkout, not its worktree, until it comes back. Opening its PR works from there.
-	if (thread.local && !board.project(thread.project)?.container && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — o brings it back to the board first`);
+	const project = board.project(thread.project);
+	if (thread.local && !forwardsPorts(project, thread) && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — o brings it back to the board first`);
 	// In Local by forwarding its ports, it moves freely but for Done, which removes its container.
-	const forwarded = forwardedMoveProblem(thread, column);
+	const forwarded = forwardedMoveProblem(project, thread, column);
 	if (forwarded) return board.setMessage(forwarded);
 	const problem = moveProblem(board.state(), thread, column);
 	if (problem) return board.setMessage(problem);
@@ -39,7 +40,6 @@ export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS
 		await syncWorktree(board, { ...thread, column }, thread.column);
 		if (restart) await restartClaude(board, { ...thread, column }, column === 'planned' ? 'plan' : 'auto');
 	};
-	const project = board.project(thread.project);
 	// Follow-up and Done are for merged work, so not while its PR is open.
 	if (!merged({ column }) || !thread.pr || !project) return void board.run(move, 'updating worktree');
 	board.run(async () => {

@@ -2,7 +2,7 @@
 // the board forwards the project's own ports on the host to the thread's container, so the browser (or anything
 // else) reaches the thread's dev server where it always does. Nothing moves, so switching threads is instant.
 
-import { createServer, connect, type Server } from 'node:net';
+import { createServer, connect, type Server, type Socket } from 'node:net';
 
 /** Each Local thread's listeners, by thread id. They live in the board, so they go when it quits; it sets them up again as it starts. */
 const forwards = new Map<string, Server[]>();
@@ -18,18 +18,24 @@ export function forwardMapping(ports: number[], published: Map<number, number>):
 	return { mapping: ports.map(p => [p, published.get(p)!]) };
 }
 
+/** Each listener's open connections: closing a listener waits for them, and a browser's keep-alive or a dev server's live reload never ends. */
+const connections = new WeakMap<Server, Set<Socket>>();
+
 function listen(port: number, host: string, target: number): Promise<Server> {
 	return new Promise((resolve, reject) => {
+		const open = new Set<Socket>();
 		const server = createServer(client => {
 			const upstream = connect(target, '127.0.0.1');
+			open.add(client);
 			client.pipe(upstream).pipe(client);
 			const end = () => {
+				open.delete(client);
 				client.destroy();
 				upstream.destroy();
 			};
-			client.on('error', end);
-			upstream.on('error', end);
+			for (const socket of [client, upstream]) socket.on('error', end).on('close', end);
 		});
+		connections.set(server, open);
 		server.once('error', reject);
 		server.listen({ port, host, exclusive: true }, () => {
 			server.off('error', reject);
@@ -39,7 +45,12 @@ function listen(port: number, host: string, target: number): Promise<Server> {
 	});
 }
 
-const close = (server: Server) => new Promise<void>(resolve => server.close(() => resolve()));
+/** Stop listening and drop the connections still open, which would otherwise keep going to this container. */
+const close = (server: Server) =>
+	new Promise<void>(resolve => {
+		server.close(() => resolve());
+		for (const socket of connections.get(server) ?? []) socket.destroy();
+	});
 
 /**
  * Forward each host port in `mapping` to its container port, on loopback: 127.0.0.1, and ::1 too where there is one,
