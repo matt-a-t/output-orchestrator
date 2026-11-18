@@ -26,6 +26,7 @@
   },
   "files": [
     "dist",
+    "docker",
     "npm-shrinkwrap.json"
   ],
   "scripts": {

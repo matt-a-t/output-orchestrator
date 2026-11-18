@@ -55,6 +55,8 @@ test('the host runs .git\'s hooks and config, so the container can\'t change the
 	assert.equal(readonly('/home/u/dev/app/.git/hooks'), true);
 	assert.equal(readonly('/home/u/dev/app/.git/config'), true);
 	assert.equal(readonly(paths.ooDir), true);
+	// Your git config comes along read-only, so commits have your name.
+	assert.equal(readonly('/home/u/.gitconfig'), true);
 });
 
 test('a path mounted twice is mounted once, the first way', () => {
@@ -84,6 +86,9 @@ test('the run args drop capabilities, publish ports on loopback and label the co
 	assert.deepEqual(args.slice(0, 2), ['run', '-d']);
 	assert.deepEqual(args.slice(-3), ['oo-thread', 'sleep', 'infinity']);
 	assert.match(joined, /--user 1000:1000 -e HOME=\/home\/u/);
+	// Commits made in it are yours, wherever your git config keeps your name.
+	const withGit = runArgs(project, thread, cwd, { ...paths, git: { name: 'Ann Lee', email: 'ann@example.com' } }, all);
+	for (const v of ['GIT_AUTHOR_NAME=Ann Lee', 'GIT_COMMITTER_NAME=Ann Lee', 'GIT_AUTHOR_EMAIL=ann@example.com', 'GIT_COMMITTER_EMAIL=ann@example.com']) assert.equal(withGit[withGit.indexOf(v) - 1], '-e');
 	assert.match(joined, /--cap-drop ALL --cap-add NET_ADMIN --cap-add NET_RAW --security-opt no-new-privileges/);
 	assert.match(joined, /-p 127\.0\.0\.1::3000 -p 127\.0\.0\.1::5173/);
 	assert.match(joined, /--label oo\.thread=7 --label oo\.project=app/);

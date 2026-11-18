@@ -17,7 +17,23 @@ export const OO_DIR = resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 
 /** Where things are on the host; tests pass their own. */
-export type Paths = { home: string; dataDir: string; ooDir: string; uid: number; gid: number };
+export type Paths = { home: string; dataDir: string; ooDir: string; uid: number; gid: number; git?: GitIdentity };
+
+/** Your git name and email, as the host's git has them for the project. */
+export type GitIdentity = { name?: string; email?: string };
+
+/** The project's git identity on the host, which may come from includes and places the container doesn't see. */
+export async function gitIdentity(repo: string): Promise<GitIdentity> {
+	const get = (key: string) => execa('git', ['-C', repo, 'config', key], { reject: false }).then(r => r.stdout.trim() || undefined);
+	const [name, email] = await Promise.all([get('user.name'), get('user.email')]);
+	return { name, email };
+}
+
+/** Git's own variables for the identity, so commits in the container are yours. */
+const gitEnv = ({ name, email }: GitIdentity = {}) => [
+	...(name ? [`GIT_AUTHOR_NAME=${name}`, `GIT_COMMITTER_NAME=${name}`] : []),
+	...(email ? [`GIT_AUTHOR_EMAIL=${email}`, `GIT_COMMITTER_EMAIL=${email}`] : []),
+];
 
 export const hostPaths = (): Paths => ({ home: homedir(), dataDir: DATA_DIR, ooDir: OO_DIR, uid: userInfo().uid, gid: userInfo().gid });
 
@@ -37,6 +53,9 @@ export const containerHome = (paths: Paths, thread: Pick<Thread, 'project' | 'id
 
 /** The bits of ~/.claude a container's claude reads but mustn't change: the user's settings, instructions and skills. */
 const CLAUDE_READONLY = ['settings.json', 'CLAUDE.md', 'skills', 'agents', 'commands', 'keybindings.json'];
+
+/** Your git config, read-only, for your aliases and settings (your name and email come through gitEnv). */
+const GIT_READONLY = ['.gitconfig', '.config/git'];
 
 /**
  * What the container mounts, in order: a parent before what's mounted inside it.
@@ -66,6 +85,9 @@ export function mounts(project: Project, thread: Pick<Thread, 'project' | 'id'>,
 		...CLAUDE_READONLY.map(name => join(claude, name))
 			.filter(existing)
 			.map(path => bind(path, true)),
+		...GIT_READONLY.map(name => join(paths.home, name))
+			.filter(existing)
+			.map(path => bind(path, true)),
 	];
 	// Docker refuses two mounts at one place, e.g. oo's checkout when it's the worktree too (oo working on itself): the first wins.
 	return all.filter((m, i) => all.findIndex(o => o.target === m.target) === i);
@@ -89,6 +111,7 @@ export function runArgs(project: Project & { container: ContainerSetting }, thre
 		`${paths.uid}:${paths.gid}`,
 		'-e',
 		`HOME=${paths.home}`,
+		...gitEnv(paths.git).flatMap(v => ['-e', v]),
 		'-w',
 		cwd,
 		'--cap-drop',
@@ -205,7 +228,8 @@ async function firewall(name: string, allow: string[]): Promise<void> {
  * Have the thread's container running, making it (or making it again, if its settings changed since) or starting
  * it as needed, with its firewall up. Returns its published ports, container port → host port.
  */
-export async function ensureContainer(project: Project & { container: ContainerSetting }, thread: Thread, cwd: string, paths = hostPaths()): Promise<Map<number, number>> {
+export async function ensureContainer(project: Project & { container: ContainerSetting }, thread: Thread, cwd: string, paths?: Paths): Promise<Map<number, number>> {
+	paths ??= { ...hostPaths(), git: await gitIdentity(project.path) };
 	const name = containerName(thread);
 	const args = runArgs(project, thread, cwd, paths);
 	let current = await inspect(name);
