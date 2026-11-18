@@ -143,11 +143,16 @@ export function recentlyActive(transcriptPath: string): boolean {
 /**
  * How much context the thread's claude carries, from its transcript: what its last turn sent (fresh, cached and
  * newly cached tokens together), when, and how long the prompt cache keeps it. Past that, resuming re-reads the
- * whole context at full price instead of from the cache.
+ * whole context at full price instead of from the cache. `compacted` when the conversation has been compacted since
+ * its last turn: `tokens` is then a rough guess from the summary's length, and `at` when it was compacted.
  */
-export type ContextUse = { tokens: number; at: number; cacheMs: number };
+export type ContextUse = { tokens: number; at: number; cacheMs: number; compacted?: boolean };
 
 const CACHE_5M = 5 * 60_000;
+// Roughly, for English and code.
+const CHARS_PER_TOKEN = 4;
+// What every turn sends besides the conversation (system prompt, tools), give or take, for guessing a compacted one's size.
+const BASE_CONTEXT = 20_000;
 const CACHE_1H = 60 * 60_000;
 // The last turn is near the end, so read only this much of a long transcript, unless it isn't there.
 const TAIL_BYTES = 1024 * 1024;
@@ -199,12 +204,22 @@ type Usage = {
 export function readContextUse(text: string): ContextUse | undefined {
 	const lines = text.split('\n');
 	let last: { tokens: number; at: number } | undefined;
+	// Characters of conversation since the last turn, for a guess at its size if it was compacted since.
+	let chars = 0;
 	for (let i = lines.length - 1; i >= 0; i--) {
 		let entry;
 		try {
 			entry = JSON.parse(lines[i]!);
 		} catch {
 			continue;
+		}
+		// The files claude re-attaches after compacting count too.
+		if (!last && !entry.isSidechain && (entry.type === 'user' || entry.type === 'assistant')) chars += JSON.stringify(entry.message?.content ?? '').length;
+		if (!last && !entry.isSidechain && entry.type === 'attachment') chars += JSON.stringify(entry.attachment ?? '').length;
+		// Compacted after its last turn: what's left is the summary and what came after, and nothing of it is cached.
+		if (!last && entry.type === 'system' && entry.subtype === 'compact_boundary' && !entry.isSidechain) {
+			const at = Date.parse(entry.timestamp);
+			if (!Number.isNaN(at)) return { tokens: BASE_CONTEXT + Math.round(chars / CHARS_PER_TOKEN), at, cacheMs: 0, compacted: true };
 		}
 		if (entry.type !== 'assistant' || entry.isSidechain) continue;
 		const usage: Usage | undefined = entry.message?.usage;
@@ -248,6 +263,7 @@ export function shortDuration(ms: number): string {
 
 /** One line on the thread's context: its size and whether the cache is still warm. */
 export function describeContext(use: ContextUse, now: number): string {
+	if (use.compacted) return `~${formatTokens(use.tokens)} tokens, compacted ${shortDuration(now - use.at)} ago`;
 	const left = cacheLeft(use, now);
 	const cache = left > 0 ? `cache warm for ${shortDuration(left)}` : `cache went cold ${shortDuration(-left)} ago, so resuming re-reads it all`;
 	return `${formatTokens(use.tokens)} tokens, ${cache}`;

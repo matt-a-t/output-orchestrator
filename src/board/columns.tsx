@@ -31,11 +31,11 @@ function useClock(): number {
 }
 
 /** The card's context size and cache countdown; none for finished threads, which have nothing to resume for. */
-function contextProps(t: Thread, now: number): { tokens: number | undefined; warmFor: string | undefined } {
+function contextProps(t: Thread, now: number): { tokens: number | undefined; warmFor: string | undefined; compacted: boolean } {
 	const use = t.column !== 'done' && t.column !== 'archived' && t.transcriptPath ? contextUse(t.transcriptPath) : undefined;
-	if (!use) return { tokens: undefined, warmFor: undefined };
+	if (!use) return { tokens: undefined, warmFor: undefined, compacted: false };
 	const left = cacheLeft(use, now);
-	return { tokens: use.tokens, warmFor: left > 0 ? shortDuration(left) : undefined };
+	return { tokens: use.tokens, warmFor: left > 0 ? shortDuration(left) : undefined, compacted: !!use.compacted };
 }
 
 /** What the columns keep while another screen covers them, so they come back as they were. */

@@ -96,7 +96,13 @@ the cache is warm, how long it has left (`42m`, green). Before Enter or `w` resu
 whose cache has gone cold, the board asks: `y` resumes it, `n` starts a fresh claude that reads the
 thread's plan and checkpoints instead. The old conversation stays on disk for `claude --resume`.
 Wakes the board does by itself (messages, review feedback, rebase conflicts) always resume, since
-they need what claude knew. `/compact` before a long break keeps the next resume small.
+they need what claude knew.
+
+Compacting is cheap only while the cache is warm, so when the board is about to close an idle window
+(**close idle**, above) whose claude carries a large context with the cache still warm, it sends
+`/compact` first and closes the window once the compaction shows in the transcript (or after 10
+minutes if it never does). Threads in Done are closed without compacting: nothing will resume them.
+A compacted thread's card shows a rough size (`~40k`) until its next turn gives the real one.
 
 `e` opens a thread's own screen. Its title,
 ticket, project, colour, priority and diff base are edited in place and its plan in `$EDITOR`, and the rest of what

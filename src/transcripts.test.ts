@@ -64,3 +64,21 @@ test('formats context sizes and times short', () => {
 	assert.equal(describeContext(use, 18 * 60_000), '379k tokens, cache warm for 42m');
 	assert.equal(describeContext(use, 4 * 3_600_000), '379k tokens, cache went cold 3h ago, so resuming re-reads it all');
 });
+
+test('after a compaction since its last turn, guesses the context from the summary, with nothing cached', () => {
+	const summary = 'x'.repeat(40_000);
+	const text = [
+		turn('2026-01-01T10:00:00Z', { input_tokens: 2, cache_read_input_tokens: 300_000, cache_creation: { ephemeral_1h_input_tokens: 10 } }),
+		entry({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-01-01T10:30:00Z' }),
+		entry({ type: 'user', isCompactSummary: true, message: { content: summary } }),
+	].join('\n');
+	const use = readContextUse(text)!;
+	assert.equal(use.compacted, true);
+	assert.equal(use.at, Date.parse('2026-01-01T10:30:00Z'));
+	// The summary's 10k, and the system prompt and tools.
+	assert.ok(use.tokens > 29_000 && use.tokens < 31_000, `${use.tokens}`);
+	assert.equal(describeContext(use, Date.parse('2026-01-01T10:33:00Z')), '~30k tokens, compacted 3m ago');
+	// A turn after the compaction says the real size again.
+	const later = readContextUse(text + '\n' + turn('2026-01-01T11:00:00Z', { input_tokens: 12_000, cache_creation: { ephemeral_1h_input_tokens: 12_000 } }))!;
+	assert.deepEqual(later, { tokens: 12_000, at: Date.parse('2026-01-01T11:00:00Z'), cacheMs: 60 * 60_000 });
+});
