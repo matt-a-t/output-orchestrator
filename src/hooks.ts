@@ -1,4 +1,5 @@
 // Per-project hooks: shell commands set in the project's settings (P) for things that happen on the board.
+import { paneCommand, recordPaneContainer, stopPaneContainer } from './container.js';
 import { errorMessage } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { HOOK_LABELS, type Column, type Project, type ProjectHook, type Thread } from './state.js';
@@ -30,9 +31,24 @@ export function hookEnv(project: Project, hook: ProjectHook, thread: Thread, ext
 	return { OO_HOOK_NAME: HOOK_LABELS[hook], ...threadEnv(project, thread), ...extra };
 }
 
+/** Where a hook runs besides the host: the thread's container, by name. */
+export type HookOptions = { container?: string };
+
+/**
+ * The script a hook's window runs: the hook (from `$OO_HOOK`, so it needs no quoting), on the host or with only the
+ * hook itself in `container`, then a line saying how it exited and a shell on the host to read its output in.
+ */
+export function hookScript(env: string[], cwd: string, window: string, container?: string): string {
+	const command = paneCommand('OO_HOOK', container ? { name: container, cwd, env, key: window } : undefined);
+	return `${command}; status=$?; echo; echo "[oo] $OO_HOOK_NAME hook exited with status $status"; exec "\${SHELL:-sh}"`;
+}
+
+const windowTarget = (window: string) => ['-w', '-t', `:${window}`];
+
 /**
  * Run the project's `hook` for the thread in `cwd`, in a background tmux window that stays open
- * as a shell afterwards so its output can be read. Returns what to tell the user, if it ran.
+ * as a shell afterwards so its output can be read, and in the thread's container if `container` names it.
+ * Returns what to tell the user, if it ran.
  */
 export async function runHook(
 	project: Project,
@@ -40,16 +56,18 @@ export async function runHook(
 	thread: Thread,
 	cwd: string,
 	extraEnv: Record<string, string> = {},
+	{ container }: HookOptions = {},
 ): Promise<string | undefined> {
 	const command = project.hooks[hook]?.trim();
 	if (!command) return;
 	const window = hookWindowName(project, hook);
+	// Closing the window alone would leave what the last hook started in a container running there.
+	if (project.container) await stopPaneContainer(windowTarget(window), window);
 	await killWindow(window);
-	// The command comes in through the environment so it needs no quoting.
-	const script = 'sh -c "$OO_HOOK"; status=$?; echo; echo "[oo] $OO_HOOK_NAME hook exited with status $status"; exec "${SHELL:-sh}"';
 	const env = { OO_HOOK: command, ...hookEnv(project, hook, thread, extraEnv) };
-	await openWindow(window, `hook:${project.name}`, cwd, ['sh', '-c', script], env, { background: true });
-	return `running ${project.name}'s ${HOOK_LABELS[hook]} hook in window ${window}`;
+	await openWindow(window, `hook:${project.name}`, cwd, ['sh', '-c', hookScript(Object.keys(env), cwd, window, container)], env, { background: true });
+	if (container) await recordPaneContainer(windowTarget(window), container);
+	return `running ${project.name}'s ${HOOK_LABELS[hook]} hook in window ${window}${container ? ` (in ${container})` : ''}`;
 }
 
 /** `runHook`, saying so if it couldn't start (e.g. no tmux server for `oo thread move` from a plain shell). */
@@ -59,8 +77,9 @@ export async function tryHook(
 	thread: Thread,
 	cwd: string,
 	extraEnv: Record<string, string> = {},
+	options: HookOptions = {},
 ): Promise<string | undefined> {
-	return runHook(project, hook, thread, cwd, extraEnv).catch(
+	return runHook(project, hook, thread, cwd, extraEnv, options).catch(
 		err => `✗ ${HOOK_LABELS[hook]} hook didn't start: ${errorMessage(err)}`,
 	);
 }

@@ -12,6 +12,20 @@ checks its branch out here, but nothing rebuilds unless the project's hooks do i
 
 Leaving Local puts the checkout back on main, so rebuild and restart again to get that version back.
 
+For a project with a `container` setting, Local checks nothing out. It forwards the project's ports to the
+thread's container instead (`src/board/forward.ts`), so the steps above don't apply. `inCheckout` (threads.ts)
+is what tells the two kinds of Local apart.
+
+## Containers
+
+`src/container.ts` builds the `docker run`/`docker exec` args and mounts. Everything is mounted at its host
+path, so worktree paths, transcripts and `--resume` mean the same inside. Container threads load
+`claude-settings.container.json`, which runs the claude hooks with the image's `node`, and reach oo through
+`DATA_DIR/bin/oo`, which runs this checkout's `dist` (mounted read-only). After changing anything claude's
+hooks or `oo thread` run, rebuild here: containers pick it up straight away, like host threads do.
+The reference image and firewall are in `docker/`. To try them, build the image (see README, Containers) and
+set it on a scratch project, not on this one while you're running threads on it.
+
 ## Nomenclature
 
 - **Thread**: what moves through the board. It has a worktree, a branch and maybe a PR, and can

@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { chmodSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,10 @@ import { shellQuote } from './tmux.js';
 
 export const EVENTS_FILE = join(DATA_DIR, 'events.jsonl');
 export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
+/** The same for a claude in a thread's container (see container.ts), where the host's node binary may not run. */
+export const CONTAINER_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.container.json');
+/** `oo` for a container's claude, which has DATA_DIR/bin on its PATH (see execCommand) but not oo's install. */
+export const OO_WRAPPER = join(DATA_DIR, 'bin', 'oo');
 
 // Run from source (tsx) we point at hook.ts and let Node strip the types.
 const fromSource = import.meta.url.endsWith('.ts');
@@ -29,17 +33,34 @@ export const OO_COMMAND = [
 
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 
-/** Write the settings file passed to every thread's claude via `--settings`. */
-export function writeClaudeSettings(): void {
-	const node = (args: string[]) => [process.execPath, '--no-warnings', ...args].map(shellQuote).join(' ');
+type Hooks = Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]>;
+
+/**
+ * The claude settings that run oo's claude hooks with `nodeBinary`: the host's own node, or plain `node` from a
+ * container's image. The scripts are at their host paths either way, since a container mounts oo's checkout there.
+ */
+export function claudeSettings(nodeBinary: string): { hooks: Hooks } {
+	const node = (args: string[]) => [nodeBinary, '--no-warnings', ...args].map(shellQuote).join(' ');
 	const command = node([HOOK_SCRIPT]);
-	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]> = Object.fromEntries(
-		HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]),
-	);
+	const hooks: Hooks = Object.fromEntries(HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]));
 	hooks.PostToolUse!.push({ matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: node(PLAN_HOOK) }] });
 	hooks.SessionStart!.push({ matcher: '*', hooks: [{ type: 'command', command: node(SESSION_HOOK) }] });
+	return { hooks };
+}
+
+/** The `oo` a container's claude runs: this same cli with the image's node. */
+export function ooWrapper(): string {
+	return `#!/bin/sh\nexec node --no-warnings ${OO_COMMAND.slice(1).map(shellQuote).join(' ')} "$@"\n`;
+}
+
+/** Write the settings files passed to every thread's claude via `--settings`, and the wrapper for containers. */
+export function writeClaudeSettings(): void {
 	ensureDataDir();
-	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2), { mode: PRIVATE_FILE });
+	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify(claudeSettings(process.execPath), null, 2), { mode: PRIVATE_FILE });
+	writeFileSync(CONTAINER_SETTINGS_FILE, JSON.stringify(claudeSettings('node'), null, 2), { mode: PRIVATE_FILE });
+	mkdirSync(dirname(OO_WRAPPER), { recursive: true });
+	writeFileSync(OO_WRAPPER, ooWrapper());
+	chmodSync(OO_WRAPPER, 0o755);
 }
 
 export const SKILL_FILE = join(homedir(), '.claude', 'skills', 'oo', 'SKILL.md');
@@ -54,6 +75,8 @@ description: Read and change the output-orchestrator (oo) board of threads with 
 The user tracks work as threads on a kanban board (Planned → Active → Polish → PR → Follow-up → Done).
 A thread can also be put in Local (it stays in its column, outlined in yellow), which checks its branch out in the project's own checkout
 (one per project) so the user can try it in their own dev setup; claude then works there until it comes back to its worktree.
+In a project whose threads run in containers, Local instead forwards the project's ports on the user's machine to that thread's
+container, and nothing moves: claude stays in its worktree, and the user's browser reaches the dev server it runs there.
 Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
 claude, and \`oo thread show\` describes your thread, including its plan. Threads' claudes can pass each other
 context with \`oo thread send\`.
@@ -133,7 +156,8 @@ ${THREAD_USAGE}
 - **Offer Local when the user wants to try the change.** If they want to test or try it themselves, offer to
   put the thread in Local and run \`oo thread local in\` once they agree; \`oo thread local out\` brings it back.
   Uncommitted changes move with the thread, so there's no need to commit first. This claude is closed and resumed
-  in the project's checkout (or back in its worktree) once the turn ends, so finish what you're saying first.
+  in the project's checkout (or back in its worktree) once the turn ends, so finish what you're saying first. In a container
+  (\`oo thread show\` lists one), Local just forwards ports and happens at once: start the dev server on the project's ports for the user to try.
   Never move a thread into or out of Local without asking.
 `;
 

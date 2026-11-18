@@ -27,6 +27,7 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['▲', 'red', 'high priority (!)'],
 	['▽', 'gray', 'low priority (!)'],
 	['▶', 'green', 'one of its commands is running (r)'],
+	['⇄3000→49153', 'cyan', "its container's port 3000 is on localhost:49153"],
 	['379k', undefined, 'context to resend (yellow: large, ~: compacted)'],
 	['42m warm', 'green', 'cache warm this long: resume before then for less'],
 ];
@@ -62,6 +63,8 @@ type Props = {
 	blockers: Thread[];
 	// Whether one of its project's commands is running for it (r).
 	running: boolean;
+	// Its container's published ports (portsText), if it has any.
+	ports: string;
 	// The context its claude carries (tokens), and how long its cache stays warm (e.g. 42m), if it does.
 	tokens: number | undefined;
 	warmFor: string | undefined;
@@ -81,7 +84,7 @@ export function sameCard(a: Props, b: Props): boolean {
 	return a.blockers.length === b.blockers.length && a.blockers.every((t, i) => t === b.blockers[i]);
 }
 
-function CardLines({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running, tokens, warmFor, compacted }: Props) {
+function CardLines({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running, ports, tokens, warmFor, compacted }: Props) {
 	const oneLine = cardHeight(t.column) === 1;
 	const color = t.color ?? project?.color;
 	// Changes aren't ready to review until claude stops working on them.
@@ -108,6 +111,7 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 					</Text>
 				) : null}
 				{running ? <Text color="green"> ▶</Text> : null}
+				{ports ? <Text color="cyan"> ⇄{ports}</Text> : null}
 				{unreviewed && !working ? (
 					<Text color="magenta" bold>
 						{' '}±

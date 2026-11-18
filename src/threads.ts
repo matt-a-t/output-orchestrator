@@ -1,18 +1,40 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
 import { killRunSessions, runPrefix } from './commands.js';
-import { unknownProject } from './errors.js';
+import { containerName, removeContainer } from './container.js';
+import { errorMessage, unknownProject } from './errors.js';
 import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, renameBranch, restartBranch, worktreePath } from './git.js';
 import { prHost, prState, retargetPr } from './prHost.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
+import { requestedTicket } from './tickets.js';
 import { COLUMN_LABELS, hidden, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
+
+/**
+ * Whether the thread's branch is checked out in the project's own checkout: Local, for a project without
+ * containers. One with them forwards its ports to the thread's container instead (see board/forward.ts), and the
+ * thread stays in its worktree.
+ */
+export function inCheckout(project: Project | undefined, thread: Thread): boolean {
+	return !!thread.local && !thread.cwd && !forwardsPorts(project, thread);
+}
+
+/**
+ * Whether Local, for this thread, forwards its project's ports to its container rather than move anything: as it
+ * went in, once it's in Local (so changing the project's setting meanwhile doesn't change how it comes out), else
+ * as its project is set up now.
+ */
+export function forwardsPorts(project: Project | undefined, thread: Thread): boolean {
+	if (thread.local) return !!thread.forwarded;
+	return !!project?.container && !thread.cwd;
+}
 
 /** Where the thread's work happens, if it has anywhere yet. */
 export function threadDir(state: State, thread: Thread): string | undefined {
 	if (thread.cwd) return thread.cwd;
-	if (thread.local) return state.projects.find(p => p.name === thread.project)?.path;
+	const project = state.projects.find(p => p.name === thread.project);
+	if (inCheckout(project, thread)) return project?.path;
 	if (hasWorktree(thread)) return worktreePath(thread);
 }
 
@@ -191,7 +213,7 @@ export function stackProblem(state: State, thread: Thread, parent: Thread): stri
 	const reason = noRepo(state, thread);
 	if (reason) return `${reason}, so it has no branch to build on #${parent.id}'s`;
 	if (thread.stackedOn && thread.stackedOn !== parent.id) return `#${thread.id} already builds on #${thread.stackedOn}'s branch`;
-	if (thread.local) return `#${thread.id} is in Local, so its branch stays as it is — bring it back and block it again to build on #${parent.id}`;
+	if (inCheckout(state.projects.find(p => p.name === thread.project), thread)) return `#${thread.id} is in Local, so its branch stays as it is — bring it back and block it again to build on #${parent.id}`;
 	if (!parent.branch) return `#${parent.id} has no branch yet, so #${thread.id} doesn't build on it — open #${parent.id} (⏎), then block again`;
 }
 
@@ -347,6 +369,8 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 	await killWindow(threadWindowName(thread.id)).catch(() => {});
 	// Nor can its commands (dev servers and the like).
 	await killRunSessions(runPrefix(project, thread));
+	// Its container goes with them; its home stays for when it's reopened.
+	if (project.container) await removeContainer(containerName(thread));
 	if (!hasWorktree(thread)) return {};
 	await removeWorktree(project.path, thread);
 	return { message: `Removed #${thread.id}'s worktree (kept branch ${thread.branch})` };
@@ -367,9 +391,18 @@ export function moveProblem(state: State, thread: Thread, column: Column): strin
 }
 
 /** Why only the board can make this move (it needs the board's popups or its checkout handling), if it does. */
-export function boardOnlyMove(thread: Thread, column: Column): string | undefined {
+export function boardOnlyMove(project: Project | undefined, thread: Thread, column: Column): string | undefined {
 	if (column === 'pr') return `Moving #${thread.id} to PR opens its PR — use oo thread pr, or do it from the board`;
-	if (thread.local) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or o on the board)`;
+	if (thread.local && !forwardsPorts(project, thread)) return `#${thread.id} is in Local, on the project's own checkout — bring it back first (oo thread local out, or o on the board)`;
+	return forwardedMoveProblem(project, thread, column);
+}
+
+/**
+ * Why a thread in Local by port forwarding (see inCheckout) can't move to `column`, if it can't: Done and the hidden
+ * columns remove its container, which Local's ports go to. Its other moves don't touch Local.
+ */
+export function forwardedMoveProblem(project: Project | undefined, thread: Thread, column: Column): string | undefined {
+	if (thread.local && forwardsPorts(project, thread) && (column === 'done' || hidden(column))) return `⚠ #${thread.id} is in Local — bring it back first (o on the board, or oo thread local out)`;
 }
 
 /** The state being changed: the board's, or state.json when it isn't running. */
@@ -384,7 +417,13 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		if (!project) return { id, ok: false, message: unknownProject(request.project) };
 		const parent = request.from === undefined ? undefined : state.threads.find(t => t.id === request.from);
 		if (request.from !== undefined && !parent) return { id, ok: false, message: `No thread #${request.from}` };
-		const fields = { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket };
+		let ticket: Thread['ticket'];
+		try {
+			ticket = request.ticket && (await requestedTicket(project, request.ticket)).ticket;
+		} catch (err) {
+			return { id, ok: false, message: `Couldn't ${request.ticket && 'create' in request.ticket ? 'create' : 'find'} the ticket: ${errorMessage(err)}` };
+		}
+		const fields = { project: request.project, title: request.title, plan: request.plan, ticket };
 		if (parent) {
 			// The new thread isn't anything's blocker yet, so only the blocker's side can be wrong.
 			const planned = { ...fields, id: newThreadId(state), column: 'planned', createdAt: '', updatedAt: '' } as Thread;
@@ -412,7 +451,13 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		return done(`Saved #${thread.id}'s plan`);
 	}
 	if (request.op === 'ticket') {
-		const ticket = request.ticket ?? undefined;
+		let ticket: Thread['ticket'];
+		let created = false;
+		try {
+			if (request.ticket) ({ ticket, created = false } = await requestedTicket(project, request.ticket));
+		} catch (err) {
+			return { id, ok: false, message: `Couldn't ${request.ticket && 'create' in request.ticket ? 'create' : 'find'} the ticket: ${errorMessage(err)}` };
+		}
 		const old = thread.branch;
 		// The branch is named after the ticket (see branchName), so follow it while that's still safe.
 		const renamed = old ? await renameBranch(project.path, { ...thread, ticket }) : {};
@@ -427,7 +472,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 				return t;
 			}),
 		}));
-		const set = ticket ? `Set #${thread.id}'s ticket to ${ticket.key}` : `Cleared #${thread.id}'s ticket`;
+		const set = ticket ? `${created ? `Created ${ticket.key} ${ticket.url} · ` : ''}Set #${thread.id}'s ticket to ${ticket.key}` : `Cleared #${thread.id}'s ticket`;
 		return done(renamed.message ? `${set} · ${renamed.message}` : set);
 	}
 	if (request.op === 'priority') {
@@ -499,7 +544,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	if (thread.column === request.column) return done(`#${thread.id} is already in ${COLUMN_LABELS[thread.column]}`);
 	const problem =
 		moveProblem(state, thread, request.column) ??
-		boardOnlyMove(thread, request.column) ??
+		boardOnlyMove(project, thread, request.column) ??
 		(hidden(request.column) ? await shelveProblem(thread, request.column) : undefined) ??
 		(merged(request) ? await doneProblem(project, thread, request.column) : undefined);
 	if (problem) return { id, ok: false, message: problem };

@@ -2,7 +2,8 @@
 // overwrites state.json whenever it saves, so nothing else may write that file meanwhile: the CLI
 // appends a request to requests.jsonl instead, the board applies it and appends a response.
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import type { TicketRequest } from './tickets.js';
+import { appendFileSync, existsSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { JsonlReader } from './jsonl.js';
@@ -12,7 +13,7 @@ import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Priority, type
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
 	// `from`: the thread whose branch it builds on, and is blocked by (see stackedOn).
-	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: Thread['ticket']; from?: string }
+	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: TicketRequest; from?: string }
 	// `fresh`: once its claude stops, swap it for a fresh one on the thread's plan (see Thread's freshStart).
 	| { id: string; op: 'move'; thread: string; column: Column; fresh?: boolean }
 	// Only the board can do this one (it checks out, moves claude and runs hooks); 'toggle' is what o does.
@@ -21,7 +22,7 @@ export type Request =
 	| { id: string; op: 'pr'; thread: string; title?: string; body?: string }
 	| { id: string; op: 'plan'; thread: string; plan: string }
 	// Set or replace the thread's ticket, or with null clear it; the branch follows it while that's safe (see renameBranch).
-	| { id: string; op: 'ticket'; thread: string; ticket: Thread['ticket'] | null }
+	| { id: string; op: 'ticket'; thread: string; ticket: TicketRequest | null }
 	| { id: string; op: 'priority'; thread: string; priority: Priority }
 	// Save (or with null, clear) the messages the commit and PR forms open with; one left out stays as it is.
 	| { id: string; op: 'draft'; thread: string; commit?: string | null; pr?: { title: string; body: string } | null }
@@ -41,16 +42,32 @@ export const requestsFile = (dir = DATA_DIR) => join(dir, 'requests.jsonl');
 export const responsesFile = (dir = DATA_DIR) => join(dir, 'responses.jsonl');
 const pidFile = (dir: string) => join(dir, 'board.pid');
 
+// The board touches its pid file this often, for `oo` in a thread's container, which can't see the board's process.
+const HEARTBEAT_MS = 2000;
+// A pid file touched within this long is a running board's.
+const FRESH_MS = 10_000;
+let heartbeat: NodeJS.Timeout | undefined;
+
 /** Record that this process is the board, until it exits; requests from before it started are dropped. */
 export function claimBoard(dir = DATA_DIR): void {
 	ensureDataDir(dir);
 	writeFileSync(requestsFile(dir), '', { mode: PRIVATE_FILE });
 	writeFileSync(responsesFile(dir), '', { mode: PRIVATE_FILE });
 	writeFileSync(pidFile(dir), String(process.pid), { mode: PRIVATE_FILE });
+	clearInterval(heartbeat);
+	heartbeat = setInterval(() => {
+		try {
+			const now = new Date();
+			if (boardPid(dir) === process.pid) utimesSync(pidFile(dir), now, now);
+		} catch {}
+	}, HEARTBEAT_MS);
+	heartbeat.unref();
 	process.on('exit', () => releaseBoard(dir));
 }
 
 export function releaseBoard(dir = DATA_DIR): void {
+	clearInterval(heartbeat);
+	heartbeat = undefined;
 	// Only if it's still ours.
 	if (boardPid(dir) === process.pid) rmSync(pidFile(dir), { force: true });
 }
@@ -61,16 +78,31 @@ function boardPid(dir: string): number | undefined {
 	} catch {}
 }
 
-/** Whether a board is running; a pid file left by one that died doesn't count. */
-export function boardRunning(dir = DATA_DIR): boolean {
+/** Whether this process runs in a docker container, where the host's pids mean nothing. */
+const IN_CONTAINER = existsSync('/.dockerenv');
+
+/**
+ * Whether a board is running; a pid file left by one that died doesn't count. On the host its pid says so; in a
+ * thread's container, which has pids of its own (the board's might even be one of them), its heartbeat does.
+ */
+export function boardRunning(dir = DATA_DIR, { inContainer = IN_CONTAINER, now = Date.now() } = {}): boolean {
 	const pid = boardPid(dir);
 	if (!pid) return false;
+	if (inContainer) return fresh(dir, now);
 	try {
 		process.kill(pid, 0);
 		return true;
 	} catch (err) {
 		// EPERM: it exists but isn't ours to signal.
 		return (err as NodeJS.ErrnoException).code === 'EPERM';
+	}
+}
+
+function fresh(dir: string, now: number): boolean {
+	try {
+		return now - statSync(pidFile(dir)).mtimeMs < FRESH_MS;
+	} catch {
+		return false;
 	}
 }
 

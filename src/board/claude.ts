@@ -5,9 +5,9 @@ import { useEffect, useRef } from 'react';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { stillWorking, unknownProject } from '../errors.js';
 import { DEFAULT_WAKE_PROMPT, hidden, type State, type Thread } from '../state.js';
-import type { Status } from '../status.js';
-import { CLAUDE_SETTINGS_FILE } from '../status.js';
-import { threadDir } from '../threads.js';
+import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE, type Status } from '../status.js';
+import { containerName, containerProject, forThread, stopKeyed, threadShell } from '../container.js';
+import { inCheckout, threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
 import { cacheLeft, contextUse, formatTokens, LARGE_CONTEXT, recentlyActive, shortDuration, type ContextUse } from '../transcripts.js';
 import type { Binding } from './bindings.js';
@@ -94,16 +94,20 @@ export async function launchClaude(
 			board.run(() => launchClaude(board, thread, cwd, { background, mode, prompt, resumeAnyway: true })),
 		);
 	}
+	const project = board.project(thread.project);
 	const command = [
 		'claude',
 		'--settings',
-		CLAUDE_SETTINGS_FILE,
+		containerProject(project) ? CONTAINER_SETTINGS_FILE : CLAUDE_SETTINGS_FILE,
 		...(sessionId ? ['--resume', sessionId] : []),
 		...(mode ? ['--permission-mode', mode] : []),
 		// After `--` so a prompt starting with `-` isn't taken for an option.
 		...(prompt ? ['--', prompt] : []),
 	];
-	const result = await openWindow(window, threadWindowLabel(thread), cwd, command, { OO_THREAD_ID: thread.id }, { background });
+	const env = { OO_THREAD_ID: thread.id };
+	// Already open, it's only selected; otherwise, for a project with a container, it starts in the thread's.
+	const run = (await windowNames()).includes(window) ? { command, env } : await forThread(project, thread, cwd, command, env, { needsToken: true });
+	const result = await openWindow(window, threadWindowLabel(thread), cwd, run.command, run.env, { background });
 	await board.refreshWindows();
 	if (result === 'selected') board.setMessage('');
 	// The new claude's session replaces the old one on the thread, so say where the old one still is.
@@ -113,8 +117,11 @@ export async function launchClaude(
 
 /** Close the thread's claude window, if it's open; returns whether it was. */
 export async function closeClaude(board: Board, thread: Thread): Promise<boolean> {
-	const open = (await windowNames()).includes(threadWindowName(thread.id));
-	await killWindow(threadWindowName(thread.id));
+	const window = threadWindowName(thread.id);
+	const open = (await windowNames()).includes(window);
+	// Closing the window doesn't end what it runs in a container (claude, its shells), so that's ended first.
+	if (open && containerProject(board.project(thread.project))) await stopKeyed(containerName(thread), window);
+	await killWindow(window);
 	await board.refreshWindows();
 	return open;
 }
@@ -136,7 +143,7 @@ export const openThread = (board: Board, thread: Thread) =>
 		board.run(async () => {
 			const project = board.project(thread.project);
 			if (!project) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
-			const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
+			const cwd = thread.cwd ?? (inCheckout(project, thread) ? project.path : await createWorktree(board, project, thread));
 			await launchClaude(board, thread, cwd, fresh ? { fresh, prompt: START_PROMPT } : {});
 		}),
 	);
@@ -152,7 +159,7 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string, 
 		board.setMessage(`✗ ${unknownProject(thread.project)}`);
 		return false;
 	}
-	const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
+	const cwd = thread.cwd ?? (inCheckout(project, thread) ? project.path : await createWorktree(board, project, thread));
 	const window = threadWindowName(thread.id);
 	const open = (await windowNames()).includes(window);
 	// Nothing to resume, so the claude starts fresh (as in launchClaude).
@@ -209,7 +216,9 @@ export const openShell = (board: Board, thread: Thread) =>
 				// It may be waiting on "resume anyway?" instead.
 				if (!(await windowNames()).includes(window)) return;
 			}
-			await openSplit(window, cwd, 'shell', [process.env.SHELL || 'bash'], { OO_THREAD_ID: thread.id });
+			const project = board.project(thread.project);
+			const shell = await forThread(project, thread, cwd, threadShell(project), { OO_THREAD_ID: thread.id });
+			await openSplit(window, cwd, 'shell', shell.command, shell.env);
 		},
 	);
 

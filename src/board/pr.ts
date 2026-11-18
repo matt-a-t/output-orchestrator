@@ -15,7 +15,7 @@ import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
 import { threadWindowName } from '../tmux.js';
 import { contextUse, worthFreshStart } from '../transcripts.js';
-import { applyRequest, followUps, unblockedNote, unstackChildren, withDrafts } from '../threads.js';
+import { applyRequest, followUps, inCheckout, unblockedNote, unstackChildren, withDrafts } from '../threads.js';
 import { CLOSED, popup as tmuxPopup, progressPopup, shellQuote, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { closeClaude } from './claude.js';
@@ -53,7 +53,7 @@ export async function openPr(board: Board, thread: Thread, steps: PrSteps): Prom
 	if (!thread.branch) return { ok: false, message: `#${thread.id} has no branch yet — open it first` };
 	// In Local its branch is checked out in the project's checkout, so the PR is opened from there. Otherwise
 	// this reopens the worktree if the thread is coming back from Done.
-	const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
+	const cwd = thread.cwd ?? (inCheckout(project, thread) ? project.path : await createWorktree(board, project, thread));
 	if (await isDirty(cwd)) return { ok: false, message: `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first` };
 	const branch = thread.branch;
 	let existing: Thread['pr'];
@@ -169,7 +169,7 @@ export async function checkPr(board: Board, thread: Thread) {
 		// Leaving Local carries uncommitted changes back to the worktree, but Done has none, so they'd be left on main.
 		const problem =
 			(await localProblem(board, thread, false)) ??
-			(!thread.cwd && (await isDirty(project.path)) ? `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first` : undefined);
+			(inCheckout(project, thread) && (await isDirty(project.path)) ? `#${thread.id} has uncommitted changes — approve them (d, then a) or discard them first` : undefined);
 		if (problem) return board.setMessage(`⚠ #${thread.id}'s PR #${thread.pr.number} merged, but it stays in PR until it can leave Local: ${problem}`);
 		if (board.statuses()[thread.id] === 'working') return;
 		try {

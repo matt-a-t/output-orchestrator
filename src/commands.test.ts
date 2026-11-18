@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { commandsText, parseCommands, parseRunStatuses, parseSnapshot, runPrefix, runSessionName, terminalCommand, threadRunning, tmuxAttach } from './commands.js';
+import { commandsText, parseCommands, parseRunStatuses, parseSnapshot, runPrefix, runSessionName, terminalCommand, threadRunning, tmuxAttach, runScript } from './commands.js';
+import { stopScript } from './container.js';
 import type { Project, Thread } from './state.js';
 
 const project = { name: 'my.web' } as Project;
@@ -85,4 +86,25 @@ test("parseSnapshot keeps the board session's windows and every run session's st
 		['oo-run_web_12_dev', { running: true, attached: 1 }],
 		['oo-run_web_main_lint', { running: false, exit: 2, attached: 0 }],
 	]);
+});
+
+test("a thread's run in its container runs only the command there, with its environment; tmux stays on the host", () => {
+	assert.ok(runScript().startsWith('sh -c "$OO_CMD"; status=$?; tmux set-option @oo-exit'));
+	const script = runScript({ name: 'oo-app-7', cwd: "/w/it's", env: ['OO_CMD', 'OO_THREAD_ID'], key: 'oo-run_app_7_dev' });
+	assert.ok(
+		script.startsWith(
+			`docker exec -it -w '/w/it'\\''s' -e OO_CMD -e OO_THREAD_ID 'oo-app-7' sh -c 'echo $$ >> /tmp/oo-oo-run_app_7_dev.pid; exec sh -c "$OO_CMD"'; status=$?; tmux set-option @oo-exit`,
+		),
+		script,
+	);
+	assert.ok(script.endsWith('exec "${SHELL:-sh}"'));
+});
+
+test("stopping what ran in a container ends every process in its sessions, by force if they won't go", () => {
+	const script = stopScript('oo-run_app_7_dev');
+	assert.match(script, /^leaders=\$\(cat \/tmp\/oo-oo-run_app_7_dev\.pid 2>\/dev\/null\) \|\| exit 0;/);
+	// A process's session is the 4th field after its name, which is in brackets and may have spaces.
+	assert.match(script, /set -- \$\{s##\*\) \}; for l in \$leaders; do \[ "\$4" = "\$l" \]/);
+	assert.match(script, /kill -HUP \$m 2>\/dev\/null; kill -TERM \$m/);
+	assert.match(script, /kill -KILL \$m/);
 });

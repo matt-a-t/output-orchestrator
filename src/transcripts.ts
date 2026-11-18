@@ -21,9 +21,9 @@ export type OutsideThread = {
 	lastActivity: Date;
 };
 
-/** Claude Code keeps a directory's transcripts under its path with everything but letters and digits as `-`. */
-function transcriptDir(cwd: string): string {
-	return join(PROJECTS_DIR, resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-'));
+/** Claude Code keeps a directory's transcripts under its path with everything but letters and digits as `-`, in `home`'s ~/.claude. */
+export function transcriptDir(cwd: string, home?: string): string {
+	return join(home ? join(home, '.claude', 'projects') : PROJECTS_DIR, resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-'));
 }
 
 /**

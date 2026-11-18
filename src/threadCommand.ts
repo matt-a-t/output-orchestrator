@@ -7,7 +7,8 @@ import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, P
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
 import { contextUse, describeContext, worthFreshStart } from './transcripts.js';
 import { sanitize } from './sanitize.js';
-import { createTicket, fetchTicket, normalizeKey, ticketContent, ticketUrl } from './tickets.js';
+import { normalizeKey, ticketContent } from './tickets.js';
+import { containerName, portsText, publishedPorts } from './container.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>] [--from <id>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -93,14 +94,6 @@ function parseArgs(args: string[], valued: string[], boolean: string[]) {
 }
 
 /** The ticket `--ticket` names, in the project's form; its url is left empty if gh can't say. */
-async function resolveTicket(project: Project, input: string | undefined): Promise<Thread['ticket']> {
-	if (input === undefined) return;
-	if (project.tracker === 'none') throw new CommandError(`${project.name} has no ticket tracker; set one in the board's projects screen (P)`);
-	const key = normalizeKey(project, input);
-	if (!key) throw new CommandError(`Not a ${project.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${input}`);
-	return { key, url: await ticketUrl(project, key).catch(() => '') };
-}
-
 function parseColumn(name: string): Column {
 	const column = ALL_COLUMNS.find(c => c === name.toLowerCase());
 	if (!column) throw new UsageError(`Unknown column "${name}"; one of ${ALL_COLUMNS.join(', ')}`);
@@ -183,7 +176,17 @@ function summary(state: State, t: Thread): string {
 	return `#${t.id}\t${where(t)}${mark ? ` ${mark}` : ''}${waiting ? ` ⧗${waiting}` : ''}\t${t.project}\t${t.title}`;
 }
 
-function details(state: State, t: Thread): string {
+/**
+ * The thread's container, for `oo thread show`: its name and published ports, or from inside it (no docker there)
+ * or while it's stopped, the ports it publishes once it runs.
+ */
+export function containerLine(project: Project | undefined, t: Thread, published: Map<number, number>): string | undefined {
+	if (!project?.container) return;
+	const ports = published.size ? portsText(published) : project.container.ports.length ? `ports ${project.container.ports.join(', ')}` : '';
+	return `container: ${containerName(t)}${ports ? ` · ${ports}` : ''}`;
+}
+
+function details(state: State, t: Thread, container?: string): string {
 	const lines = [`#${t.id} ${t.title}`, `column:  ${where(t)}`, `project: ${t.project}`];
 	if (t.priority) lines.push(`priority: ${t.priority}`);
 	for (const b of blockers(state, t)) lines.push(`blocked: #${b.id} ${b.title} (${where(b)})`);
@@ -191,6 +194,7 @@ function details(state: State, t: Thread): string {
 	if (t.branch) lines.push(`branch:  ${t.branch}${t.base ? ` (from ${t.base})` : ''}`);
 	const dir = threadDir(state, t);
 	if (dir) lines.push(`dir:     ${dir}`);
+	if (container) lines.push(container);
 	if (t.pr) lines.push(`PR:      #${t.pr.number} ${t.pr.url}`);
 	if (t.sessionId) lines.push(`session: ${t.sessionId}`);
 	const use = t.transcriptPath && contextUse(t.transcriptPath);
@@ -222,8 +226,8 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const from = flag('from') === undefined ? undefined : resolveThreadId(state, flag('from'), ctx.env, ctx.cwd);
 		// Building on another thread means being in its project.
 		const project = resolveProject(state, ctx.cwd, flag('project') ?? state.threads.find(t => t.id === from)?.project);
-		const ticket = await resolveTicket(state.projects.find(p => p.name === project)!, flag('ticket'));
-		const response = await change({ op: 'add', project, title, plan, ticket, from }, ctx);
+		const key = flag('ticket');
+		const response = await change({ op: 'add', project, title, plan, ...(key !== undefined && { ticket: { key } }), from }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.thread);
 		return 0;
@@ -246,7 +250,9 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
 		const id = resolveThreadId(state, positional[0], ctx.env, ctx.cwd);
 		const thread = state.threads.find(t => t.id === id)!;
-		console.log(has('json') ? JSON.stringify({ ...thread, dir: threadDir(state, thread) }, null, 2) : details(state, thread));
+		const project = state.projects.find(p => p.name === thread.project);
+		const container = project?.container && !has('json') ? containerLine(project, thread, await publishedPorts(containerName(thread))) : undefined;
+		console.log(has('json') ? JSON.stringify({ ...thread, dir: threadDir(state, thread) }, null, 2) : details(state, thread, container));
 		return 0;
 	}
 	if (sub === 'move') {
@@ -323,19 +329,14 @@ async function run(args: string[], ctx: Context): Promise<number> {
 			const description = readInput(ctx, descriptionFile!).trim();
 			if (!description) throw new UsageError('Give the ticket a description');
 			const summary = flag('summary')?.trim() || current.title;
-			const ticket = await createTicket(project, { summary, description, type: flag('type') }).catch((err: unknown) => {
-				throw new CommandError(`Couldn't create the ticket: ${errorMessage(err)}`);
-			});
-			const response = await change({ op: 'ticket', thread, ticket }, ctx);
-			// It's filed either way, so say which one to set by hand.
-			if (!response.ok) return fail(`Created ${ticket.key} ${ticket.url}, but ${response.message}`);
-			console.log(`Created ${ticket.key} ${ticket.url}\n${response.message}`);
+			// Filed by the board, with its tracker credentials: this claude may be in a container without them.
+			const response = await change({ op: 'ticket', thread, ticket: { create: { summary, description, type: flag('type') } } }, ctx);
+			if (!response.ok) return fail(response.message);
+			console.log(response.message);
 			return 0;
 		}
-		const ref = await resolveTicket(project, clear ? undefined : positional.at(-1));
-		// What it says, for show to quote, when the tracker can be read; it's still set without.
-		const ticket = ref && { ...ref, ...(await fetchTicket(project, ref.key).catch(() => undefined)) };
-		const response = await change({ op: 'ticket', thread, ticket: ticket ?? null }, ctx);
+		if (!clear && project.tracker === 'none') return fail(`${project.name} has no ticket tracker; set one in the board's projects screen (P)`);
+		const response = await change({ op: 'ticket', thread, ticket: clear ? null : { key: positional.at(-1)! } }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.message);
 		return 0;
@@ -550,6 +551,11 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: st
 /** What a thread's claude is told as it starts in Local, which the move into it restarts claude for. Imported threads don't move. */
 function localBriefing(state: State, t: Thread): string | undefined {
 	if (!t.local || t.cwd) return;
+	const container = state.projects.find(p => p.name === t.project)?.container;
+	if (container) {
+		const ports = container.ports.map(p => `localhost:${p}`).join(', ');
+		return `You're in Local: the project's ports on the user's machine (${ports}) go to this thread's container, so a dev server you run here on them (say with the project's commands) is what the user's browser sees. Nothing else moved: you're still in your worktree. \`oo thread local out\` (or o on the board) stops the forwarding.`;
+	}
 	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or o on the board) brings it back to its worktree.`;
 }
 

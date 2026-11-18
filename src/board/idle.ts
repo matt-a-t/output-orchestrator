@@ -8,6 +8,8 @@ import { contextUse, formatTokens } from '../transcripts.js';
 import type { Thread } from '../state.js';
 import type { Board } from './board.js';
 import { closeClaude } from './claude.js';
+import { threadRunning } from '../commands.js';
+import { containerName, containerProcesses, containerProject, stopContainer } from '../container.js';
 
 const CHECK_EVERY = 60_000;
 // A compaction that hasn't shown up in the transcript by now has failed; close the window anyway.
@@ -62,12 +64,20 @@ export function useIdleClose(board: Board) {
 				if (candidates.length === 0) return;
 				const ps = await processList();
 				const closed: string[] = [];
+				const stopping: Promise<void>[] = [];
 				for (const { thread, stillQuiet } of candidates) {
 					const window = windows.find(w => w.name === threadWindowName(thread.id))!;
+					const project = containerProject(board.project(thread.project));
+					// In a container, claude's shells aren't under its window's process but the container's (pid 0's tree there).
+					const shellRunning = project ? claudeShellRunning(await containerProcesses(containerName(thread)), 0) : claudeShellRunning(ps, window.pid);
 					// Checked again just before, in case claude was told something since.
-					if (claudeShellRunning(ps, window.pid) || !stillQuiet()) continue;
-					if (await closeClaude(board, thread)) closed.push(`#${thread.id}`);
+					if (shellRunning || !stillQuiet()) continue;
+					if (!(await closeClaude(board, thread))) continue;
+					closed.push(`#${thread.id}`);
+					// Its dev servers and databases stop using memory too, unless one of its commands or Local is using them.
+					if (project && !thread.local && !threadRunning(board.runs(), project, thread)) stopping.push(stopContainer(containerName(thread)));
 				}
+				await Promise.all(stopping);
 				if (closed.length) board.setMessage(`Closed idle claude for ${closed.join(', ')} · w or ⏎ resumes it`);
 			} catch {
 				// Not in tmux, or a window went as it was looked at: try again next time.

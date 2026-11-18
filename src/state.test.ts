@@ -4,7 +4,7 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { fixture } from './testHelpers.js';
-import { loadState, projectProblem, saveState, stillSaved, withHome } from './state.js';
+import { containerText, loadState, parseContainer, projectProblem, saveState, stillSaved, withHome } from './state.js';
 
 test('worktrees need the project to be a git repo', async () => {
 	const { project, state } = fixture();
@@ -31,6 +31,22 @@ test('the jira site has to be on atlassian.net, so the API token goes nowhere el
 	for (const site of ['example.com', 'yourco.atlassian.net.evil.com', 'yourco.atlassian.net@evil.com', 'evil.com/yourco.atlassian.net', 'yourco.atlassian.net:8443'])
 		assert.match(projectProblem(state, { ...p, jiraSite: site }, 'p') ?? '', /must be yourco\.atlassian\.net/, site);
 	assert.equal(projectProblem(state, { ...p, jiraSite: 'YourCo.atlassian.net' }, 'p'), undefined);
+});
+
+test('a container setting is typed as text and parsed on save', () => {
+	assert.deepEqual(parseContainer({ image: ' oo-thread ', ports: '3000, 5173 3000', allow: 'registry.example.com,  pypi.org' }), {
+		container: { image: 'oo-thread', ports: [3000, 5173], allow: ['registry.example.com', 'pypi.org'] },
+	});
+	assert.deepEqual(parseContainer({ image: '', ports: '', allow: '' }), {});
+	assert.match(parseContainer({ image: '', ports: '3000', allow: '' }).problem ?? '', /need an image/);
+	assert.match(parseContainer({ image: 'x', ports: '70000', allow: '' }).problem ?? '', /70000 isn't a port/);
+	assert.deepEqual(containerText({ image: 'x', ports: [3000, 5173], allow: ['a.com'] }), { image: 'x', ports: '3000, 5173', allow: 'a.com' });
+});
+
+test('a container needs worktrees, since each thread mounts its own', () => {
+	const { state } = fixture();
+	const p = { ...state.projects[0]!, worktrees: false, container: { image: 'x', ports: [], allow: [] } };
+	assert.match(projectProblem(state, p, 'p') ?? '', /needs worktrees on/);
 });
 
 test('the state file is only readable by you', () => {

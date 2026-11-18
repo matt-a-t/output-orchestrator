@@ -20,6 +20,7 @@ Works on macOS, Linux and WSL.
 | [GitHub CLI](https://cli.github.com) | | opening PRs on GitHub and noticing when they merge; run `gh auth login` once | `brew install gh` / [cli.github.com](https://github.com/cli/cli#installation) |
 | [delta](https://github.com/dandavison/delta) | | reviewing diffs (`d`, `D`, `v`) | `brew install git-delta` / `apt install git-delta` |
 | vim | | commenting on diffs (`c`) | usually already there |
+| [Docker](https://docs.docker.com/engine/install/) | | only for projects whose threads run in containers (see [Containers](#containers)) | [docs.docker.com](https://docs.docker.com/engine/install/) |
 
 `oo` checks for these when it starts. It won't start without tmux, git and claude, and it warns
 about the rest, which only some actions need.
@@ -211,6 +212,87 @@ the checkout back on the default branch, and gives the thread its worktree again
 `oo thread local [id] [in|out]` does the same from the shell, and a thread's claude offers it when you want
 to try its change. If the thread's claude is working, the move waits until its turn ends.
 
+In a project whose threads run in containers, Local works differently (see [Containers](#containers)).
+
+### Containers
+
+A project can run each thread's claude in a Docker container of its own. A thread then can't touch other
+threads' worktrees, your other projects or the rest of your machine, and only reaches the hosts it's allowed to.
+Each thread also gets its own ports and services, so two threads can run their dev servers or databases at the
+same time without clashing.
+
+To set it up:
+
+1. Build the reference image from oo's `docker` folder (in this repo, or where npm installed oo):
+
+   ```bash
+   docker build -t oo-thread -f docker/thread.Dockerfile docker
+   ```
+
+   It has node, claude, git and the firewall. For a project that needs more (python, a database client, ...),
+   make its own image `FROM oo-thread` and add them. Rebuild it to update claude, since claude can't update itself
+   in the container.
+2. Containers can't use claude's own sign-in, so make a long-lived token with `claude setup-token` and export it
+   where you start oo: `export CLAUDE_CODE_OAUTH_TOKEN=...`, then start the board again. oo passes it to the
+   containers through the environment, never on a command line.
+3. In the projects screen (`P`), set the project's **container** to the image, its **ports** to the ones its dev
+   servers listen on (e.g. `3000, 5173`), and **egress** to any hosts beyond the defaults that its threads need
+   (e.g. `pypi.org files.pythonhosted.org`, or an IPv4 address or CIDR). The project needs worktrees on.
+
+The container is `oo-<project>-<id>`. It starts when the thread's claude first opens, and claude, `s` shells and
+the thread's project commands (`r`) all run in it with `docker exec`. tmux and the board stay on your machine, so
+windows, keys and the card's status work as usual. Dev servers keep running when claude restarts. A thread's
+container stops when its claude closes for being idle (unless it's in Local or one of its commands is running),
+starts again when you open it, and is removed when the thread goes to Done or is archived. The board removes
+containers whose thread is gone when it starts, and leaves the rest running when it quits.
+
+Tickets work as usual from a container: `oo thread ticket` and `oo thread add --ticket` only send the board what
+was asked for, and the board looks the ticket up or files it with its own `JIRA_EMAIL`/`JIRA_API_TOKEN` or `gh`
+sign-in. Containers never get those credentials, and their firewall doesn't need to let the tracker through.
+
+Each configured port is published on your machine's loopback at a port docker picks. The card shows them as
+`⇄3000→49153`, and so does `oo thread show`.
+
+**Local** doesn't move anything for these projects. Instead, the board forwards the project's own ports on your
+machine to the thread's container, so `localhost:3000` reaches that thread's dev server. Its branch stays in its
+worktree and its claude keeps working, so Local switches between threads at once, and a thread in Local can still
+move between columns (except to Done, where its container goes). The enter and leave local hooks run inside the
+thread's container, in its worktree, so an enter local hook like `npm run dev` starts the very server the board
+forwards to. The next local hook (leaving, or another thread entering) stops whatever the last one left running
+in its container. If a port is already taken on your machine, entering Local says so. The board forwards the
+ports again when it restarts.
+
+What a container sees:
+
+- Its worktree, and the project's `.git`, so it can commit, push and set up tracking branches. `.git/hooks` is
+  read-only, since git on your machine runs them.
+- oo's data folder (`~/.local/share/output-orchestrator`), read-only, so `oo thread` works from inside, but none
+  of the other threads' worktrees. Only the two files `oo thread` and claude's hooks add to, `requests.jsonl` and
+  `events.jsonl`, are writable: `state.json` and the claude settings your other claudes run hooks from aren't.
+- From `~/.claude`, only this worktree's transcripts and the project's memory, plus your settings, `CLAUDE.md`,
+  skills, agents, commands and keybindings read-only. Not your credentials or other projects' transcripts.
+- Your `~/.gitconfig`, read-only. Your git name and email are passed in too.
+- A home of its own, at your home's path, kept between runs in `homes/` in oo's data folder.
+
+It runs as you, with every Linux capability dropped except the two the firewall needs, and only root (which
+oo uses only to start the firewall) can use those. The firewall (`docker/init-firewall.sh`) denies all
+outgoing traffic except DNS, claude's own services, GitHub, the npm registry and the project's egress hosts.
+Host names are looked up when the container starts, so a host whose addresses change needs a restart (a
+stopped and started container picks them up). If the firewall can't start, the container is removed rather
+than left open, and oo checks it's up each time it uses a running container.
+
+Changing a project's container settings (`P`) remakes its threads' containers, but not under anything running
+in one: a container is made again once its claude, shells and commands have stopped, e.g. when claude idles out.
+
+Two gaps remain:
+
+- `requests.jsonl` is writable, as it has to be for `oo thread` to work, so a container can ask the board to do
+  anything a thread's claude can ask, for any thread (move it, message it, edit its plan). The rule that a
+  thread's claude changes only its own thread is still a convention, as it is without containers.
+- `.git` is shared and writable, since the thread works in git. A container can change the repo's git config
+  and other threads' branches, and git on your machine (the board's, or yours in the project) reads that
+  config, so a setting that runs a command could get one run outside the container.
+
 ### Blocked threads
 
 When a thread can't go on until another one lands, `B` records that: move the cursor to the thread it waits on and
@@ -248,8 +330,9 @@ something happens on the board:
 
 - **Enter local** and **leave local** run in the project's checkout once the branch is checked out
   or the checkout is back on main (for an imported thread, enter runs in the thread's own
-  directory). For example, `npm install && npm run dev` as the enter local hook gives you a
-  running dev server for the thread.
+  directory, and in a project with [containers](#containers), both run in the thread's container).
+  For example, `npm install && npm run dev` as the enter local hook gives you a running dev server
+  for the thread.
 - **Enter polish** and **leave polish** run when a thread moves into or out of Polish, whether
   with the board's keys, by opening its PR, or with `oo thread move`. They run in the thread's
   worktree, or the project's checkout if the move removed it (Done, archived). For example, `npm
@@ -435,13 +518,16 @@ showing where you are. Done shows one line per thread and, while you're not in i
 - **tmux `mouse` on**, for the `oo` session only.
 - **tmux sessions** named `oo-run_…`, one per project command you run with `r`, stopped by `X`, `Q`
   or the thread's worktree going.
+- **Docker containers** named `oo-<project>-<id>`, for projects whose threads run in containers (see
+  [Containers](#containers)), removed when their thread goes to Done or is archived.
 - **`~/.claude/skills/oo/SKILL.md`**, rewritten each time the board starts, which teaches claude the
   `oo thread` commands.
 - Your own Claude Code settings are left alone. Thread claudes get oo's claude hooks through
   `--settings` pointing at oo's own settings file.
 
 Everything else lives in `~/.local/share/output-orchestrator/`: `state.json` (projects and
-threads), claude hook events, and the thread worktrees.
+threads), claude hook events, the thread worktrees, and for containers, their homes (`homes/`), their claude
+settings and the `bin/oo` they run oo with.
 
 ## Development
 
