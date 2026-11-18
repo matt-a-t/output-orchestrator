@@ -1,0 +1,141 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { configLabel, containerHome, containerName, execCommand, mounts, parsePorts, prepareHome, runArgs, type Paths } from './container.js';
+import type { Project } from './state.js';
+
+const paths: Paths = { home: '/home/u', dataDir: '/home/u/.local/share/output-orchestrator', ooDir: '/home/u/dev/oo', uid: 1000, gid: 1000 };
+const project: Project & { container: { image: string; allow: string[]; ports: number[] } } = {
+	name: 'app',
+	abbrev: '',
+	path: '/home/u/dev/app',
+	worktrees: true,
+	color: 'cyan',
+	wakePrompt: '',
+	closeIdleAfter: 30,
+	hooks: {},
+	commands: [],
+	tracker: 'none',
+	jiraSite: '',
+	jiraProject: '',
+	container: { image: 'oo-thread', allow: ['pypi.org'], ports: [3000, 5173] },
+};
+const thread = { project: 'app', id: '7' };
+const cwd = '/home/u/.local/share/output-orchestrator/worktrees/app/7';
+const all = () => true;
+
+test('a container is named for its project and thread, in what docker allows', () => {
+	assert.equal(containerName(thread), 'oo-app-7');
+	assert.equal(containerName({ project: 'my app/x', id: '12' }), 'oo-my-app-x-12');
+});
+
+test('a container sees its own worktree, not the other threads\' or their homes', () => {
+	const m = mounts(project, thread, cwd, paths, all);
+	const targets = m.map(x => x.target);
+	const at = (target: string) => targets.indexOf(target);
+	// DATA_DIR, then tmpfs over the worktrees and homes in it, then this worktree on top.
+	assert.ok(at(paths.dataDir) < at(`${paths.dataDir}/worktrees`));
+	assert.ok(at(`${paths.dataDir}/worktrees`) < at(cwd));
+	assert.deepEqual(m.find(x => x.target === `${paths.dataDir}/worktrees`), { kind: 'tmpfs', target: `${paths.dataDir}/worktrees` });
+	assert.deepEqual(m.find(x => x.target === `${paths.dataDir}/homes`), { kind: 'tmpfs', target: `${paths.dataDir}/homes` });
+	// Its own home is at $HOME, mounted first.
+	assert.deepEqual(m[0], { kind: 'bind', source: containerHome(paths, thread), target: paths.home });
+	// Everything else is at its host path.
+	for (const x of m.slice(1)) if (x.kind === 'bind') assert.equal(x.source, x.target);
+});
+
+test('the host runs .git\'s hooks and config, so the container can\'t change them', () => {
+	const m = mounts(project, thread, cwd, paths, all);
+	const readonly = (target: string) => m.find(x => x.target === target && x.kind === 'bind')?.kind === 'bind' && (m.find(x => x.target === target) as { readonly?: boolean }).readonly;
+	assert.equal(readonly('/home/u/dev/app/.git'), undefined);
+	assert.equal(readonly('/home/u/dev/app/.git/hooks'), true);
+	assert.equal(readonly('/home/u/dev/app/.git/config'), true);
+	assert.equal(readonly(paths.ooDir), true);
+});
+
+test('a path mounted twice is mounted once, the first way', () => {
+	const m = mounts(project, thread, cwd, { ...paths, ooDir: cwd }, all);
+	assert.deepEqual(m.filter(x => x.target === cwd), [{ kind: 'bind', source: cwd, target: cwd }]);
+});
+
+test('only this directory\'s transcripts and the project\'s memory come from ~/.claude, with settings read-only', () => {
+	const m = mounts(project, thread, cwd, paths, path => !path.endsWith('agents'));
+	const claude = m.filter(x => x.target.startsWith('/home/u/.claude')).map(x => [x.target, x.kind === 'bind' && !!x.readonly]);
+	assert.deepEqual(claude, [
+		['/home/u/.claude/projects/-home-u--local-share-output-orchestrator-worktrees-app-7', false],
+		['/home/u/.claude/projects/-home-u-dev-app/memory', false],
+		['/home/u/.claude/settings.json', true],
+		['/home/u/.claude/CLAUDE.md', true],
+		['/home/u/.claude/skills', true],
+		['/home/u/.claude/commands', true],
+		['/home/u/.claude/keybindings.json', true],
+	]);
+	// Not the whole of it, and so not the credentials.
+	assert.ok(!m.some(x => x.target === '/home/u/.claude'));
+});
+
+test('the run args drop capabilities, publish ports on loopback and label the container', () => {
+	const args = runArgs(project, thread, cwd, paths, all);
+	const joined = args.join(' ');
+	assert.deepEqual(args.slice(0, 2), ['run', '-d']);
+	assert.deepEqual(args.slice(-3), ['oo-thread', 'sleep', 'infinity']);
+	assert.match(joined, /--user 1000:1000 -e HOME=\/home\/u/);
+	assert.match(joined, /--cap-drop ALL --cap-add NET_ADMIN --cap-add NET_RAW --security-opt no-new-privileges/);
+	assert.match(joined, /-p 127\.0\.0\.1::3000 -p 127\.0\.0\.1::5173/);
+	assert.match(joined, /--label oo\.thread=7 --label oo\.project=app/);
+	assert.match(joined, /--tmpfs \/home\/u\/\.local\/share\/output-orchestrator\/worktrees/);
+	assert.match(joined, /type=bind,source=\/home\/u\/dev\/app\/\.git\/hooks,target=\/home\/u\/dev\/app\/\.git\/hooks,readonly/);
+});
+
+test('a change to the image, ports or hosts changes the config label, so the container is made again', () => {
+	const label = (p: typeof project) => configLabel(runArgs(p, thread, cwd, paths, all));
+	const base = label(project);
+	assert.match(base ?? '', /^[0-9a-f]{16}$/);
+	assert.equal(label({ ...project }), base);
+	assert.notEqual(label({ ...project, container: { ...project.container, image: 'other' } }), base);
+	assert.notEqual(label({ ...project, container: { ...project.container, ports: [3000] } }), base);
+	assert.notEqual(label({ ...project, container: { ...project.container, allow: [] } }), base);
+});
+
+test('commands run in the container with oo on PATH, and the token passed by name only', () => {
+	const command = execCommand('oo-app-7', cwd, ['claude', '--resume', 'abc'], { OO_THREAD_ID: '7' }, { dataDir: paths.dataDir });
+	assert.deepEqual(command, [
+		'docker', 'exec', '-it', '-w', cwd, '-e', 'OO_THREAD_ID=7', '-e', 'CLAUDE_CODE_OAUTH_TOKEN', 'oo-app-7',
+		'sh', '-c', 'PATH="$0:$PATH" exec "$@"', `${paths.dataDir}/bin`, 'claude', '--resume', 'abc',
+	]);
+	assert.equal(execCommand('n', cwd, ['true'], {}, { interactive: false })[2], '-i');
+});
+
+test('reads published ports, keeping the first of an IPv4/IPv6 pair', () => {
+	const ports = parsePorts(['3000/tcp -> 127.0.0.1:49153', '3000/tcp -> [::1]:49154', '5173/tcp -> 127.0.0.1:49155', '53/udp -> 127.0.0.1:1', ''].join('\n'));
+	assert.deepEqual([...ports], [[3000, 49153], [5173, 49155]]);
+});
+
+test('the container\'s home has the mount points ready, owned by you, and claude set up', () => {
+	const root = mkdtempSync(join(tmpdir(), 'oo-container-'));
+	const home = join(root, 'home');
+	const local: Paths = { home, dataDir: join(home, '.local/share/oo'), ooDir: join(home, 'dev/oo'), uid: 1000, gid: 1000 };
+	const repo = join(home, 'dev/app');
+	mkdirSync(join(repo, '.git/hooks'), { recursive: true });
+	writeFileSync(join(repo, '.git/config'), '');
+	mkdirSync(join(home, '.claude'), { recursive: true });
+	writeFileSync(join(home, '.claude/settings.json'), '{}');
+	const p = { ...project, path: repo };
+	const work = join(local.dataDir, 'worktrees/app/7');
+	prepareHome(p, thread, work, local);
+	const inHome = containerHome(local, thread);
+	assert.ok(statSync(join(inHome, '.local/share/oo')).isDirectory());
+	assert.ok(statSync(join(inHome, 'dev/oo')).isDirectory());
+	assert.ok(statSync(join(inHome, '.claude/settings.json')).isFile());
+	// The transcript and memory directories exist on the host too, else docker makes them as root.
+	assert.ok(existsSync(join(home, '.claude/projects', work.replace(/[^a-zA-Z0-9]/g, '-'))));
+	const config = JSON.parse(readFileSync(join(inHome, '.claude.json'), 'utf8'));
+	assert.equal(config.hasCompletedOnboarding, true);
+	assert.equal(config.projects[work].hasTrustDialogAccepted, true);
+	// Made again, it leaves what claude has written since alone.
+	writeFileSync(join(inHome, '.claude.json'), '{"kept":true}');
+	prepareHome(p, thread, work, local);
+	assert.equal(readFileSync(join(inHome, '.claude.json'), 'utf8'), '{"kept":true}');
+});
