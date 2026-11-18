@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { execa } from 'execa';
-import { capture, fixture } from './testHelpers.js';
+import { capture, fakeGh, fixture, mockJira } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
 import { loadState, saveState } from './state.js';
 import { approvedPrompt, followUpPrompt, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
@@ -150,6 +150,56 @@ test('ticket keeps a pushed branch, and refuses bad keys, other threads and a mi
 	assert.equal(await threadCommand(['ticket'], ctx), 1);
 	assert.match(output.err(), /oo thread ticket \[id\] \(<key> \| --clear\)/);
 	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.ticket?.key, 'AV-5');
+});
+
+test('ticket --create files a Jira issue from the description, titled after the thread unless --summary says, and sets it', async t => {
+	const { dir } = await jiraRepo(t, [{ cwd: '/work/one', title: 'Fix the save button' }]);
+	const output = capture(t);
+	const calls = mockJira(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-', '--type', 'Bug'], ctx), 0);
+	assert.match(output.out(), /Created AV-77 https:\/\/example\.atlassian\.net\/browse\/AV-77\nSet #1's ticket to AV-77/);
+	assert.deepEqual([calls[1]!.body.fields.summary, calls[1]!.body.fields.issuetype], ['Fix the save button', { name: 'Bug' }]);
+	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.ticket, {
+		key: 'AV-77',
+		url: 'https://example.atlassian.net/browse/AV-77',
+		summary: 'Fix the save button',
+		description: 'plan from stdin',
+	});
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-', '--summary', 'Other'], ctx), 0);
+	assert.equal(calls[3]!.body.fields.summary, 'Other');
+});
+
+test('ticket --create files a GitHub issue with gh', async t => {
+	const { dir, state } = fixture([{ cwd: '/work/one' }]);
+	saveState({ ...state, projects: state.projects.map(p => ({ ...p, tracker: 'github' })) }, join(dir, 'state.json'));
+	const output = capture(t);
+	const gh = fakeGh(t, { 'issue create': { stdout: 'https://github.com/o/r/issues/12\n' } });
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-'], ctx), 0);
+	assert.deepEqual(gh.calls()[0]!.slice(0, 4), ['issue', 'create', '--title', 'thread 1']);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.ticket?.key, '#12');
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-', '--type', 'Bug'], ctx), 1);
+	assert.match(output.err(), /--type is for Jira issues/);
+});
+
+test('ticket --create needs a description and a tracker, and says why the tracker refused', async t => {
+	const { dir } = await jiraRepo(t, [{ cwd: '/work/one' }]);
+	const output = capture(t);
+	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
+	assert.equal(await threadCommand(['ticket', '--create'], ctx), 1);
+	assert.match(output.err(), /--create --description-file/);
+	assert.equal(await threadCommand(['ticket', 'AV-1', '--summary', 'x'], ctx), 1);
+	assert.equal(await threadCommand(['ticket', '--create', '--clear', '--description-file', '-'], ctx), 1);
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-'], { ...ctx, stdin: () => '  \n' }), 1);
+	assert.match(output.err(), /Give the ticket a description/);
+	mockJira(t, () => Response.json({ errorMessages: ['Issue type is required'] }, { status: 400, statusText: 'Bad Request' }));
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-'], ctx), 1);
+	assert.match(output.err(), /Couldn't create the ticket: Jira said 400 Bad Request: Issue type is required/);
+	assert.equal(loadState(join(dir, 'state.json')).threads[0]!.ticket, undefined);
+	const { dir: none } = fixture([{ cwd: '/work/one' }]);
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-'], context(none, '/work/one', { OO_THREAD_ID: '1' })), 1);
+	assert.match(output.err(), /p has no ticket tracker/);
 });
 
 test('add --ticket needs the project to have a tracker', async t => {
