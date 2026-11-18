@@ -46,6 +46,17 @@ export const DEFAULT_CLOSE_IDLE_AFTER = 30;
 const CommandSchema = z.object({ name: z.string(), command: z.string() });
 export type ProjectCommand = z.infer<typeof CommandSchema>;
 
+/**
+ * Where a project's threads run claude when it has one (see container.ts): one long-lived container per thread
+ * from `image`, with egress only to the reference firewall's hosts plus `allow`, and `ports` published to the host.
+ */
+const ContainerSchema = z.object({
+	image: z.string(),
+	allow: z.array(z.string()).default([]),
+	ports: z.array(z.number().int().min(1).max(65535)).default([]),
+});
+export type ContainerSetting = z.infer<typeof ContainerSchema>;
+
 const ProjectSchema = z.object({
 	name: z.string(),
 	// Shown on board cards in place of the name, when set.
@@ -65,6 +76,8 @@ const ProjectSchema = z.object({
 	tracker: z.enum(TRACKERS).default('none'),
 	jiraSite: z.string().default(''),
 	jiraProject: z.string().default(''),
+	// Unset: threads run on the host.
+	container: ContainerSchema.optional(),
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
@@ -261,8 +274,32 @@ export function projectProblem(state: State, project: Project, original?: string
 	if (project.name !== original && state.projects.some(p => p.name === project.name)) return `Project "${project.name}" already exists`;
 	if (!existsSync(project.path)) return `No such directory: ${project.path}`;
 	if (project.worktrees && !isRepo(project.path)) return `${project.path} isn't a git repo — turn worktrees off for a project without one`;
+	if (project.container && !project.worktrees) return 'A container needs worktrees on: each thread gets its own worktree to mount';
 	if (project.tracker === 'jira' && !project.jiraSite) return 'Jira tickets need a jira site';
 	if (project.jiraSite && !isJiraCloudHost(project.jiraSite)) return JIRA_CLOUD_ONLY;
+}
+
+/** The container fields as the projects screen edits them: ports and allowed hosts are comma or space separated. */
+export type ContainerText = { image: string; ports: string; allow: string };
+
+export const containerText = (container: ContainerSetting | undefined): ContainerText => ({
+	image: container?.image ?? '',
+	ports: container?.ports.join(', ') ?? '',
+	allow: container?.allow.join(', ') ?? '',
+});
+
+/** The setting `text` describes (undefined with no image), or why it can't be saved. */
+export function parseContainer(text: ContainerText): { container?: ContainerSetting; problem?: string } {
+	const list = (s: string) => s.split(/[\s,]+/).filter(Boolean);
+	const image = text.image.trim();
+	if (!image) return list(text.ports).length || list(text.allow).length ? { problem: 'Container ports and hosts need an image' } : {};
+	const ports: number[] = [];
+	for (const p of list(text.ports)) {
+		const n = Number(p);
+		if (!Number.isInteger(n) || n < 1 || n > 65535) return { problem: `Container port ${p} isn't a port number` };
+		if (!ports.includes(n)) ports.push(n);
+	}
+	return { container: { image, ports, allow: [...new Set(list(text.allow))] } };
 }
 
 export function newThreadId(state: State): string {

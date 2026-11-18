@@ -9,9 +9,11 @@ import { hasWorktree, worktreePath } from './git.js';
 import { EDITING_HELP, FIELD_HELP, FieldText, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { scrollWindow } from './scroll.js';
-import { COLORS, DEFAULT_CLOSE_IDLE_AFTER, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, projectProblem, TRACKERS, type Project, type ProjectHook, type State } from './state.js';
+import { COLORS, containerText, DEFAULT_CLOSE_IDLE_AFTER, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, parseContainer, projectProblem, TRACKERS, type ContainerText, type Project, type ProjectHook, type State } from './state.js';
 
-const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'closeIdleAfter', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS, 'commands'] as const;
+const CONTAINER_FIELDS = ['image', 'ports', 'allow'] as const;
+type ContainerField = (typeof CONTAINER_FIELDS)[number];
+const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'closeIdleAfter', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS, 'commands', ...CONTAINER_FIELDS] as const;
 type Field = (typeof FIELDS)[number];
 const FIELD_LABELS: Record<Field, string> = {
 	name: 'name',
@@ -26,6 +28,9 @@ const FIELD_LABELS: Record<Field, string> = {
 	jiraProject: 'jira project',
 	...HOOK_LABELS,
 	commands: 'commands',
+	image: 'container',
+	ports: 'ports',
+	allow: 'egress',
 };
 // Changed with ←/→ through a fixed list rather than typed.
 type Choice = 'color' | 'worktrees' | 'closeIdleAfter' | 'tracker';
@@ -54,18 +59,28 @@ const FIELD_HINTS: Partial<Record<Field, string>> = {
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
 	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
+	image: "docker image each thread's claude runs in, one container per thread (see docker/thread.Dockerfile); empty runs claude on the host  ",
+	ports: "container ports to publish, e.g. 3000, 5173; Local forwards them to the same ports on the host  ",
+	allow: 'hosts the container may reach besides the firewall defaults (anthropic, github, npm), e.g. pypi.org  ',
 	commands: "⏎ edits them in $EDITOR, one name: command a line; r on the board runs one in the thread's worktree, in a new terminal window  ",
 	...Object.fromEntries(HOOK_EVENTS.map(e => [e, `shell command run ${HOOK_WHERE[e]} (OO_THREAD_ID, OO_THREAD_TITLE, OO_PROJECT, OO_BRANCH set${e === 'newThread' ? ', and OO_PROMPT' : ''})  `])),
 };
 const LABEL_WIDTH = Math.max(...FIELDS.map(f => FIELD_LABELS[f].length)) + 2;
 
 const isHook = (field: Field): field is ProjectHook => (HOOK_EVENTS as readonly string[]).includes(field);
-const fieldValue = (project: Project, field: TextField) => (isHook(field) ? (project.hooks[field] ?? '') : project[field]);
-const withField = (project: Project, field: TextField, value: string): Project =>
-	isHook(field) ? { ...project, hooks: { ...project.hooks, [field]: value } } : { ...project, [field]: value };
+const isContainer = (field: Field): field is ContainerField => (CONTAINER_FIELDS as readonly string[]).includes(field);
+const fieldValue = (form: Form, field: TextField) =>
+	isContainer(field) ? form.container[field] : isHook(field) ? (form.project.hooks[field] ?? '') : form.project[field];
+const withField = (form: Form, field: TextField, value: string): Form =>
+	isContainer(field)
+		? { ...form, container: { ...form.container, [field]: value } }
+		: { ...form, project: isHook(field) ? { ...form.project, hooks: { ...form.project.hooks, [field]: value } } : { ...form.project, [field]: value } };
 
-/** `original` is the name of the project being edited; undefined when adding one. `edit` is the focused text field's (see fieldKey). */
-type Form = { original?: string; project: Project; field: number; edit: Edit };
+/**
+ * `original` is the name of the project being edited; undefined when adding one. `edit` is the focused text field's (see fieldKey).
+ * `container` is the container setting as typed, parsed into the project on save.
+ */
+type Form = { original?: string; project: Project; container: ContainerText; field: number; edit: Edit };
 
 type Props = {
 	state: State;
@@ -89,8 +104,11 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 	const save = (form: Form) => {
 		// Hooks left empty aren't kept.
 		const hooks = Object.fromEntries(Object.entries(form.project.hooks).map(([k, v]) => [k, v?.trim()]).filter(([, v]) => v));
+		const parsed = parseContainer(form.container);
+		if (parsed.problem) return setMessage(`✗ ${parsed.problem}`);
 		const project = {
 			...form.project,
+			container: parsed.container,
 			name: form.project.name.trim(),
 			abbrev: form.project.abbrev.trim(),
 			wakePrompt: form.project.wakePrompt.trim(),
@@ -138,15 +156,15 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 				return;
 			}
 			if (isText(field)) {
-				const next = fieldKey(fieldValue(form.project, field), form.edit, input, key);
-				if (next) return setForm({ ...form, project: withField(form.project, field, next.value), edit: next.edit });
+				const next = fieldKey(fieldValue(form, field), form.edit, input, key);
+				if (next) return setForm({ ...withField(form, field, next.value), edit: next.edit });
 			}
 			if (isBack(input, key, form.edit)) return setForm(null);
 			if (isSubmit(input, key, form.edit)) return save(form);
 			if (key.return) {
 				const next = nextField(form.field, FIELDS.length, i => {
 					const f = FIELDS[i]!;
-					return isText(f) ? fieldValue(form.project, f).length : undefined;
+					return isText(f) ? fieldValue(form, f).length : undefined;
 				});
 				return setForm({ ...form, ...next });
 			}
@@ -174,10 +192,10 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 		if (input === 'k' || key.upArrow) return setIndex(loop(row, -1, state.projects.length));
 		if (input === 'n') {
 			const color = COLORS[state.projects.length % COLORS.length]!;
-			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER, hooks: {}, commands: [], tracker: 'none', jiraSite: '', jiraProject: '' }, field: 0, edit: null });
+			return setForm({ project: { name: '', abbrev: '', color, path: '', worktrees: true, wakePrompt: '', closeIdleAfter: DEFAULT_CLOSE_IDLE_AFTER, hooks: {}, commands: [], tracker: 'none', jiraSite: '', jiraProject: '' }, container: containerText(undefined), field: 0, edit: null });
 		}
 		if (!current) return;
-		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, field: 0, edit: null });
+		if (input === 'e' || key.return) return setForm({ original: current.name, project: current, container: containerText(current.container), field: 0, edit: null });
 		if (input === 'x') {
 			if (isHome(current)) return setMessage(`✗ ${current.name} is the built-in home project and can't be removed`);
 			if (state.threads.some(t => t.project === current.name && t.column !== 'archived')) {
@@ -227,6 +245,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 								<Text color={p.color}>{pad(p.color, 9)}</Text>
 								{p.path}
 								{p.worktrees ? null : <Text dimColor>  (no worktrees)</Text>}
+								{p.container ? <Text dimColor>  (container {p.container.image})</Text> : null}
 							</Text>
 						))}
 					</Box>
@@ -255,7 +274,7 @@ export function ProjectsView({ state, setState, onClose }: Props) {
 										)
 									) : (
 										<Text>
-											<FieldText value={fieldValue(form.project, field)} edit={active ? form.edit : null} />
+											<FieldText value={fieldValue(form, field)} edit={active ? form.edit : null} />
 											{field === 'wakePrompt' && !form.project.wakePrompt ? <Text dimColor>{DEFAULT_WAKE_PROMPT}</Text> : null}
 										</Text>
 									)}
