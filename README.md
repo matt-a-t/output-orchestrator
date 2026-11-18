@@ -247,10 +247,11 @@ Each configured port is published on your machine's loopback at a port docker pi
 **Local** doesn't move anything for these projects. Instead, the board forwards the project's own ports on your
 machine to the thread's container, so `localhost:3000` reaches that thread's dev server. Its branch stays in its
 worktree and its claude keeps working, so Local switches between threads at once, and a thread in Local can still
-move between columns (except to Done, where its container goes). The enter and leave local hooks run on your
-machine in the thread's worktree, so start the dev server with a project command (`r`), which runs in the
-container: a hook starting one on your machine would take the port the board forwards. If a port is already taken on your machine, entering Local says so. The
-board forwards the ports again when it restarts.
+move between columns (except to Done, where its container goes). The enter and leave local hooks run inside the
+thread's container, in its worktree, so an enter local hook like `npm run dev` starts the very server the board
+forwards to. The next local hook (leaving, or another thread entering) stops whatever the last one left running
+in its container. If a port is already taken on your machine, entering Local says so. The board forwards the
+ports again when it restarts.
 
 What a container sees:
 
@@ -311,8 +312,9 @@ something happens on the board:
 
 - **Enter local** and **leave local** run in the project's checkout once the branch is checked out
   or the checkout is back on main (for an imported thread, enter runs in the thread's own
-  directory). For example, `npm install && npm run dev` as the enter local hook gives you a
-  running dev server for the thread.
+  directory, and in a project with [containers](#containers), both run in the thread's container).
+  For example, `npm install && npm run dev` as the enter local hook gives you a running dev server
+  for the thread.
 - **Enter polish** and **leave polish** run when a thread moves into or out of Polish, whether
   with the board's keys, by opening its PR, or with `oo thread move`. They run in the thread's
   worktree, or the project's checkout if the move removed it (Done, archived). For example, `npm

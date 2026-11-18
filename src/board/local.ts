@@ -4,7 +4,7 @@
 import { useEffect } from 'react';
 import { errorMessage, resultMessage, stillWorking, unknownProject } from '../errors.js';
 import { carryChanges, checkout, defaultBranch, hasWorktree, isDirty, pullBranch, removeWorktree, restoreChanges, worktreePath } from '../git.js';
-import { tryHook } from '../hooks.js';
+import { tryHook, type HookOptions } from '../hooks.js';
 import type { Project, ProjectHook, Thread } from '../state.js';
 import type { Status } from '../status.js';
 import { noRepo } from '../threads.js';
@@ -13,7 +13,7 @@ import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
 import { closeClaude, launchClaude } from './claude.js';
 import { createWorktree } from './worktree.js';
-import { containerProject, ensureContainer, type ContainerProject } from '../container.js';
+import { containerName, containerProject, ensureContainer, type ContainerProject } from '../container.js';
 import { forward, forwardMapping, unforward } from './forward.js';
 
 /** Copy the thread's transcript to where `claude --resume` looks from `cwd`. */
@@ -23,8 +23,8 @@ function moveTranscript(thread: Thread, cwd: string): Pick<Thread, 'transcriptPa
 }
 
 /** Run the project's hook; returns `done` with how it went. A hook that can't start doesn't undo the move. */
-async function hook(project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string): Promise<string> {
-	const ran = await tryHook(project, event, thread, cwd);
+async function hook(project: Project, event: ProjectHook, thread: Thread, cwd: string, done: string, options?: HookOptions): Promise<string> {
+	const ran = await tryHook(project, event, thread, cwd, {}, options);
 	return ran ? `${done}; ${ran}` : done;
 }
 
@@ -94,7 +94,8 @@ export async function enterLocal(board: Board, thread: Thread): Promise<Outcome>
 
 /**
  * Local for a project with containers: forward the project's ports on the host to the thread's container (started
- * if need be), then run the enter local hook in its worktree. Claude, the worktree and the container stay as they are.
+ * if need be), then run the enter local hook in its worktree, in the container, so a dev server it starts is the one
+ * forwarded to. Claude, the worktree and the container stay as they are.
  */
 async function forwardLocal(board: Board, project: ContainerProject, thread: Thread): Promise<Outcome> {
 	if (!hasWorktree(thread)) return { ok: false, message: `#${thread.id} has no worktree yet — open it first` };
@@ -108,15 +109,15 @@ async function forwardLocal(board: Board, project: ContainerProject, thread: Thr
 	}
 	board.updateThread(thread.id, { local: true });
 	const done = `${mapping.map(([port]) => `localhost:${port}`).join(', ')} now go${mapping.length === 1 ? 'es' : ''} to #${thread.id}'s container`;
-	return { ok: true, message: await hook(project, 'enterLocal', { ...thread, local: true }, cwd, done) };
+	return { ok: true, message: await hook(project, 'enterLocal', { ...thread, local: true }, cwd, done, { container: containerName(thread) }) };
 }
 
-/** Out of Local by port forwarding: stop forwarding, then run the leave local hook in the thread's worktree. */
+/** Out of Local by port forwarding: stop forwarding, then run the leave local hook in the thread's worktree, in its container. */
 async function unforwardLocal(board: Board, project: Project, thread: Thread): Promise<string> {
 	await unforward(thread.id);
 	const back: Thread = { ...thread, local: undefined };
 	board.updateThread(thread.id, { local: undefined });
-	return hook(project, 'leaveLocal', back, worktreePath(thread), `#${thread.id} is out of Local; its ports are no longer forwarded`);
+	return hook(project, 'leaveLocal', back, worktreePath(thread), `#${thread.id} is out of Local; its ports are no longer forwarded`, { container: containerName(thread) });
 }
 
 /** As the board starts, forward the ports of each Local thread whose project has containers again: the forwarding went when the board last quit. */

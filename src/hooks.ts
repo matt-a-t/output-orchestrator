@@ -1,4 +1,6 @@
 // Per-project hooks: shell commands set in the project's settings (P) for things that happen on the board.
+import { execa } from 'execa';
+import { containerScript, stopKeyed } from './container.js';
 import { errorMessage } from './errors.js';
 import { hasWorktree, worktreePath } from './git.js';
 import { HOOK_LABELS, type Column, type Project, type ProjectHook, type Thread } from './state.js';
@@ -30,9 +32,33 @@ export function hookEnv(project: Project, hook: ProjectHook, thread: Thread, ext
 	return { OO_HOOK_NAME: HOOK_LABELS[hook], ...threadEnv(project, thread), ...extra };
 }
 
+/** Where a hook runs besides the host: the thread's container, by name. */
+export type HookOptions = { container?: string };
+
+/**
+ * The script a hook's window runs: the hook (from `$OO_HOOK`, so it needs no quoting), on the host or with only the
+ * hook itself in `container`, then a line saying how it exited and a shell on the host to read its output in.
+ */
+export function hookScript(env: string[], cwd: string, window: string, container?: string): string {
+	const command = container ? containerScript({ name: container, cwd, env, key: window }, 'OO_HOOK') : 'sh -c "$OO_HOOK"';
+	return `${command}; status=$?; echo; echo "[oo] $OO_HOOK_NAME hook exited with status $status"; exec "\${SHELL:-sh}"`;
+}
+
+// The tmux option a hook's window keeps its container's name in, so the next hook of its kind can stop it there.
+const CONTAINER_OPTION = '@oo-container';
+
+/** Close the hook's window, stopping what it started in a container too: closing the window alone leaves that running. */
+async function stopHook(window: string): Promise<void> {
+	const option = await execa('tmux', ['show-options', '-w', '-v', '-t', `:${window}`, CONTAINER_OPTION], { reject: false });
+	const container = option.exitCode === 0 ? option.stdout.trim() : '';
+	if (container) await stopKeyed(container, window);
+	await killWindow(window);
+}
+
 /**
  * Run the project's `hook` for the thread in `cwd`, in a background tmux window that stays open
- * as a shell afterwards so its output can be read. Returns what to tell the user, if it ran.
+ * as a shell afterwards so its output can be read, and in the thread's container if `container` names it.
+ * Returns what to tell the user, if it ran.
  */
 export async function runHook(
 	project: Project,
@@ -40,16 +66,16 @@ export async function runHook(
 	thread: Thread,
 	cwd: string,
 	extraEnv: Record<string, string> = {},
+	{ container }: HookOptions = {},
 ): Promise<string | undefined> {
 	const command = project.hooks[hook]?.trim();
 	if (!command) return;
 	const window = hookWindowName(project, hook);
-	await killWindow(window);
-	// The command comes in through the environment so it needs no quoting.
-	const script = 'sh -c "$OO_HOOK"; status=$?; echo; echo "[oo] $OO_HOOK_NAME hook exited with status $status"; exec "${SHELL:-sh}"';
+	await stopHook(window);
 	const env = { OO_HOOK: command, ...hookEnv(project, hook, thread, extraEnv) };
-	await openWindow(window, `hook:${project.name}`, cwd, ['sh', '-c', script], env, { background: true });
-	return `running ${project.name}'s ${HOOK_LABELS[hook]} hook in window ${window}`;
+	await openWindow(window, `hook:${project.name}`, cwd, ['sh', '-c', hookScript(Object.keys(env), cwd, window, container)], env, { background: true });
+	if (container) await execa('tmux', ['set-option', '-w', '-t', `:${window}`, CONTAINER_OPTION, container]);
+	return `running ${project.name}'s ${HOOK_LABELS[hook]} hook in window ${window}${container ? ` (in ${container})` : ''}`;
 }
 
 /** `runHook`, saying so if it couldn't start (e.g. no tmux server for `oo thread move` from a plain shell). */
@@ -59,8 +85,9 @@ export async function tryHook(
 	thread: Thread,
 	cwd: string,
 	extraEnv: Record<string, string> = {},
+	options: HookOptions = {},
 ): Promise<string | undefined> {
-	return runHook(project, hook, thread, cwd, extraEnv).catch(
+	return runHook(project, hook, thread, cwd, extraEnv, options).catch(
 		err => `✗ ${HOOK_LABELS[hook]} hook didn't start: ${errorMessage(err)}`,
 	);
 }

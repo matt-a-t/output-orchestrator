@@ -2,6 +2,7 @@
 // the `oo` session, so it can be watched from a separate terminal window and keeps going once that's closed.
 import { spawn } from 'node:child_process';
 import { execa } from 'execa';
+import { containerScript, stopKeyed } from './container.js';
 import { threadEnv } from './hooks.js';
 import { currentSessionId, shellQuote } from './tmux.js';
 import type { Project, ProjectCommand, Thread } from './state.js';
@@ -82,11 +83,7 @@ const runEnv = (project: Project, thread: Thread | undefined, cmd: ProjectComman
  * with the same environment; recording how it went and the shell after stay on the host, with tmux.
  */
 export function runScript(container?: { name: string; cwd: string; env: string[]; session: string }): string {
-	// docker exec doesn't pass a hangup on, so killing the session would leave the command running in the container:
-	// it records its process group (its pid, as the exec's session leader) for stopInContainer to end it by.
-	const command = container
-		? `docker exec -it -w ${shellQuote(container.cwd)} ${container.env.map(name => `-e ${name}`).join(' ')} ${shellQuote(container.name)} sh -c ${shellQuote(`echo $$ > ${runPidFile(container.session)}; exec sh -c "$OO_CMD"`)}`
-		: 'sh -c "$OO_CMD"';
+	const command = container ? containerScript({ ...container, key: container.session }, 'OO_CMD') : 'sh -c "$OO_CMD"';
 	return [
 		command,
 		'status=$?',
@@ -97,32 +94,14 @@ export function runScript(container?: { name: string; cwd: string; env: string[]
 	].join('; ');
 }
 
-/** Where, in its container, a run's process group is recorded. */
-const runPidFile = (session: string) => `/tmp/oo-run-${session}.pid`;
-
 // The tmux option a run's session keeps its container's name in.
 const CONTAINER_OPTION = '@oo-container';
-
-/**
- * The script that ends a run's command in its container: TERM to its process group, then KILL if it's still going
- * after 5s, so a restarted dev server finds its port free.
- */
-export function stopScript(session: string): string {
-	const file = runPidFile(session);
-	return [
-		`pid=$(cat ${file} 2>/dev/null) || exit 0`,
-		'kill -TERM -$pid 2>/dev/null',
-		'i=0; while kill -0 -$pid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done',
-		'kill -KILL -$pid 2>/dev/null',
-		`rm -f ${file}`,
-	].join('; ');
-}
 
 /** End the run's command in its container, if it was started in one. */
 async function stopInContainer(session: string): Promise<void> {
 	const option = await execa('tmux', ['show-options', '-v', '-t', `=${session}:`, CONTAINER_OPTION], { reject: false });
 	const name = option.exitCode === 0 ? option.stdout.trim() : '';
-	if (name) await execa('docker', ['exec', name, 'sh', '-c', stopScript(session)], { reject: false });
+	if (name) await stopKeyed(name, session);
 }
 
 async function recordContainer(session: string, container: string | undefined): Promise<void> {

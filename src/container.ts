@@ -8,6 +8,7 @@ import { homedir, userInfo } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
+import { shellQuote } from './tmux.js';
 import { DATA_DIR, PRIVATE_FILE, type ContainerSetting, type Project, type Thread } from './state.js';
 
 /** The checkout oo runs from (its dist, and the node_modules that needs), mounted read-only for claude's hooks and `oo`. */
@@ -338,4 +339,38 @@ export async function threadContainers(): Promise<Map<string, string>> {
 			.filter(Boolean)
 			.map(line => line.split('\t') as [string, string]),
 	);
+}
+
+/** Where, in its container, a command containerScript started records its process group. */
+const pidFile = (key: string) => `/tmp/oo-${key.replace(/[^\w.-]/g, '-')}.pid`;
+
+/**
+ * The shell line a tmux pane runs to have the command in `$variable` run in the container, in `cwd`, with each of
+ * `env` passed through by name. docker exec doesn't pass a hangup on, so closing the pane would leave the command
+ * running in the container: it records its process group (its pid, as the exec's session leader) under `key`,
+ * for stopKeyed to end it by.
+ */
+export function containerScript({ name, cwd, env, key }: { name: string; cwd: string; env: string[]; key: string }, variable: string): string {
+	const inner = `echo $$ > ${pidFile(key)}; exec sh -c "$${variable}"`;
+	return `docker exec -it -w ${shellQuote(cwd)} ${env.map(v => `-e ${v}`).join(' ')} ${shellQuote(name)} sh -c ${shellQuote(inner)}`;
+}
+
+/**
+ * The script that ends what containerScript started under `key`: TERM to its process group, then KILL if it's still
+ * going after 5s, so a dev server started again finds its port free.
+ */
+export function stopScript(key: string): string {
+	const file = pidFile(key);
+	return [
+		`pid=$(cat ${file} 2>/dev/null) || exit 0`,
+		'kill -TERM -$pid 2>/dev/null',
+		'i=0; while kill -0 -$pid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done',
+		'kill -KILL -$pid 2>/dev/null',
+		`rm -f ${file}`,
+	].join('; ');
+}
+
+/** End what containerScript started under `key` in the container, if it's still going. */
+export async function stopKeyed(name: string, key: string): Promise<void> {
+	await docker(['exec', name, 'sh', '-c', stopScript(key)], { reject: false });
 }

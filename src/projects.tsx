@@ -46,8 +46,8 @@ const isText = (field: Field): field is TextField => !isChoice(field) && field !
 const HOOK_WHERE: Record<ProjectHook, string> = {
 	newThread: "as a thread is added, in its worktree if it's been made yet (it has with an initial prompt), else the project checkout",
 	worktreeCreated: "in a thread's worktree each time it's made (first opened, reopened from Done, back from Local)",
-	enterLocal: "in the project checkout (with a container, in the thread's worktree)",
-	leaveLocal: "in the project checkout (with a container, in the thread's worktree)",
+	enterLocal: "in the project checkout (with a container, in the thread's container)",
+	leaveLocal: "in the project checkout (with a container, in the thread's container)",
 	enterPolish: "in the thread's worktree",
 	leavePolish: "in the thread's worktree",
 };
