@@ -6,7 +6,7 @@ import { sameCard, type CardProps } from './card.js';
 test('a card redraws only when something it shows changed', () => {
 	const { state } = fixture([{}, {}]);
 	const [thread, blocker] = state.threads as [CardProps['thread'], CardProps['thread']];
-	const props: CardProps = { thread, selected: false, project: state.projects[0], live: true, status: 'working', resumable: false, stalled: false, unreviewed: false, merge: undefined, blockers: [blocker], running: false, tokens: 120_000, warmFor: '42m', compacted: false };
+	const props: CardProps = { thread, selected: false, project: state.projects[0], live: true, status: 'working', resumable: false, stalled: false, unreviewed: false, merge: undefined, blockers: [blocker], running: false, ports: '', tokens: 120_000, warmFor: '42m', compacted: false };
 	// blockers is a new array every render.
 	assert.ok(sameCard(props, { ...props, blockers: [blocker] }));
 	assert.ok(!sameCard(props, { ...props, blockers: [] }));

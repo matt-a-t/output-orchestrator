@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { capture, fixture } from './testHelpers.js';
 import { claimBoard, releaseBoard, RequestReader, respond, type Request } from './requests.js';
-import { loadState, saveState } from './state.js';
-import { approvedPrompt, followUpPrompt, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
+import { loadState, saveState, type Thread } from './state.js';
+import { approvedPrompt, containerLine, followUpPrompt, planApproved, resolveProject, resolveThreadId, sessionStarted, threadCommand, type Context } from './threadCommand.js';
 import { addThread, approvedTodo, conflictPrompt, inDir, markDelivered, messagesPrompt, todoRows, todosDone, todoWindow, withDrafts } from './threads.js';
 
 const context = (dir: string, cwd: string, env: NodeJS.ProcessEnv = {}): Context => ({
@@ -744,4 +744,15 @@ test("a parent reaching Done or being archived puts the threads building on it b
 	assert.equal(await threadCommand(['move', '3', 'archived'], ctx), 0);
 	assert.deepEqual([get('4').stackedOn, get('4').base, get('4').rebaseFrom], [undefined, 'main', undefined]);
 	assert.match(get('4').inbox![0]!.text, /was archived without merging.*are now part of this thread's work/);
+});
+
+test("oo thread show names the thread's container, with its ports on the host, or the ones it publishes", () => {
+	const { state } = fixture();
+	const thread = { id: '7', project: 'p' } as Thread;
+	const project = { ...state.projects[0]!, container: { image: 'x', ports: [3000, 5173], allow: [] } };
+	assert.equal(containerLine(project, thread, new Map([[3000, 49153]])), 'container: oo-p-7 · 3000→49153');
+	// From inside the container, or with it stopped.
+	assert.equal(containerLine(project, thread, new Map()), 'container: oo-p-7 · ports 3000, 5173');
+	assert.equal(containerLine({ ...project, container: { ...project.container, ports: [] } }, thread, new Map()), 'container: oo-p-7');
+	assert.equal(containerLine(state.projects[0], thread, new Map()), undefined);
 });

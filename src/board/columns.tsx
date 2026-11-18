@@ -9,6 +9,7 @@ import { threadWindowName } from '../tmux.js';
 import type { Board } from './board.js';
 import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES } from './card.js';
 import { threadRunning } from '../commands.js';
+import { containerName, knownPorts, portsText } from '../container.js';
 import { blockers } from '../threads.js';
 import { cacheLeft, contextUse, shortDuration } from '../transcripts.js';
 import { openThread, resumeId, stalled } from './claude.js';
@@ -160,6 +161,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 										merge={merge[t.id]}
 										blockers={blockers(board.state(), t)}
 										running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
+										ports={portsText(knownPorts.get(containerName(t)))}
 										{...contextProps(t, now)}
 									/>
 								))}

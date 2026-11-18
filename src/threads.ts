@@ -1,6 +1,7 @@
 // The rules for adding and moving threads, shared by the board and `oo thread …`.
 import { relative, resolve, isAbsolute } from 'node:path';
 import { killRunSessions, runPrefix } from './commands.js';
+import { containerName, removeContainer } from './container.js';
 import { unknownProject } from './errors.js';
 import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
 import { prHost, prState, retargetPr } from './prHost.js';
@@ -347,6 +348,8 @@ export async function syncWorktree(project: Project, thread: Thread): Promise<Wo
 	await killWindow(threadWindowName(thread.id)).catch(() => {});
 	// Nor can its commands (dev servers and the like).
 	await killRunSessions(runPrefix(project, thread));
+	// Its container goes with them; its home stays for when it's reopened.
+	if (project.container) await removeContainer(containerName(thread));
 	if (!hasWorktree(thread)) return {};
 	await removeWorktree(project.path, thread);
 	return { message: `Removed #${thread.id}'s worktree (kept branch ${thread.branch})` };

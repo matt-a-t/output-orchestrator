@@ -8,6 +8,7 @@ import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf,
 import { contextUse, describeContext, worthFreshStart } from './transcripts.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
+import { containerName, portsText, publishedPorts } from './container.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>] [--from <id>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -177,7 +178,17 @@ function summary(state: State, t: Thread): string {
 	return `#${t.id}\t${where(t)}${mark ? ` ${mark}` : ''}${waiting ? ` ⧗${waiting}` : ''}\t${t.project}\t${t.title}`;
 }
 
-function details(state: State, t: Thread): string {
+/**
+ * The thread's container, for `oo thread show`: its name and published ports, or from inside it (no docker there)
+ * or while it's stopped, the ports it publishes once it runs.
+ */
+export function containerLine(project: Project | undefined, t: Thread, published: Map<number, number>): string | undefined {
+	if (!project?.container) return;
+	const ports = published.size ? portsText(published) : project.container.ports.length ? `ports ${project.container.ports.join(', ')}` : '';
+	return `container: ${containerName(t)}${ports ? ` · ${ports}` : ''}`;
+}
+
+function details(state: State, t: Thread, container?: string): string {
 	const lines = [`#${t.id} ${t.title}`, `column:  ${where(t)}`, `project: ${t.project}`];
 	if (t.priority) lines.push(`priority: ${t.priority}`);
 	for (const b of blockers(state, t)) lines.push(`blocked: #${b.id} ${b.title} (${where(b)})`);
@@ -185,6 +196,7 @@ function details(state: State, t: Thread): string {
 	if (t.branch) lines.push(`branch:  ${t.branch}${t.base ? ` (from ${t.base})` : ''}`);
 	const dir = threadDir(state, t);
 	if (dir) lines.push(`dir:     ${dir}`);
+	if (container) lines.push(container);
 	if (t.pr) lines.push(`PR:      #${t.pr.number} ${t.pr.url}`);
 	if (t.sessionId) lines.push(`session: ${t.sessionId}`);
 	const use = t.transcriptPath && contextUse(t.transcriptPath);
@@ -240,7 +252,9 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (positional.length > 1) throw new UsageError(`Unexpected ${positional[1]}`);
 		const id = resolveThreadId(state, positional[0], ctx.env, ctx.cwd);
 		const thread = state.threads.find(t => t.id === id)!;
-		console.log(has('json') ? JSON.stringify({ ...thread, dir: threadDir(state, thread) }, null, 2) : details(state, thread));
+		const project = state.projects.find(p => p.name === thread.project);
+		const container = project?.container && !has('json') ? containerLine(project, thread, await publishedPorts(containerName(thread))) : undefined;
+		console.log(has('json') ? JSON.stringify({ ...thread, dir: threadDir(state, thread) }, null, 2) : details(state, thread, container));
 		return 0;
 	}
 	if (sub === 'move') {

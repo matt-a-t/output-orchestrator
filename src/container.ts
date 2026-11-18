@@ -267,6 +267,8 @@ export async function publishedPorts(name: string): Promise<Map<number, number>>
 
 /** Stop the container, keeping it to start again: what's in it stops using memory meanwhile. */
 export async function stopContainer(name: string): Promise<void> {
+	// It gets new ones when it starts again.
+	knownPorts.delete(name);
 	await docker(['stop', '-t', '5', name], { reject: false });
 }
 
@@ -274,6 +276,32 @@ export async function stopContainer(name: string): Promise<void> {
 export async function removeContainer(name: string): Promise<void> {
 	knownPorts.delete(name);
 	await docker(['rm', '-f', name], { reject: false });
+}
+
+/** A thread's published ports for its card and `oo thread show`, e.g. `3000→49153 5173→49155`; empty with none. */
+export function portsText(ports: Map<number, number> | undefined): string {
+	return [...(ports ?? [])].map(([inside, host]) => `${inside}→${host}`).join(' ');
+}
+
+/** Every process in the container as `pid ppid args`, like processList, for claudeShellRunning; its image may have no ps. */
+export async function containerProcesses(name: string): Promise<string> {
+	const script = 'for d in /proc/[0-9]*; do p=${d#/proc/}; pp=$(cut -d" " -f4 $d/stat 2>/dev/null) || continue; echo "$p $pp $(tr "\\0" " " < $d/cmdline 2>/dev/null)"; done';
+	const result = await docker(['exec', name, 'sh', '-c', script], { reject: false });
+	return result.exitCode === 0 ? result.stdout : '';
+}
+
+/**
+ * Which of the board's containers to remove at startup: ones whose thread is gone, or has no worktree to run in
+ * now (Done, archived, in IDEAS), or whose project no longer has a container.
+ */
+export function strayContainers(containers: Map<string, string>, threads: Thread[], projects: Project[]): string[] {
+	return [...containers]
+		.filter(([name, id]) => {
+			const thread = threads.find(t => t.id === id && containerName(t) === name);
+			const project = thread && projects.find(p => p.name === thread.project);
+			return !thread || !project?.container || thread.column === 'done' || thread.column === 'archived' || thread.column === 'ideas';
+		})
+		.map(([name]) => name);
 }
 
 /** The containers the board made: name → the thread id it's for. */

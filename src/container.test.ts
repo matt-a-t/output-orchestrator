@@ -3,7 +3,9 @@ import { test } from 'node:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configLabel, containerHome, containerName, execCommand, forThread, mounts, NO_TOKEN, parsePorts, prepareHome, runArgs, threadShell, type Paths } from './container.js';
+import { configLabel, containerHome, containerName, execCommand, forThread, mounts, NO_TOKEN, parsePorts, portsText, prepareHome, runArgs, strayContainers, threadShell, type Paths } from './container.js';
+import { claudeShellRunning } from './tmux.js';
+import type { Thread } from './state.js';
 import type { Project } from './state.js';
 
 const paths: Paths = { home: '/home/u', dataDir: '/home/u/.local/share/output-orchestrator', ooDir: '/home/u/dev/oo', uid: 1000, gid: 1000 };
@@ -152,4 +154,34 @@ test("claude in a container needs the token, and says how to get one, before doc
 	await assert.rejects(forThread(project, t, cwd, ['claude'], {}, { needsToken: true, token: undefined }), { message: NO_TOKEN });
 	assert.match(NO_TOKEN, /claude setup-token/);
 	assert.equal(threadShell(project)[0], 'sh');
+});
+
+test("at startup the board removes containers that no thread needs any more, and keeps the rest", () => {
+	const t = (id: string, column: string, p = 'app') => ({ id, project: p, column }) as Thread;
+	const threads = [t('1', 'active'), t('2', 'done'), t('3', 'archived'), t('4', 'ideas'), t('5', 'polish', 'plain'), t('6', 'planned')];
+	const plain = { ...project, name: 'plain', container: undefined };
+	const containers = new Map([
+		['oo-app-1', '1'],
+		['oo-app-2', '2'],
+		['oo-app-3', '3'],
+		['oo-app-4', '4'],
+		['oo-plain-5', '5'],
+		['oo-app-6', '6'],
+		['oo-app-99', '99'],
+		// A label that doesn't match the name it's under isn't one of ours to keep.
+		['oo-other-1', '1'],
+	]);
+	assert.deepEqual(strayContainers(containers, threads, [project, plain]), ['oo-app-2', 'oo-app-3', 'oo-app-4', 'oo-plain-5', 'oo-app-99', 'oo-other-1']);
+});
+
+test("ports read as inside→host for the card", () => {
+	assert.equal(portsText(new Map([[3000, 49153], [5173, 49155]])), '3000→49153 5173→49155');
+	assert.equal(portsText(undefined), '');
+});
+
+test("a claude shell anywhere in a thread's container keeps its claude open", () => {
+	// containerProcesses' pid ppid args, from the container's /proc: claude's Bash tool sources its shell snapshot.
+	const ps = ['1 0 /sbin/docker-init -- sleep infinity', '7 1 sleep infinity', '20 0 sh -c PATH="$0:$PATH" exec "$@" claude', '31 20 /bin/bash -c source /home/u/.claude/shell-snapshots/snapshot-bash.sh && npm run dev'].join('\n');
+	assert.ok(claudeShellRunning(ps, 0));
+	assert.ok(!claudeShellRunning(ps.split('\n').slice(0, 3).join('\n'), 0));
 });
