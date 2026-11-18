@@ -10,11 +10,33 @@ import type { Board } from './board.js';
 import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES } from './card.js';
 import { threadRunning } from '../commands.js';
 import { blockers } from '../threads.js';
+import { cacheLeft, contextUse, shortDuration } from '../transcripts.js';
 import { openThread, resumeId, stalled } from './claude.js';
 import { useDoubleClick } from './doubleClick.js';
 import { ScrollBar } from './scrollList.js';
 
 type Cursor = { col: number; row: number };
+
+// How often the cards' cache countdowns (42m) catch up with the clock.
+const CLOCK_EVERY = 30_000;
+
+/** The time now, updated every CLOCK_EVERY. */
+function useClock(): number {
+	const [now, setNow] = useState(Date.now);
+	useEffect(() => {
+		const timer = setInterval(() => setNow(Date.now()), CLOCK_EVERY);
+		return () => clearInterval(timer);
+	}, []);
+	return now;
+}
+
+/** The card's context size and cache countdown; none for finished threads, which have nothing to resume for. */
+function contextProps(t: Thread, now: number): { tokens: number | undefined; warmFor: string | undefined; compacted: boolean } {
+	const use = t.column !== 'done' && t.column !== 'archived' && t.transcriptPath ? contextUse(t.transcriptPath) : undefined;
+	if (!use) return { tokens: undefined, warmFor: undefined, compacted: false };
+	const left = cacheLeft(use, now);
+	return { tokens: use.tokens, warmFor: left > 0 ? shortDuration(left) : undefined, compacted: !!use.compacted };
+}
 
 /** What the columns keep while another screen covers them, so they come back as they were. */
 export type ColumnsLayout = { height: number; scrollOffsets: Partial<Record<Column, number>> };
@@ -40,6 +62,7 @@ type Props = {
 export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, layout, onPick }: Props) {
 	const { columns: width } = useWindowSize();
 	const colWidth = Math.max(16, Math.floor(width / shown.length));
+	const now = useClock();
 
 	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
 	const boardRef = useRef<DOMElement>(null);
@@ -137,6 +160,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 										merge={merge[t.id]}
 										blockers={blockers(board.state(), t)}
 										running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
+										{...contextProps(t, now)}
 									/>
 								))}
 							</Box>

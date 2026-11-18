@@ -7,7 +7,7 @@ import { DEFAULT_WAKE_PROMPT, hidden, type Thread } from '../state.js';
 import { CLAUDE_SETTINGS_FILE } from '../status.js';
 import { threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
-import { recentlyActive } from '../transcripts.js';
+import { cacheLeft, contextUse, formatTokens, LARGE_CONTEXT, recentlyActive, shortDuration, type ContextUse } from '../transcripts.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
 import { createWorktree, inWorktree } from './worktree.js';
@@ -23,6 +23,30 @@ export function resumeId(thread: Thread): string | undefined {
 }
 
 /**
+ * The thread's context, if resuming it would be costly: its claude is closed, and it carries a large context
+ * whose prompt cache has gone cold, so its next turn re-reads all of it at full price.
+ */
+export function coldResume(board: Board, thread: Thread, now = Date.now()): ContextUse | undefined {
+	if (board.liveWindows().has(threadWindowName(thread.id)) || !(thread.branch || thread.cwd) || !resumeId(thread)) return;
+	const use = contextUse(thread.transcriptPath!);
+	if (use && use.tokens >= LARGE_CONTEXT && cacheLeft(use, now) <= 0) return use;
+}
+
+/**
+ * Go on with `start` (resuming as usual), unless resuming would be costly (coldResume): then ask first,
+ * y resuming anyway and n starting a fresh claude (`start(true)`) that reads the thread's plan and checkpoints.
+ */
+function askBeforeColdResume(board: Board, thread: Thread, start: (fresh: boolean) => unknown) {
+	const use = coldResume(board, thread);
+	if (!use) return start(false);
+	board.ask(
+		`#${thread.id} has ${formatTokens(use.tokens)} tokens of context and its cache went cold ${shortDuration(-cacheLeft(use, Date.now()))} ago, so resuming re-reads it all — y resumes · n starts a fresh claude on its plan and checkpoints`,
+		() => start(false),
+		() => start(true),
+	);
+}
+
+/**
  * Closed while claude was still working, e.g. its window was killed. Still working with no window
  * covers a claude killed too hard to report SessionEnd.
  */
@@ -35,7 +59,7 @@ export function stalled(board: Board, thread: Thread) {
  * Jump to the thread's claude window, starting claude in `cwd` (resuming the thread if it can) if needed.
  * `background` starts it without leaving the board; `resumeAnyway` skips the check for it being open elsewhere.
  * A thread in Planned is for planning only, so its claude starts in plan mode unless `mode` says otherwise.
- * `prompt` is sent as a new claude's first message.
+ * `prompt` is sent as a new claude's first message. `fresh` starts a new claude even if the thread could be resumed.
  */
 export async function launchClaude(
 	board: Board,
@@ -46,10 +70,11 @@ export async function launchClaude(
 		resumeAnyway = false,
 		mode = thread.column === 'planned' ? 'plan' : undefined,
 		prompt,
-	}: { background?: boolean; resumeAnyway?: boolean; mode?: PermissionMode; prompt?: string } = {},
+		fresh = false,
+	}: { background?: boolean; resumeAnyway?: boolean; mode?: PermissionMode; prompt?: string; fresh?: boolean } = {},
 ): Promise<void> {
 	// No branch yet means the worktree was just created, so there's nothing to resume in it.
-	const sessionId = thread.branch || thread.cwd ? resumeId(thread) : undefined;
+	const sessionId = !fresh && (thread.branch || thread.cwd) ? resumeId(thread) : undefined;
 	const window = threadWindowName(thread.id);
 	// A thread the board hasn't heard from this run but that was written to just now is
 	// probably still open in another terminal; two claudes on one thread would clash.
@@ -76,6 +101,8 @@ export async function launchClaude(
 	const result = await openWindow(window, threadWindowLabel(thread), cwd, command, { OO_THREAD_ID: thread.id }, { background });
 	await board.refreshWindows();
 	if (result === 'selected') board.setMessage('');
+	// The new claude's session replaces the old one on the thread, so say where the old one still is.
+	else if (fresh && thread.sessionId) board.setMessage(`Started a fresh claude for #${thread.id} · its old conversation: claude --resume ${thread.sessionId}`);
 	else board.setMessage(`${sessionId ? 'Resumed' : 'Started'} claude for #${thread.id}`);
 }
 
@@ -95,20 +122,26 @@ export async function restartClaude(board: Board, thread: Thread, mode: Permissi
 	board.setMessage(`Restarted claude for #${thread.id} in ${mode} mode`);
 }
 
-/** ⏎: jump to the thread's claude, starting it in the thread's worktree (made if need be) if it isn't running. */
+/**
+ * ⏎: jump to the thread's claude, starting it in the thread's worktree (made if need be) if it isn't running.
+ * Asks first if resuming would be costly (askBeforeColdResume).
+ */
 export const openThread = (board: Board, thread: Thread) =>
-	board.run(async () => {
-		const project = board.project(thread.project);
-		if (!project) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
-		const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
-		await launchClaude(board, thread, cwd);
-	});
+	askBeforeColdResume(board, thread, fresh =>
+		board.run(async () => {
+			const project = board.project(thread.project);
+			if (!project) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
+			const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
+			await launchClaude(board, thread, cwd, fresh ? { fresh, prompt: START_PROMPT } : {});
+		}),
+	);
 
 /**
  * Resume the thread's claude in the background if it's closed, then tell it `prompt`: by default, keep going,
- * or, for a claude that has never run, start on the thread. Returns whether it did.
+ * or, for a claude that has never run, start on the thread. Returns whether it did. `fresh` starts a new claude
+ * on the thread instead of resuming it.
  */
-export async function wakeThread(board: Board, thread: Thread, prompt?: string): Promise<boolean> {
+export async function wakeThread(board: Board, thread: Thread, prompt?: string, { fresh: startFresh = false } = {}): Promise<boolean> {
 	const project = board.project(thread.project);
 	if (!project) {
 		board.setMessage(`✗ ${unknownProject(thread.project)}`);
@@ -118,10 +151,10 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string):
 	const window = threadWindowName(thread.id);
 	const open = (await windowNames()).includes(window);
 	// Nothing to resume, so the claude starts fresh (as in launchClaude).
-	const fresh = !open && !resumeId(thread);
+	const fresh = !open && (startFresh || !resumeId(thread));
 	if (!open) {
 		const starts = board.sessionStarts.get(thread.id) ?? 0;
-		await launchClaude(board, thread, cwd, { background: true });
+		await launchClaude(board, thread, cwd, { background: true, fresh });
 		// It may be waiting on "resume anyway?" instead.
 		if (!(await windowNames()).includes(window)) return false;
 		const deadline = Date.now() + 30_000;
@@ -140,10 +173,10 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string):
 	return true;
 }
 
-/** w: wake the thread, unless its claude is plainly still at it. */
+/** w: wake the thread, unless its claude is plainly still at it. Asks first if resuming would be costly (askBeforeColdResume). */
 export function wake(board: Board, thread: Thread) {
 	if (board.statuses()[thread.id] === 'working' && !stalled(board, thread)) return board.setMessage(`⚠ ${stillWorking(thread.id)}`);
-	return board.run(async () => void (await wakeThread(board, thread)), `waking #${thread.id}`);
+	return askBeforeColdResume(board, thread, fresh => board.run(async () => void (await wakeThread(board, thread, undefined, { fresh })), `waking #${thread.id}`));
 }
 
 /** W: wake every one of `threads` (those shown) that was closed mid-work, once asked. */

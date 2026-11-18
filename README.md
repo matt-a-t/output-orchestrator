@@ -89,6 +89,21 @@ one with messages waiting to be pasted in are left open. Its card then shows ↻
 resumes it with its history. Approving a step or sending diff comments (`c`) to a closed claude wakes
 it in the background to hear them.
 
+Resuming re-sends claude's whole context with its next turn. That's cheap while the prompt cache is
+still warm (5 minutes or an hour after the last turn, depending on the account) and full price after.
+So each card also shows the context its claude carries (`379k`, yellow from 150k tokens) and, while
+the cache is warm, how long it has left (`42m`, green). Before Enter or `w` resumes a large context
+whose cache has gone cold, the board asks: `y` resumes it, `n` starts a fresh claude that reads the
+thread's plan and checkpoints instead. The old conversation stays on disk for `claude --resume`.
+Wakes the board does by itself (messages, review feedback, rebase conflicts) always resume, since
+they need what claude knew.
+
+Compacting is cheap only while the cache is warm, so when the board is about to close an idle window
+(**close idle**, above) whose claude carries a large context with the cache still warm, it sends
+`/compact` first and closes the window once the compaction shows in the transcript (or after 10
+minutes if it never does). Threads in Done are closed without compacting: nothing will resume them.
+A compacted thread's card shows a rough size (`~40k`) until its next turn gives the real one.
+
 `e` opens a thread's own screen. Its title,
 ticket, project, colour, priority and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
 the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
@@ -96,7 +111,7 @@ already has a branch or directory can't change project.
 
 Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved, ✉ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up). Each card shows the thread number and project abbreviation (or name, if it has none),
+approved, ✉ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up), then the context size and cache time left (see above). Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath (after its ticket key, if it has one).
 
 ### Tickets
@@ -166,7 +181,8 @@ ticket later (`e`) renames its branch to match, unless the branch has already be
   they're about, and when you save they're sent to the thread's claude as `file:line — note`
   feedback (`:cq` cancels), waking it first if its window is closed.
 
-Confirmations (quit, archive, resuming a busy thread) all take `y`. Any other key cancels.
+Confirmations (quit, archive, resuming a busy thread) all take `y`; resuming a large, cold context also
+takes `n` for a fresh start. Any other key cancels.
 
 ### A shell beside claude
 

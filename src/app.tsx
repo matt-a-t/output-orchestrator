@@ -90,11 +90,12 @@ export function App() {
 	const columnsLayout = useRef(newColumnsLayout());
 	// The thread B is picking a blocker for, while the cursor moves to the one it waits on.
 	const [picking, setPicking] = useState<string | null>(null);
-	// An action waiting on y (any other key cancels); its question is shown as the message.
-	const [confirm, setConfirm] = useState<(() => void) | null>(null);
-	const ask = (question: string, action: () => void) => {
-		setConfirm(() => action);
-		setMessage(`${question} y to confirm`);
+	// An action waiting on y, and maybe another on n (any other key cancels); its question is shown as the message.
+	const [confirm, setConfirm] = useState<{ yes: () => void; no?: () => void } | null>(null);
+	const ask = (question: string, yes: () => void, no?: () => void) => {
+		setConfirm({ yes, no });
+		// A question with an n answer says what y and n do itself.
+		setMessage(no ? question : `${question} y to confirm`);
 	};
 
 	const projectByName = (name: string) => stateRef.current.projects.find(p => p.name === name);
@@ -284,7 +285,9 @@ export function App() {
 		}
 		if (confirm) {
 			setConfirm(null);
-			return input === 'y' ? confirm() : setMessage('Cancelled');
+			if (input === 'y') return confirm.yes();
+			if (input === 'n' && confirm.no) return confirm.no();
+			return setMessage('Cancelled');
 		}
 		if (picking) {
 			// Only moving, ⏎ and esc while picking.
