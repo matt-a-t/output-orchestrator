@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fromThreadDir, nextStatus, threadStatus, type HookEvent } from './status.js';
+import { claudeSettings, fromThreadDir, nextStatus, ooWrapper, threadStatus, type HookEvent } from './status.js';
 
 const dir = '/home/matt/.local/share/output-orchestrator/worktrees/output-orchestrator/15';
 const event = (cwd?: string): HookEvent => ({ thread: '15', event: 'SessionStart', cwd, ts: '' });
@@ -46,4 +46,18 @@ test("a thread's status folds all of its events from its directory", () => {
 	assert.equal(threadStatus('15', dir, file), 'stopped');
 	assert.equal(threadStatus('16', undefined, file), 'working');
 	assert.equal(threadStatus('17', undefined, file), undefined);
+});
+
+test("a container's claude runs the same hooks with the image's node", () => {
+	const host = JSON.stringify(claudeSettings(process.execPath));
+	const container = JSON.stringify(claudeSettings('node'));
+	assert.ok(!container.includes(process.execPath));
+	assert.equal(container, host.replaceAll(`'${process.execPath}'`, `'node'`));
+	assert.deepEqual(Object.keys(claudeSettings('node').hooks), ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd']);
+});
+
+test("a container's oo runs this cli with the image's node", () => {
+	const wrapper = ooWrapper();
+	assert.match(wrapper, /^#!\/bin\/sh\nexec node --no-warnings .*cli\.tsx?' "\$@"\n$/);
+	assert.ok(!wrapper.includes(process.execPath));
 });

@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { chmodSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,10 @@ import { shellQuote } from './tmux.js';
 
 export const EVENTS_FILE = join(DATA_DIR, 'events.jsonl');
 export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
+/** The same for a claude in a thread's container (see container.ts), where the host's node binary may not run. */
+export const CONTAINER_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.container.json');
+/** `oo` for a container's claude, which has DATA_DIR/bin on its PATH (see execCommand) but not oo's install. */
+export const OO_WRAPPER = join(DATA_DIR, 'bin', 'oo');
 
 // Run from source (tsx) we point at hook.ts and let Node strip the types.
 const fromSource = import.meta.url.endsWith('.ts');
@@ -29,17 +33,34 @@ export const OO_COMMAND = [
 
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
 
-/** Write the settings file passed to every thread's claude via `--settings`. */
-export function writeClaudeSettings(): void {
-	const node = (args: string[]) => [process.execPath, '--no-warnings', ...args].map(shellQuote).join(' ');
+type Hooks = Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]>;
+
+/**
+ * The claude settings that run oo's claude hooks with `nodeBinary`: the host's own node, or plain `node` from a
+ * container's image. The scripts are at their host paths either way, since a container mounts oo's checkout there.
+ */
+export function claudeSettings(nodeBinary: string): { hooks: Hooks } {
+	const node = (args: string[]) => [nodeBinary, '--no-warnings', ...args].map(shellQuote).join(' ');
 	const command = node([HOOK_SCRIPT]);
-	const hooks: Record<string, { matcher: string; hooks: { type: string; command: string }[] }[]> = Object.fromEntries(
-		HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]),
-	);
+	const hooks: Hooks = Object.fromEntries(HOOK_EVENTS.map(event => [event, [{ matcher: '*', hooks: [{ type: 'command', command }] }]]));
 	hooks.PostToolUse!.push({ matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: node(PLAN_HOOK) }] });
 	hooks.SessionStart!.push({ matcher: '*', hooks: [{ type: 'command', command: node(SESSION_HOOK) }] });
+	return { hooks };
+}
+
+/** The `oo` a container's claude runs: this same cli with the image's node. */
+export function ooWrapper(): string {
+	return `#!/bin/sh\nexec node --no-warnings ${OO_COMMAND.slice(1).map(shellQuote).join(' ')} "$@"\n`;
+}
+
+/** Write the settings files passed to every thread's claude via `--settings`, and the wrapper for containers. */
+export function writeClaudeSettings(): void {
 	ensureDataDir();
-	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify({ hooks }, null, 2), { mode: PRIVATE_FILE });
+	writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify(claudeSettings(process.execPath), null, 2), { mode: PRIVATE_FILE });
+	writeFileSync(CONTAINER_SETTINGS_FILE, JSON.stringify(claudeSettings('node'), null, 2), { mode: PRIVATE_FILE });
+	mkdirSync(dirname(OO_WRAPPER), { recursive: true });
+	writeFileSync(OO_WRAPPER, ooWrapper());
+	chmodSync(OO_WRAPPER, 0o755);
 }
 
 export const SKILL_FILE = join(homedir(), '.claude', 'skills', 'oo', 'SKILL.md');
