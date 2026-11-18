@@ -2,11 +2,12 @@
 import { relative, resolve, isAbsolute } from 'node:path';
 import { killRunSessions, runPrefix } from './commands.js';
 import { containerName, removeContainer } from './container.js';
-import { unknownProject } from './errors.js';
+import { errorMessage, unknownProject } from './errors.js';
 import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, renameBranch, restartBranch, worktreePath } from './git.js';
 import { prHost, prState, retargetPr } from './prHost.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
+import { requestedTicket } from './tickets.js';
 import { COLUMN_LABELS, hidden, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
@@ -416,7 +417,13 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		if (!project) return { id, ok: false, message: unknownProject(request.project) };
 		const parent = request.from === undefined ? undefined : state.threads.find(t => t.id === request.from);
 		if (request.from !== undefined && !parent) return { id, ok: false, message: `No thread #${request.from}` };
-		const fields = { project: request.project, title: request.title, plan: request.plan, ticket: request.ticket };
+		let ticket: Thread['ticket'];
+		try {
+			ticket = request.ticket && (await requestedTicket(project, request.ticket)).ticket;
+		} catch (err) {
+			return { id, ok: false, message: `Couldn't ${request.ticket && 'create' in request.ticket ? 'create' : 'find'} the ticket: ${errorMessage(err)}` };
+		}
+		const fields = { project: request.project, title: request.title, plan: request.plan, ticket };
 		if (parent) {
 			// The new thread isn't anything's blocker yet, so only the blocker's side can be wrong.
 			const planned = { ...fields, id: newThreadId(state), column: 'planned', createdAt: '', updatedAt: '' } as Thread;
@@ -444,7 +451,13 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		return done(`Saved #${thread.id}'s plan`);
 	}
 	if (request.op === 'ticket') {
-		const ticket = request.ticket ?? undefined;
+		let ticket: Thread['ticket'];
+		let created = false;
+		try {
+			if (request.ticket) ({ ticket, created = false } = await requestedTicket(project, request.ticket));
+		} catch (err) {
+			return { id, ok: false, message: `Couldn't ${request.ticket && 'create' in request.ticket ? 'create' : 'find'} the ticket: ${errorMessage(err)}` };
+		}
 		const old = thread.branch;
 		// The branch is named after the ticket (see branchName), so follow it while that's still safe.
 		const renamed = old ? await renameBranch(project.path, { ...thread, ticket }) : {};
@@ -459,7 +472,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 				return t;
 			}),
 		}));
-		const set = ticket ? `Set #${thread.id}'s ticket to ${ticket.key}` : `Cleared #${thread.id}'s ticket`;
+		const set = ticket ? `${created ? `Created ${ticket.key} ${ticket.url} · ` : ''}Set #${thread.id}'s ticket to ${ticket.key}` : `Cleared #${thread.id}'s ticket`;
 		return done(renamed.message ? `${set} · ${renamed.message}` : set);
 	}
 	if (request.op === 'priority') {

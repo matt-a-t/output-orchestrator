@@ -246,6 +246,10 @@ container stops when its claude closes for being idle (unless it's in Local or o
 starts again when you open it, and is removed when the thread goes to Done or is archived. The board removes
 containers whose thread is gone when it starts, and leaves the rest running when it quits.
 
+Tickets work as usual from a container: `oo thread ticket` and `oo thread add --ticket` only send the board what
+was asked for, and the board looks the ticket up or files it with its own `JIRA_EMAIL`/`JIRA_API_TOKEN` or `gh`
+sign-in. Containers never get those credentials, and their firewall doesn't need to let the tracker through.
+
 Each configured port is published on your machine's loopback at a port docker picks. The card shows them as
 `⇄3000→49153`, and so does `oo thread show`.
 

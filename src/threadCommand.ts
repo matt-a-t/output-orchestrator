@@ -7,7 +7,7 @@ import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, P
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
 import { contextUse, describeContext, worthFreshStart } from './transcripts.js';
 import { sanitize } from './sanitize.js';
-import { createTicket, fetchTicket, normalizeKey, ticketContent, ticketUrl } from './tickets.js';
+import { normalizeKey, ticketContent } from './tickets.js';
 import { containerName, portsText, publishedPorts } from './container.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>] [--from <id>]
@@ -94,14 +94,6 @@ function parseArgs(args: string[], valued: string[], boolean: string[]) {
 }
 
 /** The ticket `--ticket` names, in the project's form; its url is left empty if gh can't say. */
-async function resolveTicket(project: Project, input: string | undefined): Promise<Thread['ticket']> {
-	if (input === undefined) return;
-	if (project.tracker === 'none') throw new CommandError(`${project.name} has no ticket tracker; set one in the board's projects screen (P)`);
-	const key = normalizeKey(project, input);
-	if (!key) throw new CommandError(`Not a ${project.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${input}`);
-	return { key, url: await ticketUrl(project, key).catch(() => '') };
-}
-
 function parseColumn(name: string): Column {
 	const column = ALL_COLUMNS.find(c => c === name.toLowerCase());
 	if (!column) throw new UsageError(`Unknown column "${name}"; one of ${ALL_COLUMNS.join(', ')}`);
@@ -234,8 +226,8 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		const from = flag('from') === undefined ? undefined : resolveThreadId(state, flag('from'), ctx.env, ctx.cwd);
 		// Building on another thread means being in its project.
 		const project = resolveProject(state, ctx.cwd, flag('project') ?? state.threads.find(t => t.id === from)?.project);
-		const ticket = await resolveTicket(state.projects.find(p => p.name === project)!, flag('ticket'));
-		const response = await change({ op: 'add', project, title, plan, ticket, from }, ctx);
+		const key = flag('ticket');
+		const response = await change({ op: 'add', project, title, plan, ...(key !== undefined && { ticket: { key } }), from }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.thread);
 		return 0;
@@ -337,19 +329,14 @@ async function run(args: string[], ctx: Context): Promise<number> {
 			const description = readInput(ctx, descriptionFile!).trim();
 			if (!description) throw new UsageError('Give the ticket a description');
 			const summary = flag('summary')?.trim() || current.title;
-			const ticket = await createTicket(project, { summary, description, type: flag('type') }).catch((err: unknown) => {
-				throw new CommandError(`Couldn't create the ticket: ${errorMessage(err)}`);
-			});
-			const response = await change({ op: 'ticket', thread, ticket }, ctx);
-			// It's filed either way, so say which one to set by hand.
-			if (!response.ok) return fail(`Created ${ticket.key} ${ticket.url}, but ${response.message}`);
-			console.log(`Created ${ticket.key} ${ticket.url}\n${response.message}`);
+			// Filed by the board, with its tracker credentials: this claude may be in a container without them.
+			const response = await change({ op: 'ticket', thread, ticket: { create: { summary, description, type: flag('type') } } }, ctx);
+			if (!response.ok) return fail(response.message);
+			console.log(response.message);
 			return 0;
 		}
-		const ref = await resolveTicket(project, clear ? undefined : positional.at(-1));
-		// What it says, for show to quote, when the tracker can be read; it's still set without.
-		const ticket = ref && { ...ref, ...(await fetchTicket(project, ref.key).catch(() => undefined)) };
-		const response = await change({ op: 'ticket', thread, ticket: ticket ?? null }, ctx);
+		if (!clear && project.tracker === 'none') return fail(`${project.name} has no ticket tracker; set one in the board's projects screen (P)`);
+		const response = await change({ op: 'ticket', thread, ticket: clear ? null : { key: positional.at(-1)! } }, ctx);
 		if (!response.ok) return fail(response.message);
 		console.log(response.message);
 		return 0;

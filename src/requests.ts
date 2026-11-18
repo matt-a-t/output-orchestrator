@@ -2,6 +2,7 @@
 // overwrites state.json whenever it saves, so nothing else may write that file meanwhile: the CLI
 // appends a request to requests.jsonl instead, the board applies it and appends a response.
 import { randomUUID } from 'node:crypto';
+import type { TicketRequest } from './tickets.js';
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -12,7 +13,7 @@ import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Priority, type
 /** Thread ids and project names are resolved by the CLI, so the board doesn't need its cwd. */
 export type Request =
 	// `from`: the thread whose branch it builds on, and is blocked by (see stackedOn).
-	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: Thread['ticket']; from?: string }
+	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: TicketRequest; from?: string }
 	// `fresh`: once its claude stops, swap it for a fresh one on the thread's plan (see Thread's freshStart).
 	| { id: string; op: 'move'; thread: string; column: Column; fresh?: boolean }
 	// Only the board can do this one (it checks out, moves claude and runs hooks); 'toggle' is what o does.
@@ -21,7 +22,7 @@ export type Request =
 	| { id: string; op: 'pr'; thread: string; title?: string; body?: string }
 	| { id: string; op: 'plan'; thread: string; plan: string }
 	// Set or replace the thread's ticket, or with null clear it; the branch follows it while that's safe (see renameBranch).
-	| { id: string; op: 'ticket'; thread: string; ticket: Thread['ticket'] | null }
+	| { id: string; op: 'ticket'; thread: string; ticket: TicketRequest | null }
 	| { id: string; op: 'priority'; thread: string; priority: Priority }
 	// Save (or with null, clear) the messages the commit and PR forms open with; one left out stays as it is.
 	| { id: string; op: 'draft'; thread: string; commit?: string | null; pr?: { title: string; body: string } | null }

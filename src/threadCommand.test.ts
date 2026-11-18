@@ -158,7 +158,7 @@ test('ticket --create files a Jira issue from the description, titled after the 
 	const calls = mockJira(t);
 	const ctx = context(dir, '/work/one', { OO_THREAD_ID: '1' });
 	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-', '--type', 'Bug'], ctx), 0);
-	assert.match(output.out(), /Created AV-77 https:\/\/example\.atlassian\.net\/browse\/AV-77\nSet #1's ticket to AV-77/);
+	assert.match(output.out(), /Created AV-77 https:\/\/example\.atlassian\.net\/browse\/AV-77 · Set #1's ticket to AV-77/);
 	assert.deepEqual([calls[1]!.body.fields.summary, calls[1]!.body.fields.issuetype], ['Fix the save button', { name: 'Bug' }]);
 	assert.deepEqual(loadState(join(dir, 'state.json')).threads[0]!.ticket, {
 		key: 'AV-77',
@@ -309,6 +309,30 @@ test('local sends the direction to the board, toggling without one, and needs th
 	assert.equal(output.out(), 'local #1 true\nlocal #1 false\nlocal #2 toggle\nlocal #2 true');
 	assert.equal(await threadCommand(['local', '1', 'sideways'], ctx), 1);
 	assert.match(output.err(), /Unknown direction "sideways"[^]*usage:[^]*oo thread local \[id\] \[in\|out\]/);
+});
+
+test("with the board running, ticket sends it what was asked for, and the board looks the ticket up or files it", async t => {
+	const { dir } = await jiraRepo(t, [{ cwd: '/work/one', title: 'Fix the save button' }]);
+	capture(t);
+	const ctx = { ...context(dir, '/work/one', { OO_THREAD_ID: '1' }), stdin: () => 'What broke, and how to see it.' };
+	// Stand in for the board: no tracker credentials or network here, as in a thread's container.
+	claimBoard(dir);
+	const reader = new RequestReader(dir);
+	const asked: unknown[] = [];
+	const timer = setInterval(() => {
+		for (const r of reader.read()) {
+			asked.push((r as Extract<Request, { op: 'ticket' }>).ticket);
+			respond({ id: r.id, ok: true, message: 'ok' }, dir);
+		}
+	}, 20);
+	t.after(() => {
+		clearInterval(timer);
+		releaseBoard(dir);
+	});
+	assert.equal(await threadCommand(['ticket', '123'], ctx), 0);
+	assert.equal(await threadCommand(['ticket', '--clear'], ctx), 0);
+	assert.equal(await threadCommand(['ticket', '--create', '--description-file', '-', '--type', 'Bug'], ctx), 0);
+	assert.deepEqual(asked, [{ key: '123' }, null, { create: { summary: 'Fix the save button', description: 'What broke, and how to see it.', type: 'Bug' } }]);
 });
 
 test('pr sends the title and description to the board, and needs the board running', async t => {

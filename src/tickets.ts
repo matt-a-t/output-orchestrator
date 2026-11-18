@@ -157,6 +157,31 @@ export function jiraErrors(body: string): string {
 
 export type NewTicket = { summary: string; description: string; type?: string };
 
+/**
+ * A ticket as `oo thread` asks for one: a key as it was typed, or one to file. What it comes to is worked out
+ * where the request is applied (requestedTicket), the board when it's running: the tracker's credentials (JIRA_*,
+ * gh's sign-in) and network are the board's, not those of a thread's claude, which may be in a container.
+ */
+export type TicketRequest = { key: string } | { create: NewTicket };
+
+/** The ticket `input` (`AV-123`, `123`, `#45`) names in the project, with its link. */
+export async function resolveTicket(project: Project, input: string): Promise<TicketRef> {
+	if (project.tracker === 'none') throw new Error(`${project.name} has no ticket tracker; set one in the board's projects screen (P)`);
+	const key = normalizeKey(project, input);
+	if (!key) throw new Error(`Not a ${project.tracker === 'github' ? 'GitHub issue number' : 'Jira key'}: ${input}`);
+	return { key, url: await ticketUrl(project, key).catch(() => '') };
+}
+
+/**
+ * What a request's ticket comes to: the one its key names, with what it says when the tracker can be read (it's
+ * still set without), or a new one filed. `created` says so for the new one.
+ */
+export async function requestedTicket(project: Project, request: TicketRequest): Promise<{ ticket: TicketRef; created?: true }> {
+	if ('create' in request) return { ticket: await createTicket(project, request.create), created: true };
+	const ref = await resolveTicket(project, request.key);
+	return { ticket: { ...ref, ...(await fetchTicket(project, ref.key).catch(() => undefined)) } };
+}
+
 /** File a ticket assigned to you: a Jira issue (`type`, Task by default) in the project's prefix, or a GitHub issue. */
 export async function createTicket(project: Project, { summary, description, type = 'Task' }: NewTicket): Promise<Ticket> {
 	if (project.tracker === 'github') {
