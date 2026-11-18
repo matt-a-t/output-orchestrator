@@ -1,5 +1,5 @@
 // PRs whichever host they're on: drafting them, labelling their status and opening them in the browser,
-// and the host a project's PRs live on, picked from its origin remote: GitHub (through gh) or Bitbucket (through twg).
+// and the host a project's PRs live on, picked from its origin remote: GitHub (through gh) or Bitbucket (its REST API).
 
 import { spawn } from 'node:child_process';
 import { execa } from 'execa';
