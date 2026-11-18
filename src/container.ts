@@ -222,7 +222,42 @@ export async function ensureContainer(project: Project & { container: ContainerS
 		// A stopped container loses its network, and the rules with it.
 		await firewall(name, project.container.allow);
 	}
-	return publishedPorts(name);
+	const ports = await publishedPorts(name);
+	knownPorts.set(name, ports);
+	return ports;
+}
+
+/** Each container's published ports as ensureContainer last found them: read when it starts, never polled. */
+export const knownPorts = new Map<string, Map<number, number>>();
+
+export type ContainerProject = Project & { container: ContainerSetting };
+
+/** The project, if its threads run in containers. */
+export const containerProject = (project: Project | undefined): ContainerProject | undefined => (project?.container ? (project as ContainerProject) : undefined);
+
+/** The shell `s` opens for a thread: yours, or in a container, whose image may not have yours, bash if it has it. */
+export const threadShell = (project: Project | undefined): string[] =>
+	containerProject(project) ? ['sh', '-c', 'command -v bash >/dev/null && exec bash || exec sh'] : [process.env.SHELL || 'bash'];
+
+export const NO_TOKEN = `${TOKEN_ENV} isn't set: a thread's container needs it to sign claude in — run claude setup-token, export it where you start oo, and start oo again`;
+
+/**
+ * What tmux runs for `command` in the thread's window or pane: as it is, or for a project with a container, in
+ * the thread's container (started first). The token reaches docker through tmux's environment, not its arguments.
+ */
+export async function forThread(
+	project: Project | undefined,
+	thread: Thread,
+	cwd: string,
+	command: string[],
+	env: Record<string, string>,
+	{ needsToken = false, token = process.env[TOKEN_ENV] } = {},
+): Promise<{ command: string[]; env: Record<string, string> }> {
+	const withContainer = containerProject(project);
+	if (!withContainer) return { command, env };
+	if (needsToken && !token) throw new Error(NO_TOKEN);
+	await ensureContainer(withContainer, thread, cwd);
+	return { command: execCommand(containerName(thread), cwd, command, env), env: { ...env, ...(token ? { [TOKEN_ENV]: token } : {}) } };
 }
 
 export async function publishedPorts(name: string): Promise<Map<number, number>> {
@@ -237,6 +272,7 @@ export async function stopContainer(name: string): Promise<void> {
 
 /** Remove the container, whatever it's doing. Its home stays, for the next one. */
 export async function removeContainer(name: string): Promise<void> {
+	knownPorts.delete(name);
 	await docker(['rm', '-f', name], { reject: false });
 }
 

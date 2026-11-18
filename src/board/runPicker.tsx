@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { openRun, restartCommand, runSessionName, startCommand, stopCommand, type RunStatus } from '../commands.js';
+import { containerName, containerProject, ensureContainer } from '../container.js';
 import { loop } from '../input.js';
 import type { Project, ProjectCommand, Thread } from '../state.js';
 import { threadDir } from '../threads.js';
@@ -40,12 +41,19 @@ async function runCommand(board: Board, target: RunTarget, cmd: ProjectCommand, 
 	const cwd = (thread && threadDir(board.state(), thread)) || project.path;
 	const status = board.runs().get(session);
 	const title = `${thread ? `#${thread.id} ` : ''}${cmd.name}`;
+	// A thread's runs go in its container, if its project has them; the project checkout's stay on the host.
+	const withContainer = containerProject(project);
+	let container: string | undefined;
+	if (thread && withContainer && (!status || restart || !status.running)) {
+		await ensureContainer(withContainer, thread, cwd);
+		container = containerName(thread);
+	}
 	let did: string;
 	if (!status) {
-		await startCommand(session, project, thread, cmd, cwd);
+		await startCommand(session, project, thread, cmd, cwd, container);
 		did = `Started ${cmd.name} for ${where(target)}`;
 	} else if (restart || !status.running) {
-		await restartCommand(session, project, thread, cmd, cwd);
+		await restartCommand(session, project, thread, cmd, cwd, container);
 		did = `${status.running ? 'Restarted' : 'Ran'} ${cmd.name} again for ${where(target)}`;
 	} else {
 		did = `${cmd.name} is running for ${where(target)}`;

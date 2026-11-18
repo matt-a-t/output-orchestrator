@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configLabel, containerHome, containerName, execCommand, mounts, parsePorts, prepareHome, runArgs, type Paths } from './container.js';
+import { configLabel, containerHome, containerName, execCommand, forThread, mounts, NO_TOKEN, parsePorts, prepareHome, runArgs, threadShell, type Paths } from './container.js';
 import type { Project } from './state.js';
 
 const paths: Paths = { home: '/home/u', dataDir: '/home/u/.local/share/output-orchestrator', ooDir: '/home/u/dev/oo', uid: 1000, gid: 1000 };
@@ -138,4 +138,18 @@ test('the container\'s home has the mount points ready, owned by you, and claude
 	writeFileSync(join(inHome, '.claude.json'), '{"kept":true}');
 	prepareHome(p, thread, work, local);
 	assert.equal(readFileSync(join(inHome, '.claude.json'), 'utf8'), '{"kept":true}');
+});
+
+test("a project without a container runs a thread's commands as they are", async () => {
+	const host = { ...project, container: undefined };
+	const t = { ...thread, title: 't', column: 'active', createdAt: '', updatedAt: '' } as never;
+	assert.deepEqual(await forThread(host, t, cwd, ['claude'], { OO_THREAD_ID: '7' }, { needsToken: true, token: undefined }), { command: ['claude'], env: { OO_THREAD_ID: '7' } });
+	assert.deepEqual(threadShell(host), [process.env.SHELL || 'bash']);
+});
+
+test("claude in a container needs the token, and says how to get one, before docker is touched", async () => {
+	const t = { ...thread, title: 't', column: 'active', createdAt: '', updatedAt: '' } as never;
+	await assert.rejects(forThread(project, t, cwd, ['claude'], {}, { needsToken: true, token: undefined }), { message: NO_TOKEN });
+	assert.match(NO_TOKEN, /claude setup-token/);
+	assert.equal(threadShell(project)[0], 'sh');
 });

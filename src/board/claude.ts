@@ -6,7 +6,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { stillWorking, unknownProject } from '../errors.js';
 import { DEFAULT_WAKE_PROMPT, hidden, type State, type Thread } from '../state.js';
 import type { Status } from '../status.js';
-import { CLAUDE_SETTINGS_FILE } from '../status.js';
+import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE } from '../status.js';
+import { containerProject, forThread, threadShell } from '../container.js';
 import { threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
 import { cacheLeft, contextUse, formatTokens, LARGE_CONTEXT, recentlyActive, shortDuration, type ContextUse } from '../transcripts.js';
@@ -94,16 +95,20 @@ export async function launchClaude(
 			board.run(() => launchClaude(board, thread, cwd, { background, mode, prompt, resumeAnyway: true })),
 		);
 	}
+	const project = board.project(thread.project);
 	const command = [
 		'claude',
 		'--settings',
-		CLAUDE_SETTINGS_FILE,
+		containerProject(project) ? CONTAINER_SETTINGS_FILE : CLAUDE_SETTINGS_FILE,
 		...(sessionId ? ['--resume', sessionId] : []),
 		...(mode ? ['--permission-mode', mode] : []),
 		// After `--` so a prompt starting with `-` isn't taken for an option.
 		...(prompt ? ['--', prompt] : []),
 	];
-	const result = await openWindow(window, threadWindowLabel(thread), cwd, command, { OO_THREAD_ID: thread.id }, { background });
+	const env = { OO_THREAD_ID: thread.id };
+	// Already open, it's only selected; otherwise, for a project with a container, it starts in the thread's.
+	const run = (await windowNames()).includes(window) ? { command, env } : await forThread(project, thread, cwd, command, env, { needsToken: true });
+	const result = await openWindow(window, threadWindowLabel(thread), cwd, run.command, run.env, { background });
 	await board.refreshWindows();
 	if (result === 'selected') board.setMessage('');
 	// The new claude's session replaces the old one on the thread, so say where the old one still is.
@@ -209,7 +214,9 @@ export const openShell = (board: Board, thread: Thread) =>
 				// It may be waiting on "resume anyway?" instead.
 				if (!(await windowNames()).includes(window)) return;
 			}
-			await openSplit(window, cwd, 'shell', [process.env.SHELL || 'bash'], { OO_THREAD_ID: thread.id });
+			const project = board.project(thread.project);
+			const shell = await forThread(project, thread, cwd, threadShell(project), { OO_THREAD_ID: thread.id });
+			await openSplit(window, cwd, 'shell', shell.command, shell.env);
 		},
 	);
 

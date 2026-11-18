@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { threadEnv } from './hooks.js';
-import { currentSessionId } from './tmux.js';
+import { currentSessionId, shellQuote } from './tmux.js';
 import type { Project, ProjectCommand, Thread } from './state.js';
 
 export const RUN_PREFIX = 'oo-run';
@@ -73,33 +73,91 @@ export function threadRunning(runs: Map<string, RunStatus>, project: Project, th
 	return [...runs].some(([name, status]) => status.running && name.startsWith(prefix));
 }
 
-// The command comes in through the environment so it needs no quoting. Once it's done the session
-// records how it went (for the board) and stays open as a shell, so its output can still be read.
-const RUN_SCRIPT = [
-	'sh -c "$OO_CMD"',
-	'status=$?',
-	'tmux set-option @oo-exit "$status"',
-	'echo',
-	'echo "[oo] $OO_COMMAND_NAME exited with status $status (r on the board runs it again)"',
-	'exec "${SHELL:-sh}"',
-].join('; ');
+const runEnv = (project: Project, thread: Thread | undefined, cmd: ProjectCommand) => ({ OO_CMD: cmd.command, OO_COMMAND_NAME: cmd.name, ...threadEnv(project, thread) });
 
-const runEnvArgs = (project: Project, thread: Thread | undefined, cmd: ProjectCommand) =>
-	Object.entries({ OO_CMD: cmd.command, OO_COMMAND_NAME: cmd.name, ...threadEnv(project, thread) }).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+/**
+ * What a run's session runs. The command comes in through the environment so it needs no quoting. Once it's done
+ * the session records how it went (for the board) and stays open as a shell, so its output can still be read.
+ * With `container` (a thread's, see container.ts), only the command runs in it, through `docker exec` in `cwd`
+ * with the same environment; recording how it went and the shell after stay on the host, with tmux.
+ */
+export function runScript(container?: { name: string; cwd: string; env: string[]; session: string }): string {
+	// docker exec doesn't pass a hangup on, so killing the session would leave the command running in the container:
+	// it records its process group (its pid, as the exec's session leader) for stopInContainer to end it by.
+	const command = container
+		? `docker exec -it -w ${shellQuote(container.cwd)} ${container.env.map(name => `-e ${name}`).join(' ')} ${shellQuote(container.name)} sh -c ${shellQuote(`echo $$ > ${runPidFile(container.session)}; exec sh -c "$OO_CMD"`)}`
+		: 'sh -c "$OO_CMD"';
+	return [
+		command,
+		'status=$?',
+		'tmux set-option @oo-exit "$status"',
+		'echo',
+		'echo "[oo] $OO_COMMAND_NAME exited with status $status (r on the board runs it again)"',
+		'exec "${SHELL:-sh}"',
+	].join('; ');
+}
 
-/** Start `cmd` for the thread in a new detached session named `session`, in `cwd`. */
-export async function startCommand(session: string, project: Project, thread: Thread | undefined, cmd: ProjectCommand, cwd: string): Promise<void> {
-	await execa('tmux', ['new-session', '-d', '-s', session, '-c', cwd, ...runEnvArgs(project, thread, cmd), 'sh', '-c', RUN_SCRIPT]);
+/** Where, in its container, a run's process group is recorded. */
+const runPidFile = (session: string) => `/tmp/oo-run-${session}.pid`;
+
+// The tmux option a run's session keeps its container's name in.
+const CONTAINER_OPTION = '@oo-container';
+
+/**
+ * The script that ends a run's command in its container: TERM to its process group, then KILL if it's still going
+ * after 5s, so a restarted dev server finds its port free.
+ */
+export function stopScript(session: string): string {
+	const file = runPidFile(session);
+	return [
+		`pid=$(cat ${file} 2>/dev/null) || exit 0`,
+		'kill -TERM -$pid 2>/dev/null',
+		'i=0; while kill -0 -$pid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done',
+		'kill -KILL -$pid 2>/dev/null',
+		`rm -f ${file}`,
+	].join('; ');
+}
+
+/** End the run's command in its container, if it was started in one. */
+async function stopInContainer(session: string): Promise<void> {
+	const option = await execa('tmux', ['show-options', '-v', '-t', `=${session}:`, CONTAINER_OPTION], { reject: false });
+	const name = option.exitCode === 0 ? option.stdout.trim() : '';
+	if (name) await execa('docker', ['exec', name, 'sh', '-c', stopScript(session)], { reject: false });
+}
+
+async function recordContainer(session: string, container: string | undefined): Promise<void> {
+	await execa('tmux', ['set-option', ...(container ? [] : ['-u']), '-t', `=${session}:`, CONTAINER_OPTION, ...(container ? [container] : [])]);
+}
+
+const runArgs = (session: string, project: Project, thread: Thread | undefined, cmd: ProjectCommand, cwd: string, container: string | undefined) => {
+	const env = runEnv(project, thread, cmd);
+	return [
+		'-c',
+		cwd,
+		...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
+		'sh',
+		'-c',
+		runScript(container ? { name: container, cwd, env: Object.keys(env), session } : undefined),
+	];
+};
+
+/** Start `cmd` for the thread in a new detached session named `session`, in `cwd`, and in `container` if given. */
+export async function startCommand(session: string, project: Project, thread: Thread | undefined, cmd: ProjectCommand, cwd: string, container?: string): Promise<void> {
+	await execa('tmux', ['new-session', '-d', '-s', session, ...runArgs(session, project, thread, cmd, cwd, container)]);
+	if (container) await recordContainer(session, container);
 }
 
 /** Run `cmd` again in its session, stopping it if it's still going; windows on it stay open and see it start over. */
-export async function restartCommand(session: string, project: Project, thread: Thread | undefined, cmd: ProjectCommand, cwd: string): Promise<void> {
+export async function restartCommand(session: string, project: Project, thread: Thread | undefined, cmd: ProjectCommand, cwd: string, container?: string): Promise<void> {
 	await execa('tmux', ['set-option', '-u', '-t', `=${session}:`, '@oo-exit']);
-	await execa('tmux', ['respawn-pane', '-k', '-t', `=${session}:`, '-c', cwd, ...runEnvArgs(project, thread, cmd), 'sh', '-c', RUN_SCRIPT]);
+	await stopInContainer(session);
+	await recordContainer(session, container);
+	await execa('tmux', ['respawn-pane', '-k', '-t', `=${session}:`, ...runArgs(session, project, thread, cmd, cwd, container)]);
 }
 
 /** Stop a run, closing its session. */
 export async function stopCommand(session: string): Promise<void> {
+	await stopInContainer(session);
 	await execa('tmux', ['kill-session', '-t', `=${session}`], { reject: false });
 }
 

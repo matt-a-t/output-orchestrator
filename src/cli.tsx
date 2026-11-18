@@ -12,6 +12,7 @@ import { quizFormCommand } from './quizForm.js';
 import { deltaCommand, noStyling } from './delta.js';
 import { viewCommand } from './viewer.js';
 import { OO_COMMAND, writeClaudeSettings, writeOoSkill } from './status.js';
+import { forThread, threadShell } from './container.js';
 import { threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
@@ -139,7 +140,9 @@ async function splitCommand([role, id]: string[]): Promise<number> {
 		console.error(thread && role === 'shell' ? `#${id} has no worktree` : 'usage: oo split shell <id>');
 		return 1;
 	}
-	await openSplit(threadWindowName(id), cwd, role, [process.env.SHELL || 'bash'], { OO_THREAD_ID: id });
+	const project = state.projects.find(p => p.name === thread.project);
+	const shell = await forThread(project, thread, cwd, threadShell(project), { OO_THREAD_ID: id });
+	await openSplit(threadWindowName(id), cwd, role, shell.command, shell.env);
 	return 0;
 }
 
