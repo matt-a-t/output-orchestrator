@@ -8,7 +8,7 @@ import { currentRef } from '../git.js';
 import type { PrStatus } from '../prHost.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
-import { fakeBoard, fakeGh, fakeTmux, fixture, git, gitFixture, type FakeAnswer } from '../testHelpers.js';
+import { fakeBoard, fakeCommand, fakeGh, fakeTmux, fixture, git, gitFixture, type FakeAnswer } from '../testHelpers.js';
 import { enterLocal } from './local.js';
 import { checkPr, openPr, quizMessage, showLastQuiz, type PrSteps } from './pr.js';
 
@@ -218,6 +218,23 @@ test('a merged PR with after-merge checkpoints moves the thread to Follow-up and
 		thread().inbox?.map(m => [m.from, m.text, m.delivered]),
 		[[USER_SENDER, followUpPrompt(todos, PR), false]],
 	);
+});
+
+test("a merged PR closes a large conversation's quiet claude, for a fresh one to do the after-merge checkpoints", async t => {
+	const todos = [{ subject: 'deploy it', status: 'pending' as const, afterMerge: true }];
+	for (const [claudeStatus, closed] of [['stopped', true], ['working', false]] as const) {
+		const { dir, board, thread } = await threadInWorktree(t, { column: 'pr', pr: PR, todos });
+		const transcriptPath = join(dir, 't.jsonl');
+		writeFileSync(transcriptPath, JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T10:00:00Z', message: { usage: { input_tokens: 90_000 } } }) + '\n');
+		board.updateThread('1', { transcriptPath });
+		board.statuses = () => ({ '1': claudeStatus });
+		board.liveWindows = () => new Set(['oo-1']);
+		const tmux = fakeCommand(t, 'tmux', { 'list-windows': { stdout: 'oo-1' }, 'kill-window': {} });
+		fakeGh(t, { 'pr view 5': status('MERGED') });
+		await checkPr(board, thread());
+		assert.equal(thread().column, 'followup');
+		assert.equal(tmux.calls().some(c => c[0] === 'kill-window'), closed, claudeStatus);
+	}
 });
 
 test('a merged PR takes the thread out of Local on its way to Done', async t => {

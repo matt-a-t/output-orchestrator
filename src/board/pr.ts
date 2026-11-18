@@ -13,9 +13,12 @@ import { QUIZ_FORM, type QuizFormInput } from '../quizForm.js';
 import { showPr } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
+import { threadWindowName } from '../tmux.js';
+import { contextUse, worthFreshStart } from '../transcripts.js';
 import { applyRequest, followUps, unblockedNote, unstackChildren, withDrafts } from '../threads.js';
 import { CLOSED, popup as tmuxPopup, progressPopup, shellQuote, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
+import { closeClaude } from './claude.js';
 import { onThread, type Board, type Outcome } from './board.js';
 import { leaveLocalForDone, localProblem } from './local.js';
 import { wakeToHear } from './messages.js';
@@ -145,7 +148,9 @@ export function quizMessage(message: string, quiz: QuizOutcome | null): string {
 
 /**
  * Record the merge status of the thread's PR, or move the thread on if it's merged: to Follow-up, waking its
- * claude, if it has after-merge checkpoints left, else to Done (cleaning up its worktree).
+ * claude, if it has after-merge checkpoints left, else to Done (cleaning up its worktree). A large conversation
+ * (worthFreshStart) isn't resumed for them: a fresh claude reads the plan and checkpoints instead, since the
+ * PR has usually sat long enough for the cache to go cold, and the after-merge steps don't need all of it.
  */
 export async function checkPr(board: Board, thread: Thread) {
 	const project = board.project(thread.project);
@@ -189,7 +194,12 @@ export async function checkPr(board: Board, thread: Thread) {
 	// Through its inbox: an open claude hears it once its turn ends, and a closed one is woken to hear it now.
 	await applyRequest(board.store, { id: 'merged', op: 'send', thread: thread.id, from: USER_SENDER, text: followUpPrompt(todos, thread.pr) });
 	const latest = board.state().threads.find(t => t.id === thread.id);
-	if (latest) await wakeToHear(board, latest).catch(fail);
+	if (!latest) return;
+	const fresh = !!latest.transcriptPath && worthFreshStart(contextUse(latest.transcriptPath));
+	// One open and at its prompt is closed for the fresh one; one still working hears it at its turn's end as usual.
+	const quiet = ['stopped', 'idle'].includes(board.statuses()[latest.id] ?? '');
+	if (fresh && quiet && board.liveWindows().has(threadWindowName(latest.id))) await closeClaude(board, latest).catch(fail);
+	await wakeToHear(board, latest, { fresh }).catch(fail);
 }
 
 const REVIEW_DONE: Record<string, string> = { approve: 'Approved', 'request-changes': 'Requested changes on', comment: 'Commented on' };

@@ -25,9 +25,9 @@ export async function messageRequest(board: Board, request: Extract<Request, { o
 
 /**
  * Resume the thread's claude if it's closed, to hear its waiting messages now; returns whether it's waking.
- * An open one hears them once its turn ends (see useMessageDelivery).
+ * An open one hears them once its turn ends (see useMessageDelivery). `fresh` starts a new claude to hear them instead.
  */
-export async function wakeToHear(board: Board, thread: Thread): Promise<boolean> {
+export async function wakeToHear(board: Board, thread: Thread, { fresh = false } = {}): Promise<boolean> {
 	if ((await windowNames()).includes(threadWindowName(thread.id))) return false;
 	// Delivered by the prompt, so its claude's start doesn't brief it with them too; back to waiting if it doesn't wake.
 	const sent = undelivered(thread.inbox);
@@ -38,7 +38,7 @@ export async function wakeToHear(board: Board, thread: Thread): Promise<boolean>
 			threads: s.threads.map(t => (t.id === thread.id ? { ...t, inbox: t.inbox?.map(m => (isSent(m) ? { ...m, delivered } : m)) } : t)),
 		}));
 	setDelivered(true);
-	void wakeThread(board, thread, messagesPrompt(board.state(), sent)).then(woke => woke || setDelivered(false));
+	void wakeThread(board, thread, messagesPrompt(board.state(), sent), { fresh }).then(woke => woke || setDelivered(false));
 	return true;
 }
 
