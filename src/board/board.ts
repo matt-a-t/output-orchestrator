@@ -40,8 +40,8 @@ export type Board = {
 	setBusy: (label: string | null) => void;
 	/** Run fn with `label` shown as busy, putting any error on the message line. */
 	run: (fn: () => Promise<void>, label?: string) => Promise<void>;
-	/** An action waiting on y (any other key cancels); its question is shown as the message. */
-	ask: (question: string, action: () => void) => void;
+	/** An action waiting on y, and with `no` another on n (any other key cancels); its question is shown as the message. */
+	ask: (question: string, action: () => void, no?: () => void) => void;
 	/** The threads on the board, with the filter applied. */
 	shown: () => Thread[];
 	/** The columns on the board: COLUMNS, with IDEAS and ARCHIVED while I and A show them. */
