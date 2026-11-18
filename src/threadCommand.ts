@@ -5,7 +5,7 @@ import { resultMessage, unknownProject } from './errors.js';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
-import { contextUse, describeContext } from './transcripts.js';
+import { contextUse, describeContext, worthFreshStart } from './transcripts.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
@@ -421,6 +421,8 @@ function approvedPlan(input: any): string | undefined {
 /**
  * Claude hook for ExitPlanMode (see planHook.ts): approving the plan of a thread in Planned saves it
  * as the thread's plan and moves the thread to Active. Returns what happened, for claude; undefined if nothing did.
+ * A large planning conversation (worthFreshStart) only saves the checkpoints and stops: the board then starts a
+ * fresh claude on the plan, so implementing doesn't carry everything planning read.
  */
 export async function planApproved(input: any, ctx: Context): Promise<string | undefined> {
 	const state = loadState(join(ctx.dir, 'state.json'));
@@ -432,12 +434,13 @@ export async function planApproved(input: any, ctx: Context): Promise<string | u
 	}
 	if (state.threads.find(t => t.id === thread)?.column !== 'planned') return;
 	const plan = approvedPlan(input);
+	const fresh = typeof input?.transcript_path === 'string' && worthFreshStart(contextUse(input.transcript_path));
 	const responses = [
 		...(plan ? [await change({ op: 'plan', thread, plan }, ctx)] : []),
-		await change({ op: 'move', thread, column: 'active' }, ctx),
+		await change({ op: 'move', thread, column: 'active', ...(fresh && { fresh }) }, ctx),
 	];
 	const messages = responses.map(resultMessage);
-	if (responses.at(-1)!.ok) messages.push(TODOS_PROMPT);
+	if (responses.at(-1)!.ok) messages.push(fresh ? FRESH_TODOS_PROMPT : TODOS_PROMPT);
 	return messages.join('\n');
 }
 
@@ -446,6 +449,11 @@ const TODOS_PROMPT = `Before starting, save the plan's checkpoints with \`oo thr
 Start a line with "after merge:" for work that can only happen once the PR has merged: database queries or data fixes against shared or production systems, the deploy itself, verifying it in production, updating docs or filing tickets. List them in the order they have to happen around the deploy; a step that must run before the code goes out comes before the deploy step, or before the merge if merging deploys. The board keeps them back until the PR merges, then moves the thread to Follow-up and wakes you for them.
 Mark one active (\`oo thread todo <n> active\`) when you start it and review when it's ready, then stop and let the user review it; approving the step on the board commits it and marks it done.
 Just before marking one review, save its commit message with \`oo thread draft commit --message <message>\` (and, for the last one, the PR's with \`oo thread draft pr --title <title> --body-file - <<'EOF'\`), so the board's forms open with them.`;
+
+// After a large planning conversation, the checkpoints are all this claude does: a fresh one implements them.
+const FRESH_TODOS_PROMPT = `Save the plan's checkpoints with \`oo thread todo set --file - <<'EOF'\` (one per line, each a step the user can review and commit on its own).
+Start a line with "after merge:" for work that can only happen once the PR has merged: database queries or data fixes against shared or production systems, the deploy itself, verifying it in production, updating docs or filing tickets. List them in the order they have to happen around the deploy; a step that must run before the code goes out comes before the deploy step, or before the merge if merging deploys.
+Then stop, without starting on them: this conversation is large, so the board starts a fresh claude on the plan and checkpoints to implement them.`;
 
 /** What a thread's claude is told as it starts: where the thread's checkpoints stand, and whether its PR has merged (`isMerged`). */
 export function todoBriefing(todos: Todo[], isMerged = false): string | undefined {

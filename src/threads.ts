@@ -269,7 +269,7 @@ export function setColumn(state: State, id: string, column: Column, patch: Parti
 	const thread = state.threads.find(t => t.id === id);
 	if (!thread) return state;
 	const unblocks = ends(column);
-	const moved = { ...thread, ...patch, column, ...(unblocks && { blockedBy: undefined }), updatedAt: new Date().toISOString() };
+	const moved = { ...thread, freshStart: undefined, ...patch, column, ...(unblocks && { blockedBy: undefined }), updatedAt: new Date().toISOString() };
 	const others = state.threads
 		.filter(t => t.id !== id)
 		.map(t => {
@@ -486,7 +486,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 	if (problem) return { id, ok: false, message: problem };
 	const moved = { ...thread, column: request.column };
 	const unblocked = unblockedNote(state, thread.id, request.column);
-	store.update(s => setColumn(s, thread.id, request.column));
+	store.update(s => setColumn(s, thread.id, request.column, request.fresh ? { freshStart: true } : {}));
 	const unstacked = ends(request.column) ? await unstackChildren(project, store, thread, merged(request)) : undefined;
 	const { patch, message } = await syncWorktree(project, moved);
 	if (patch) store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, ...patch } : t)) }));

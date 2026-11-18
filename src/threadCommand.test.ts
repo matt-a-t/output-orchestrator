@@ -278,6 +278,29 @@ test('approving a Planned thread\'s plan saves it and moves the thread to Active
 	);
 });
 
+test('approving a plan made in a large conversation saves the checkpoints and stops, for a fresh claude to implement', async t => {
+	capture(t);
+	const { dir } = fixture([{ cwd: '/work/one' }, { cwd: '/work/two' }]);
+	const transcript = (tokens: number) => {
+		const file = join(dir, `t${tokens}.jsonl`);
+		writeFileSync(file, JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T10:00:00Z', message: { usage: { input_tokens: tokens } } }) + '\n');
+		return file;
+	};
+	const input = (cwd: string, tokens: number) => ({ cwd, transcript_path: transcript(tokens), tool_name: 'ExitPlanMode', tool_input: { plan: 'p' } });
+	const large = (await planApproved(input('/work/one', 80_000), context(dir, '/', { OO_THREAD_ID: '1' })))!;
+	assert.match(large, /Then stop, without starting on them/);
+	const small = (await planApproved(input('/work/two', 20_000), context(dir, '/', { OO_THREAD_ID: '2' })))!;
+	assert.match(small, /Mark one active/);
+	const threads = loadState(join(dir, 'state.json')).threads;
+	assert.deepEqual(
+		threads.map(t => [t.id, t.column, t.freshStart]),
+		[['1', 'active', true], ['2', 'active', undefined]],
+	);
+	// Any later move clears it.
+	assert.equal(await threadCommand(['move', '1', 'polish'], context(dir, '/work/one', { OO_THREAD_ID: '1' })), 0);
+	assert.equal(loadState(join(dir, 'state.json')).threads.find(t => t.id === '1')!.freshStart, undefined);
+});
+
 test('todo set replaces the checkpoints, keeping the status of ones already there', async t => {
 	const { dir } = fixture([{ cwd: '/work/one', column: 'active', todos: [{ subject: 'b', status: 'review' }] }]);
 	const output = capture(t);

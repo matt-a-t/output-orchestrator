@@ -11,6 +11,7 @@ import { runBinding } from './board/bindings.js';
 import { Columns, newColumnsLayout } from './board/columns.js';
 import { Footer } from './board/footer.js';
 import { useIdleClose } from './board/idle.js';
+import { useFreshStarts } from './board/claude.js';
 import { ImportList, ImportProject } from './board/importPicker.js';
 import { KeysView } from './board/keysView.js';
 import { usePendingLocal } from './board/local.js';
@@ -217,6 +218,7 @@ export function App() {
 	usePendingLocal(board, statuses);
 	useMessageDelivery(board, state, statuses);
 	useIdleClose(board);
+	useFreshStarts(board, state, statuses);
 	usePrPoll(stateRef, setMerge, thread => checkPr(board, thread));
 
 	/** Open the new-thread form on the filtered or highlighted project. */

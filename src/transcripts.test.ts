@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { contextUse, describeContext, formatTokens, lastAssistantText, readContextUse, shortDuration } from './transcripts.js';
+import { contextUse, describeContext, formatTokens, lastAssistantText, readContextUse, shortDuration, worthFreshStart } from './transcripts.js';
 
 const entry = (e: object) => JSON.stringify(e);
 
@@ -81,4 +81,12 @@ test('after a compaction since its last turn, guesses the context from the summa
 	// A turn after the compaction says the real size again.
 	const later = readContextUse(text + '\n' + turn('2026-01-01T11:00:00Z', { input_tokens: 12_000, cache_creation: { ephemeral_1h_input_tokens: 12_000 } }))!;
 	assert.deepEqual(later, { tokens: 12_000, at: Date.parse('2026-01-01T11:00:00Z'), cacheMs: 60 * 60_000 });
+});
+
+test('a conversation of 50k tokens or more is worth a fresh start, unless it has been compacted', () => {
+	const use = (tokens: number, compacted?: boolean) => ({ tokens, at: 0, cacheMs: 0, compacted });
+	assert.ok(worthFreshStart(use(50_000)));
+	assert.ok(!worthFreshStart(use(49_999)));
+	assert.ok(!worthFreshStart(use(200_000, true)));
+	assert.ok(!worthFreshStart(undefined));
 });

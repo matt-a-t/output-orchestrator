@@ -13,7 +13,8 @@ import { DATA_DIR, ensureDataDir, PRIVATE_FILE, type Column, type Priority, type
 export type Request =
 	// `from`: the thread whose branch it builds on, and is blocked by (see stackedOn).
 	| { id: string; op: 'add'; project: string; title: string; plan: string; ticket?: Thread['ticket']; from?: string }
-	| { id: string; op: 'move'; thread: string; column: Column }
+	// `fresh`: once its claude stops, swap it for a fresh one on the thread's plan (see Thread's freshStart).
+	| { id: string; op: 'move'; thread: string; column: Column; fresh?: boolean }
 	// Only the board can do this one (it checks out, moves claude and runs hooks); 'toggle' is what o does.
 	| { id: string; op: 'local'; thread: string; local: boolean | 'toggle' }
 	// Board-only too (it pushes, opens the PR and runs hooks); without a body, claude drafts the PR, and the title too unless given.

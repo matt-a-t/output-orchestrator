@@ -246,6 +246,16 @@ export const cacheLeft = (use: ContextUse, now: number) => use.at + use.cacheMs 
 /** Context of this many tokens or more is worth a second thought before resuming cold. */
 export const LARGE_CONTEXT = 150_000;
 
+/** Context of this many tokens or more costs more to carry into a new phase of the work than to start over from the plan. */
+export const FRESH_START_CONTEXT = 50_000;
+
+/**
+ * Whether a thread's claude is worth swapping for a fresh one as its work changes phase (plan approved, PR merged):
+ * its conversation is big enough that the thread's plan and checkpoints are the cheaper way to carry on.
+ * Not once compacted: the summary is already small.
+ */
+export const worthFreshStart = (use: ContextUse | undefined) => !!use && !use.compacted && use.tokens >= FRESH_START_CONTEXT;
+
 /** Tokens, short: 850, 12k, 1.2M. */
 export function formatTokens(tokens: number): string {
 	if (tokens < 1000) return `${tokens}`;
