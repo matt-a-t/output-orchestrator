@@ -124,7 +124,7 @@ project's tickets come from with **tickets** in the projects screen (`P`):
 
 - **github**: issues in the project's repo, read with `gh`.
 - **jira**: also set **jira site** (e.g. `yourco.atlassian.net`) and **jira project**, the key
-  prefix (e.g. `AV`), so `123` means `AV-123`. oo reads Jira Cloud's REST API with an
+  prefix (e.g. `AV`), so `123` means `AV-123`. oo reads (and, for `oo thread ticket --create`, writes) Jira Cloud's REST API with an
   [API token](https://id.atlassian.com/manage-profile/security/api-tokens): export
   `JIRA_EMAIL` and `JIRA_API_TOKEN` in the shell you start `oo` from.
 
@@ -139,7 +139,13 @@ The ticket names the branch (`av-123-<title>` for Jira, `45-<title>` for issue #
 without one get `oo/<title>`) and the PR: its title starts with `AV-123: ` or `#45: `, and its
 description ends with a link to the Jira ticket or `Closes #45`. Adding or changing a thread's
 ticket later (`e`) renames its branch to match, unless the branch has already been pushed.
-`oo thread add --ticket <key>` attaches one from the command line.
+`oo thread add --ticket <key>` attaches one from the command line, and `oo thread ticket [id] (<key> | --clear)`
+sets, replaces or clears an existing thread's, renaming its branch the same way (threads building on it follow).
+
+`oo thread ticket --create --description-file <path>|-` files a new ticket for the thread and sets it: a Jira
+issue in the project's key prefix (a Task unless `--type` says otherwise) or a GitHub issue made with `gh`,
+assigned to you and titled after the thread unless `--summary` is given. A thread's claude does this when you
+ask it to file one for its work, writing the description for the ticket's readers rather than copying its plan.
 
 ### Reviewing and approving
 
@@ -396,7 +402,7 @@ when a message is worth sending and to reply only when there's something to say.
 
 ### From the command line
 
-`oo thread add|list|show|move|local|pr|plan|priority|todo|send|inbox|block|unblock` reads and changes the board from a shell, and from inside a
+`oo thread add|list|show|move|local|pr|plan|ticket|priority|todo|send|inbox|block|unblock` reads and changes the board from a shell, and from inside a
 thread's claude, where the thread id defaults to that thread. Run `oo help` to see them all.
 claude learns these commands from an `oo` skill that the board installs (see below), so you can
 ask a thread's claude to file follow-up work as a new thread, or to tell another thread about a change.

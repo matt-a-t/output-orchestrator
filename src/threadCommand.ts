@@ -1,13 +1,13 @@
 // `oo thread …`: drive the board from the shell (and from claude, see the oo skill).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { resultMessage, unknownProject } from './errors.js';
+import { errorMessage, resultMessage, unknownProject } from './errors.js';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
 import { contextUse, describeContext, worthFreshStart } from './transcripts.js';
 import { sanitize } from './sanitize.js';
-import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
+import { createTicket, fetchTicket, normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
 export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-file <path>|-] [--ticket <key>] [--from <id>]
                               new Planned thread; prints its id (--plan-file - reads the plan from stdin)
@@ -27,6 +27,12 @@ export const THREAD_USAGE = `  oo thread add <title> [--project <name>] [--plan-
                               or bring it back (no direction: toggle, like o on the board). Needs the board running.
   oo thread plan [id] --plan-file <path>|-
                               replace the thread's plan
+  oo thread ticket [id] (<key> | --clear)
+                              set or replace the thread's ticket (as add --ticket takes it), or clear it;
+                              the branch is renamed after it unless it's been pushed or has a PR
+  oo thread ticket [id] --create --description-file <path>|- [--summary <summary>] [--type <type>]
+                              file a ticket assigned to you and set it: a Jira issue (--type, Task by default) or GitHub issue;
+                              the summary is the thread's title unless given
   oo thread priority [id] <${PRIORITIES.join('|')}>
                               high threads sit at the top of their column on the board, low ones at the bottom
   oo thread todo [id] set --file <path>|-
@@ -294,6 +300,45 @@ async function run(args: string[], ctx: Context): Promise<number> {
 		if (!boardRunning(ctx.dir)) return fail('Opening a PR needs the board running');
 		// claude drafting the description and the push can take a few minutes.
 		return report(await sendRequest({ op: 'pr', thread, title, body }, { dir: ctx.dir, timeoutMs: 5 * 60_000 }));
+	}
+	if (sub === 'ticket') {
+		const TICKET_USAGE = 'oo thread ticket [id] (<key> | --clear | --create --description-file <path>|- [--summary <summary>] [--type <type>])';
+		const { positional, flag, has } = parseArgs(rest, ['description-file', 'summary', 'type'], ['clear', 'create']);
+		const clear = has('clear');
+		const create = has('create');
+		// --clear and --create take only the id; a key comes after it.
+		const takesKey = !clear && !create;
+		if (clear && create) throw new UsageError(TICKET_USAGE);
+		if (positional.length > (takesKey ? 2 : 1) || (takesKey && !positional.length)) throw new UsageError(TICKET_USAGE);
+		const descriptionFile = flag('description-file');
+		if (create !== (descriptionFile !== undefined)) throw new UsageError(TICKET_USAGE);
+		if (!create && (flag('summary') !== undefined || flag('type') !== undefined)) throw new UsageError(TICKET_USAGE);
+		const thread = ownThreadOnly(state, resolveThreadId(state, positional.length === (takesKey ? 2 : 1) ? positional[0] : undefined, ctx.env, ctx.cwd), ctx);
+		const current = state.threads.find(t => t.id === thread)!;
+		const project = state.projects.find(p => p.name === current.project);
+		if (!project) return fail(unknownProject(current.project));
+		if (create) {
+			if (project.tracker === 'none') return fail(`${project.name} has no ticket tracker; set one in the board's projects screen (P)`);
+			if (project.tracker === 'github' && flag('type') !== undefined) throw new UsageError('--type is for Jira issues');
+			const description = readInput(ctx, descriptionFile!).trim();
+			if (!description) throw new UsageError('Give the ticket a description');
+			const summary = flag('summary')?.trim() || current.title;
+			const ticket = await createTicket(project, { summary, description, type: flag('type') }).catch((err: unknown) => {
+				throw new CommandError(`Couldn't create the ticket: ${errorMessage(err)}`);
+			});
+			const response = await change({ op: 'ticket', thread, ticket }, ctx);
+			// It's filed either way, so say which one to set by hand.
+			if (!response.ok) return fail(`Created ${ticket.key} ${ticket.url}, but ${response.message}`);
+			console.log(`Created ${ticket.key} ${ticket.url}\n${response.message}`);
+			return 0;
+		}
+		const ref = await resolveTicket(project, clear ? undefined : positional.at(-1));
+		// What it says, for show to quote, when the tracker can be read; it's still set without.
+		const ticket = ref && { ...ref, ...(await fetchTicket(project, ref.key).catch(() => undefined)) };
+		const response = await change({ op: 'ticket', thread, ticket: ticket ?? null }, ctx);
+		if (!response.ok) return fail(response.message);
+		console.log(response.message);
+		return 0;
 	}
 	if (sub === 'priority') {
 		const { positional } = parseArgs(rest, [], []);

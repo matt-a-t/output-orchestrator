@@ -140,8 +140,48 @@ async function jira(project: Project, path: string, body?: unknown): Promise<unk
 		body: body ? JSON.stringify(body) : undefined,
 		signal: AbortSignal.timeout(15_000),
 	});
-	if (!response.ok) throw new Error(`Jira said ${response.status} ${response.statusText}`);
+	if (!response.ok) throw new Error(`Jira said ${response.status} ${response.statusText}${jiraErrors(await response.text())}`);
 	return parseUntrusted(await response.text());
+}
+
+/** What Jira's error body says went wrong (": issuetype: Specify a valid issue type"), if anything. */
+export function jiraErrors(body: string): string {
+	try {
+		const { errorMessages = [], errors = {} } = parseUntrusted<{ errorMessages?: string[]; errors?: Record<string, string> }>(body);
+		const all = [...errorMessages, ...Object.entries(errors).map(([field, message]) => `${field}: ${message}`)];
+		return all.length ? `: ${all.join('; ')}` : '';
+	} catch {
+		return '';
+	}
+}
+
+export type NewTicket = { summary: string; description: string; type?: string };
+
+/** File a ticket assigned to you: a Jira issue (`type`, Task by default) in the project's prefix, or a GitHub issue. */
+export async function createTicket(project: Project, { summary, description, type = 'Task' }: NewTicket): Promise<Ticket> {
+	if (project.tracker === 'github') {
+		const { stdout } = await execa('gh', ['issue', 'create', '--title', summary, '--body-file', '-', '--assignee', '@me'], {
+			cwd: project.path,
+			input: description,
+		});
+		const url = stdout.trim().split('\n').at(-1)!.trim();
+		const number = /\/issues\/(\d+)$/.exec(url)?.[1];
+		if (!number) throw new Error(`gh didn't say which issue it created: ${url}`);
+		return { key: `#${number}`, url, summary, description };
+	}
+	if (project.tracker !== 'jira') throw new Error(`${project.name} has no ticket tracker; set one on the projects screen (P)`);
+	if (!project.jiraProject) throw new Error(`Set ${project.name}'s Jira key prefix on the projects screen to create tickets`);
+	const { accountId } = (await jira(project, '/rest/api/3/myself')) as { accountId: string };
+	const { key } = (await jira(project, '/rest/api/3/issue', {
+		fields: {
+			project: { key: project.jiraProject.toUpperCase() },
+			summary,
+			description: adfDoc(description),
+			issuetype: { name: type },
+			assignee: { accountId },
+		},
+	})) as { key: string };
+	return { key, url: `https://${jiraHost(project)}/browse/${key}`, summary, description };
 }
 
 /** A node of Atlassian Document Format, which Jira's v3 API uses for rich text. */
@@ -170,4 +210,51 @@ export function adfText(node: Adf, indent = ''): string {
 	if (node.type === 'codeBlock') return `\`\`\`\n${inner}\n\`\`\`\n\n`;
 	if (BLOCKS.has(node.type)) return `${inner}\n\n`;
 	return inner;
+}
+
+/**
+ * Plain or Markdown-ish text as an ADF document, roughly the reverse of adfText: blank-line-separated
+ * paragraphs, `#` headings, `- ` bullets and ``` code blocks; anything else stays as written.
+ */
+export function adfDoc(text: string): Adf {
+	const content: Adf[] = [];
+	const lines = text.replace(/\r\n/g, '\n').split('\n');
+	const inline = (line: string): Adf[] => (line ? [{ type: 'text', text: line }] : []);
+	let paragraph: string[] = [];
+	let bullets: string[] = [];
+	const flush = () => {
+		if (paragraph.length) {
+			content.push({ type: 'paragraph', content: paragraph.flatMap((line, i) => [...(i ? [{ type: 'hardBreak' }] : []), ...inline(line)]) });
+		}
+		if (bullets.length) {
+			content.push({ type: 'bulletList', content: bullets.map(b => ({ type: 'listItem', content: [{ type: 'paragraph', content: inline(b) }] })) });
+		}
+		paragraph = [];
+		bullets = [];
+	};
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]!;
+		if (line.startsWith('```')) {
+			flush();
+			const code: string[] = [];
+			while (++i < lines.length && !lines[i]!.startsWith('```')) code.push(lines[i]!);
+			content.push({ type: 'codeBlock', content: inline(code.join('\n')) });
+			continue;
+		}
+		const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+		const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+		if (heading) {
+			flush();
+			content.push({ type: 'heading', attrs: { level: heading[1]!.length }, content: inline(heading[2]!) });
+		} else if (bullet) {
+			if (paragraph.length) flush();
+			bullets.push(bullet[1]!);
+		} else if (!line.trim()) flush();
+		else {
+			if (bullets.length) flush();
+			paragraph.push(line);
+		}
+	}
+	flush();
+	return { type: 'doc', version: 1, content } as Adf;
 }
