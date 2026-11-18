@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fixture } from './testHelpers.js';
@@ -35,6 +35,32 @@ test('boardRunning: no pid file, a dead pid, then a claimed board', () => {
 	assert.equal(boardRunning(dir), true);
 	releaseBoard(dir);
 	assert.equal(boardRunning(dir), false);
+});
+
+test("from a thread's container, which can't see the board's pid, the board is running while its heartbeat is fresh", () => {
+	const { dir } = fixture();
+	const inContainer = { inContainer: true };
+	assert.equal(boardRunning(dir, inContainer), false);
+	// A pid that means something else in the container, or nothing: only the heartbeat counts.
+	writeFileSync(join(dir, 'board.pid'), '1');
+	assert.equal(boardRunning(dir, inContainer), true);
+	const old = new Date(Date.now() - 60_000);
+	utimesSync(join(dir, 'board.pid'), old, old);
+	assert.equal(boardRunning(dir, inContainer), false);
+	claimBoard(dir);
+	stops.push(() => releaseBoard(dir));
+	assert.equal(boardRunning(dir, inContainer), true);
+	assert.equal(boardRunning(dir, { inContainer: true, now: Date.now() + 60_000 }), false);
+});
+
+test('the board keeps its heartbeat going', async () => {
+	const { dir } = fixture();
+	claimBoard(dir);
+	stops.push(() => releaseBoard(dir));
+	const old = new Date(Date.now() - 60_000);
+	utimesSync(join(dir, 'board.pid'), old, old);
+	await new Promise(resolve => setTimeout(resolve, 2300));
+	assert.ok(Date.now() - statSync(join(dir, 'board.pid')).mtimeMs < 1000);
 });
 
 test('claiming the board drops requests from before it started', () => {
