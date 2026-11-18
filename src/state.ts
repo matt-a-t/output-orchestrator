@@ -116,6 +116,9 @@ const ThreadSchema = z.preprocess(
 		// Claude's session ID for the thread's latest run, reported by the SessionStart hook; used to resume.
 		sessionId: z.string().optional(),
 		transcriptPath: z.string().optional(),
+		// Its plan was approved in a large conversation: once that claude has saved the checkpoints and stopped,
+		// the board swaps it for a fresh one on the plan (see useFreshStarts). Cleared by any move.
+		freshStart: z.boolean().optional(),
 		// Imported threads (see transcripts.ts) keep running where they were started instead of in a worktree.
 		cwd: z.string().optional(),
 		// Set when the thread's worktree is first created (see git.ts); the branch outlives the worktree.

@@ -1,9 +1,11 @@
 // Starting, stopping and waking a thread's claude in its tmux window.
 
 import { existsSync } from 'node:fs';
+import { useEffect, useRef } from 'react';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { stillWorking, unknownProject } from '../errors.js';
-import { DEFAULT_WAKE_PROMPT, hidden, type Thread } from '../state.js';
+import { DEFAULT_WAKE_PROMPT, hidden, type State, type Thread } from '../state.js';
+import type { Status } from '../status.js';
 import { CLAUDE_SETTINGS_FILE } from '../status.js';
 import { threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
@@ -16,6 +18,9 @@ export type PermissionMode = 'plan' | 'auto';
 
 /** What w tells a thread's claude that has never run, e.g. one made with no initial prompt. */
 const START_PROMPT = 'This is a new oo thread. Run `oo thread show` to read its title, plan, ticket and checkpoints, then get started on it.';
+
+/** What the fresh claude that takes over from a large planning conversation is told (see useFreshStarts). */
+const PLANNED_PROMPT = "This oo thread's plan is approved and its checkpoints are saved. Run `oo thread show` to read its title, plan, ticket and checkpoints, then start on the first checkpoint.";
 
 /** Claude session ID to resume the thread with, if its transcript still exists. */
 export function resumeId(thread: Thread): string | undefined {
@@ -218,3 +223,35 @@ export const claudeKeys: Binding[] = [
 	{ key: 'W', run: board => wakeStalled(board, board.shown()) },
 	{ key: 's', run: onThread(openShell), help: { section: 'Reviewing', what: 'claude + a shell beside it' } },
 ];
+
+/**
+ * Once a thread whose plan was approved in a large conversation (Thread's freshStart) has its checkpoints
+ * saved and its claude stopped, swap that claude for a fresh one on the plan and checkpoints. If it went on
+ * to start a checkpoint anyway, it's left to carry on.
+ */
+export function useFreshStarts(board: Board, state: State, statuses: Record<string, Status>) {
+	// Threads being restarted right now, so they're only restarted once.
+	const starting = useRef(new Set<string>());
+	useEffect(() => {
+		for (const thread of state.threads) {
+			if (!thread.freshStart || starting.current.has(thread.id)) continue;
+			const todos = thread.todos ?? [];
+			if (todos.some(t => t.status !== 'pending')) {
+				board.updateThread(thread.id, { freshStart: undefined });
+				continue;
+			}
+			const cwd = threadDir(state, thread);
+			if (!todos.length || !cwd || statuses[thread.id] !== 'stopped' || !board.liveWindows().has(threadWindowName(thread.id))) continue;
+			starting.current.add(thread.id);
+			board.updateThread(thread.id, { freshStart: undefined });
+			void board.run(async () => {
+				try {
+					if (!(await closeClaude(board, thread))) return;
+					await launchClaude(board, thread, cwd, { background: true, fresh: true, mode: 'auto', prompt: PLANNED_PROMPT });
+				} finally {
+					starting.current.delete(thread.id);
+				}
+			}, `starting a fresh claude for #${thread.id}`);
+		}
+	}, [state, statuses]);
+}
