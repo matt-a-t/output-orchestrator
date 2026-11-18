@@ -1,12 +1,13 @@
-// PRs on Bitbucket, through twg (`twg bitbucket pull-requests …`), which finds the repo from the checkout's
-// remote. Reviewing and commenting are left to Bitbucket's web UI, so only what the board shows and merging are here.
+// PRs on Bitbucket, through its REST API (api.bitbucket.org/2.0) with the API token in BITBUCKET_EMAIL and
+// BITBUCKET_API_TOKEN, for the repo the checkout's origin names. Reviewing and commenting are left to
+// Bitbucket's web UI, so only what the board shows and merging are here.
 
 import { execa } from 'execa';
 import type { Pr, PrCheck, PrDetails, PrHost, PrState, PrStatus } from './prHost.js';
-import { parseUntrusted } from './sanitize.js';
+import { parseUntrusted, sanitize } from './sanitize.js';
 import type { Thread } from './state.js';
 
-/** A pull request as Bitbucket's API has it, with what twg adds (`_statuses`) and only the fields used here. */
+/** A pull request as Bitbucket's API has it, with only the fields used here. */
 export type BitbucketPr = {
 	id: number;
 	title: string;
@@ -17,56 +18,92 @@ export type BitbucketPr = {
 	source: { branch: { name: string }; commit?: { hash: string } };
 	destination: { branch: { name: string } };
 	links?: { html?: { href: string } };
-	participants?: { role?: string; approved?: boolean; state?: string | null; user?: BitbucketUser }[];
-	_statuses?: BitbucketStatus[];
+	participants?: Participant[];
 };
 
 type BitbucketUser = { display_name?: string; nickname?: string };
+type Participant = { role?: string; approved?: boolean; state?: string | null; user?: BitbucketUser };
 
 /** A build status on the PR's head commit. */
 export type BitbucketStatus = { state: string; name?: string; key?: string };
 
-/** One of what `prs mergeability` checks: FAILED and blocking means it's in the way. */
-export type MergeCheck = { type: string; status: string; blocking?: boolean; reason?: string };
+/** One file in a PR's diffstat; `status` is "merge conflict" for one that conflicts with the destination. */
+export type DiffstatEntry = { status: string };
 
-/** What twg prints in place of the result when a call fails, with `-o json`. */
-type TwgError = { ok: false; error: { code?: string; message?: string; summary?: string } };
+/** What Bitbucket's API has to say about a PR's mergeability, short of its merge checks, which it doesn't publish. */
+export type MergeSignals = { diffstat: DiffstatEntry[]; statuses: BitbucketStatus[] };
+
+type Page<T> = { values: T[] };
+
+const API = 'https://api.bitbucket.org';
+
+const CREDENTIALS = 'BITBUCKET_EMAIL (your Atlassian email) and BITBUCKET_API_TOKEN (an Atlassian API token with Bitbucket pull request and repository scopes)';
+
+/** The Bitbucket workspace and repo a remote URL names (https, ssh and git@ forms), if it's on bitbucket.org. */
+export function bitbucketRepo(url: string): { workspace: string; repo: string } | undefined {
+	const match = /(?:^|[@/])bitbucket\.org[:/]+([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim());
+	return match ? { workspace: match[1]!, repo: match[2]! } : undefined;
+}
+
+const repos = new Map<string, Promise<string>>();
+
+/** `/2.0/repositories/{workspace}/{repo}` for the repo `cwd`'s origin is, asked of git once per directory. */
+function repoPath(cwd: string): Promise<string> {
+	let path = repos.get(cwd);
+	if (!path) {
+		path = execa('git', ['-C', cwd, 'remote', 'get-url', 'origin'], { reject: false }).then(r => {
+			const repo = bitbucketRepo(r.stdout);
+			if (!repo) throw new Error(`Bitbucket: couldn't tell the repo from origin (${r.stdout.trim() || 'no origin'})`);
+			return `/2.0/repositories/${encodeURIComponent(repo.workspace)}/${encodeURIComponent(repo.repo)}`;
+		});
+		path.catch(() => repos.delete(cwd));
+		repos.set(cwd, path);
+	}
+	return path;
+}
+
+/** What to throw for a failed call: what to fix when it's the token, else Bitbucket's own message. */
+export function bitbucketError(status: number, body: string): Error {
+	if (status === 401 || status === 403) return new Error(`Bitbucket said ${status}: check ${CREDENTIALS}`);
+	let said = '';
+	try {
+		const { error } = parseUntrusted<{ error?: { message?: string; detail?: string } }>(body);
+		said = [error?.message, error?.detail].filter(Boolean).join(': ');
+	} catch {}
+	return new Error(`Bitbucket said ${status}${said ? `: ${said}` : ''}`);
+}
 
 /**
- * Run `twg bitbucket <args>` in `cwd` and return its JSON. A failure throws twg's own summary of it, plus
- * what to try when it's the Bitbucket token (twg's saved one may not work, though the same token in the
- * environment does).
+ * A request to `url` on api.bitbucket.org with the API token. Nothing else is ever sent the token: a URL
+ * on any other host (a task link from a response, say) is refused.
  */
-async function twg<T>(cwd: string, args: string[]): Promise<T> {
-	const result = await execa('twg', ['bitbucket', ...args, '-o', 'json', '--output-summary', 'none'], { cwd, reject: false });
-	if (result.failed && result.exitCode === undefined) throw new Error(`couldn't run twg (${result.shortMessage}); Bitbucket PRs need the twg CLI`);
-	return parseTwg<T>(result.stdout, result.stderr, result.exitCode ?? 1);
+async function request(url: string, init: { method?: string; body?: unknown } = {}): Promise<Response> {
+	if (new URL(url).origin !== API) throw new Error(`Bitbucket: won't send the token to ${new URL(url).host}`);
+	const { BITBUCKET_EMAIL: email, BITBUCKET_API_TOKEN: token } = process.env;
+	if (!email || !token) throw new Error(`Set ${CREDENTIALS} to use Bitbucket PRs`);
+	const response = await fetch(url, {
+		method: init.method ?? (init.body ? 'POST' : 'GET'),
+		headers: {
+			Authorization: `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`,
+			Accept: 'application/json',
+			...(init.body ? { 'Content-Type': 'application/json' } : {}),
+		},
+		body: init.body ? JSON.stringify(init.body) : undefined,
+		signal: AbortSignal.timeout(15_000),
+	});
+	if (!response.ok) throw bitbucketError(response.status, await response.text());
+	return response;
 }
 
-export function parseTwg<T>(stdout: string, stderr: string, exitCode: number): T {
-	let data: unknown;
-	try {
-		data = parseUntrusted<unknown>(stdout);
-	} catch {
-		data = undefined;
-	}
-	if (isTwgError(data)) {
-		const { code, summary, message } = data.error;
-		const said = summary ?? message ?? code ?? 'twg failed';
-		const auth = code?.startsWith('AUTH') ? ' (if `twg setup bitbucket` keeps failing, set TWG_BBC_TOKEN and TWG_BBC_USER instead)' : '';
-		throw new Error(`Bitbucket: ${said}${auth}`);
-	}
-	if (exitCode !== 0 || data === undefined) {
-		// stderr also carries twg's progress and upgrade notices, so its last line is the likeliest to say what went wrong.
-		const last = stderr.trim().split('\n').at(-1);
-		throw new Error(`Bitbucket: ${last || `twg exited ${exitCode}`}`);
-	}
-	return data as T;
+/** A call on the repo's API (`path` under `/repositories/{workspace}/{repo}`), its answer as JSON. */
+async function api<T>(cwd: string, path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+	const response = await request(`${API}${await repoPath(cwd)}${path}`, init);
+	const text = await response.text();
+	return (text ? parseUntrusted<T>(text) : undefined) as T;
 }
 
-function isTwgError(data: unknown): data is TwgError {
-	return typeof data === 'object' && data !== null && (data as { ok?: unknown }).ok === false && typeof (data as { error?: unknown }).error === 'object';
-}
+/** The `q` filter for a branch's open PRs, its name quoted as Bitbucket's query language wants. */
+export const openPrQuery = (branch: string): string => `source.branch.name = "${branch.replace(/[\\"]/g, c => `\\${c}`)}" AND state = "OPEN"`;
 
 const prUrl = (pr: BitbucketPr): string => pr.links?.html?.href ?? '';
 
@@ -77,18 +114,21 @@ const name = (user: BitbucketUser | undefined): string => user?.nickname ?? user
 
 const STATES: Record<BitbucketPr['state'], PrState> = { OPEN: 'OPEN', MERGED: 'MERGED', DECLINED: 'CLOSED', SUPERSEDED: 'CLOSED' };
 
+const FAILED_BUILDS = new Set(['FAILED', 'STOPPED']);
+
 /**
- * Whether an open PR can merge, in GitHub's terms so the board's labels work unchanged: conflicts are
- * DIRTY, too far behind its destination BEHIND, anything else blocking (approvals, builds, tasks) BLOCKED.
- * No checks at all (twg couldn't say) is UNKNOWN, which leaves what the board last knew.
+ * Whether an open PR can merge, in GitHub's terms so the board's labels work unchanged: a file in conflict
+ * is DIRTY, changes requested or a failed build BLOCKED, anything else CLEAN. Bitbucket doesn't publish its
+ * merge checks, so the repo's own rules (required approvals, tasks, commits behind) aren't seen; a merge
+ * they block fails with Bitbucket's explanation. No signals (they couldn't be fetched) is UNKNOWN, which
+ * leaves what the board last knew.
  */
-export function mergeStatus(state: BitbucketPr['state'], checks: MergeCheck[] | undefined): PrStatus {
-	const prState = STATES[state] ?? 'OPEN';
-	if (state !== 'OPEN' || !checks?.length) return { state: prState, mergeable: 'UNKNOWN', mergeStateStatus: '' };
-	const failing = checks.filter(c => c.status === 'FAILED' && c.blocking !== false);
-	if (failing.some(c => c.type === 'git_mergeability_check' || c.reason === 'conflicts')) return { state: prState, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' };
-	if (failing.some(c => /behind/i.test(c.type))) return { state: prState, mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' };
-	if (failing.length) return { state: prState, mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED' };
+export function mergeStatus(pr: Pick<BitbucketPr, 'state' | 'participants'>, signals: MergeSignals | undefined): PrStatus {
+	const prState = STATES[pr.state] ?? 'OPEN';
+	if (pr.state !== 'OPEN' || !signals) return { state: prState, mergeable: 'UNKNOWN', mergeStateStatus: '' };
+	if (signals.diffstat.some(f => f.status === 'merge conflict')) return { state: prState, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' };
+	const changesRequested = (pr.participants ?? []).some(p => p.state === 'changes_requested');
+	if (changesRequested || signals.statuses.some(s => FAILED_BUILDS.has(s.state))) return { state: prState, mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED' };
 	return { state: prState, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
 }
 
@@ -110,13 +150,13 @@ export function diffCounts(diff: string): { additions: number; deletions: number
 	return { additions, deletions };
 }
 
-/** What the viewer shows above the diff, from the PR, its mergeability checks and its diff. */
-export function toDetails(pr: BitbucketPr, checks: MergeCheck[] | undefined, diff: string): PrDetails {
+/** What the viewer shows above the diff, from the PR, its mergeability signals and its diff. */
+export function toDetails(pr: BitbucketPr, signals: MergeSignals | undefined, diff: string): PrDetails {
 	const reviewers = (pr.participants ?? []).filter(p => p.approved || p.state === 'changes_requested');
 	const reviews = reviewers.map(p => ({ author: { login: name(p.user) }, state: p.state === 'changes_requested' ? 'CHANGES_REQUESTED' : 'APPROVED', body: '' }));
 	const reviewDecision = reviews.some(r => r.state === 'CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : reviews.length ? 'APPROVED' : '';
 	return {
-		...mergeStatus(pr.state, checks),
+		...mergeStatus(pr, signals),
 		number: pr.id,
 		title: pr.title,
 		body: pr.description ?? '',
@@ -125,7 +165,7 @@ export function toDetails(pr: BitbucketPr, checks: MergeCheck[] | undefined, dif
 		isDraft: pr.draft ?? false,
 		reviewDecision,
 		reviews,
-		statusCheckRollup: toChecks(pr._statuses),
+		statusCheckRollup: toChecks(signals?.statuses),
 		headRefName: pr.source.branch.name,
 		baseRefName: pr.destination.branch.name,
 		headRefOid: pr.source.commit?.hash ?? '',
@@ -133,52 +173,67 @@ export function toDetails(pr: BitbucketPr, checks: MergeCheck[] | undefined, dif
 	};
 }
 
-const getPr = (cwd: string, number: number, extra: string[] = []) => twg<BitbucketPr>(cwd, ['pull-requests', 'get', String(number), ...extra]);
+const getPr = (cwd: string, number: number) => api<BitbucketPr>(cwd, `/pullrequests/${number}`);
 
-/** Mergeability can be slow or refused; without it the board just doesn't say. */
-const mergeChecks = (cwd: string, number: number) => twg<MergeCheck[]>(cwd, ['pull-requests', 'mergeability', String(number)]).catch(() => undefined);
+/** The diffstat and build statuses; they can fail without the PR failing, and then the board just doesn't say. */
+async function mergeSignals(cwd: string, number: number): Promise<MergeSignals | undefined> {
+	try {
+		const [diffstat, statuses] = await Promise.all([
+			api<Page<DiffstatEntry>>(cwd, `/pullrequests/${number}/diffstat?pagelen=100`),
+			api<Page<BitbucketStatus>>(cwd, `/pullrequests/${number}/statuses?pagelen=50`),
+		]);
+		return { diffstat: diffstat.values, statuses: statuses.values };
+	} catch {
+		return undefined;
+	}
+}
 
 async function prDiff(cwd: string, number: number): Promise<string> {
-	const { content } = await twg<{ content: string }>(cwd, ['pull-requests', 'diff', String(number)]);
-	return content;
+	const response = await request(`${API}${await repoPath(cwd)}/pullrequests/${number}/diff`);
+	return sanitize(await response.text());
 }
 
 const noReviews = (): never => {
 	throw new Error('reviewing Bitbucket PRs is done in its web UI (b opens the PR)');
 };
 
-/** PRs on Bitbucket, through twg. */
+/** How often a merge Bitbucket finishes in the background is checked on, and for how long. */
+export const MERGE_WAIT = { every: 2_000, for: 120_000 };
+
+type MergeTask = { task_status?: string; merge_result?: BitbucketPr };
+
+/** PRs on Bitbucket, through its REST API. */
 export const bitbucket: PrHost = {
 	name: 'Bitbucket',
 	canReview: false,
-	// Each check is two twg runs, ~2.3 CPU-seconds each just to start, so merges outside the board show up late.
-	pollEvery: 15 * 60_000,
+	pollEvery: 60_000,
 
 	async findPr(cwd: string, branch: string) {
-		const open = await twg<BitbucketPr[]>(cwd, ['pull-requests', 'query', '--source', branch, '--state', 'OPEN', '--limit', '1']);
-		return open[0] && toPr(open[0]);
+		const query = new URLSearchParams({ q: openPrQuery(branch), pagelen: '1' });
+		const open = await api<Page<BitbucketPr>>(cwd, `/pullrequests?${query}`);
+		return open.values[0] && toPr(open.values[0]);
 	},
 
 	async createPr(cwd: string, thread: Thread, title: string, body: string, base?: string) {
-		// --x=value, so a title or description starting with - isn't taken for an option.
-		const into = base ? [`--dest=${base}`] : [];
-		const pr = await twg<BitbucketPr>(cwd, ['pull-requests', 'create', `--title=${title}`, `--source=${thread.branch!}`, ...into, `--description=${body}`]);
-		if (typeof pr?.id !== 'number') throw new Error("Bitbucket: twg didn't say which PR it opened");
+		const pr = await api<BitbucketPr>(cwd, '/pullrequests', {
+			body: { title, description: body, source: { branch: { name: thread.branch! } }, ...(base ? { destination: { branch: { name: base } } } : {}) },
+		});
+		if (typeof pr?.id !== 'number') throw new Error("Bitbucket didn't say which PR it opened");
 		return toPr(pr);
 	},
 
 	async retargetPr(cwd: string, pr: Pr, base: string) {
-		await twg(cwd, ['pull-requests', 'update', '--pull-request', String(pr.number), '--dest', base]);
+		await api(cwd, `/pullrequests/${pr.number}`, { method: 'PUT', body: { destination: { branch: { name: base } } } });
 	},
 
 	async prStatus(cwd: string, pr: Pr) {
-		const [details, checks] = await Promise.all([getPr(cwd, pr.number), mergeChecks(cwd, pr.number)]);
-		return mergeStatus(details.state, checks);
+		const details = await getPr(cwd, pr.number);
+		return mergeStatus(details, details.state === 'OPEN' ? await mergeSignals(cwd, pr.number) : undefined);
 	},
 
 	async prDetails(cwd: string, number: number) {
-		const [details, checks, diff] = await Promise.all([getPr(cwd, number, ['--statuses']), mergeChecks(cwd, number), prDiff(cwd, number)]);
-		return toDetails(details, checks, diff);
+		const [details, signals, diff] = await Promise.all([getPr(cwd, number), mergeSignals(cwd, number), prDiff(cwd, number)]);
+		return toDetails(details, signals, diff);
 	},
 
 	prDiff,
@@ -186,12 +241,25 @@ export const bitbucket: PrHost = {
 	viewerLogin: noReviews,
 	submitReview: noReviews,
 
-	/** Merge with a merge commit, waiting for Bitbucket to finish. A failure (conflicts, approvals, the repo not allowing merge commits) is Bitbucket's to explain. */
+	/**
+	 * Merge with a merge commit. Bitbucket may finish it in the background (202, with a task to check on),
+	 * so wait for that. A failure (conflicts, approvals, the repo not allowing merge commits) is Bitbucket's to explain.
+	 */
 	async mergePr(cwd: string, number: number) {
-		await twg(cwd, ['pull-requests', 'merge', '--pull-request', String(number), '--merge-strategy', 'merge_commit', '--wait']);
-		return 'merge commit';
+		const response = await request(`${API}${await repoPath(cwd)}/pullrequests/${number}/merge`, { body: { merge_strategy: 'merge_commit' } });
+		if (response.status !== 202) return 'merge commit';
+		const task = response.headers.get('location');
+		if (!task) throw new Error("Bitbucket is merging in the background but didn't say where to check on it");
+		const until = Date.now() + MERGE_WAIT.for;
+		while (Date.now() < until) {
+			const { task_status: status } = parseUntrusted<MergeTask>(await (await request(new URL(task, API).href)).text());
+			if (status === 'SUCCESS') return 'merge commit';
+			if (status && status !== 'PENDING') throw new Error(`Bitbucket's merge ended ${status}`);
+			await new Promise(resolve => setTimeout(resolve, MERGE_WAIT.every));
+		}
+		throw new Error("Bitbucket's merge is still going; check the PR in its web UI (b)");
 	},
 
 	headRef: pr => `refs/heads/${pr.headRefName}`,
-	retargetCommand: (pr, base) => `twg bitbucket pull-requests update --pull-request ${pr.number} --dest ${base}`,
+	retargetCommand: () => "change the PR's destination in Bitbucket's web UI; b opens it",
 };

@@ -3,7 +3,7 @@ import { relative, resolve, isAbsolute } from 'node:path';
 import { killRunSessions, runPrefix } from './commands.js';
 import { containerName, removeContainer } from './container.js';
 import { unknownProject } from './errors.js';
-import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, restartBranch, worktreePath } from './git.js';
+import { branchTip, defaultBranch, ensureWorktree, hasWorktree, isDirty, removeWorktree, renameBranch, restartBranch, worktreePath } from './git.js';
 import { prHost, prState, retargetPr } from './prHost.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
@@ -442,6 +442,25 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 		const now = new Date().toISOString();
 		store.update(s => ({ ...s, threads: s.threads.map(t => (t.id === thread.id ? { ...t, plan: request.plan, updatedAt: now } : t)) }));
 		return done(`Saved #${thread.id}'s plan`);
+	}
+	if (request.op === 'ticket') {
+		const ticket = request.ticket ?? undefined;
+		const old = thread.branch;
+		// The branch is named after the ticket (see branchName), so follow it while that's still safe.
+		const renamed = old ? await renameBranch(project.path, { ...thread, ticket }) : {};
+		const branch = renamed.branch;
+		const now = new Date().toISOString();
+		store.update(s => ({
+			...s,
+			threads: s.threads.map(t => {
+				if (t.id === thread.id) return { ...t, ticket, ...(branch && { branch }), updatedAt: now };
+				// Threads building on it are based on its branch by name.
+				if (branch && t.stackedOn === thread.id && t.base === old) return { ...t, base: branch, updatedAt: now };
+				return t;
+			}),
+		}));
+		const set = ticket ? `Set #${thread.id}'s ticket to ${ticket.key}` : `Cleared #${thread.id}'s ticket`;
+		return done(renamed.message ? `${set} · ${renamed.message}` : set);
 	}
 	if (request.op === 'priority') {
 		const now = new Date().toISOString();

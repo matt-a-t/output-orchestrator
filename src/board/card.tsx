@@ -29,17 +29,22 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['▶', 'green', 'one of its commands is running (r)'],
 	['⇄3000→49153', 'cyan', "its container's port 3000 is on localhost:49153"],
 	['379k', undefined, 'context to resend (yellow: large, ~: compacted)'],
-	['42m', 'green', 'cache warm this long: resume before then for less'],
+	['42m warm', 'green', 'cache warm this long: resume before then for less'],
 ];
 
 // The columns and the import list start below the title bar, a header and a rule.
 export const LIST_TOP = 3;
-// Each card is two lines, or one in Done.
-const CARD_HEIGHT = 2;
-export const cardHeight = (column: Column) => (column === 'done' || column === 'archived' ? 1 : CARD_HEIGHT);
+// Each card is three lines (badges, title, context), or one in Done and Archived so more of them fit.
+const CARD_HEIGHT = 3;
+// The blank line under each three-line card, so they don't run together.
+export const CARD_GAP = 1;
+const oneLiner = (column: Column) => column === 'done' || column === 'archived';
+export const cardHeight = (column: Column) => (oneLiner(column) ? 1 : CARD_HEIGHT);
+/** The lines a card takes up in its column, with the gap under it. */
+export const rowLines = (column: Column) => cardHeight(column) + (oneLiner(column) ? 0 : CARD_GAP);
 // A thread in Local stays in its column, its card outlined in yellow, which takes a line above and below.
 export const LOCAL_BORDER_LINES = 2;
-export const cardLines = (t: Thread) => cardHeight(t.column) + (t.local ? LOCAL_BORDER_LINES : 0);
+export const cardLines = (t: Thread) => rowLines(t.column) + (t.local ? LOCAL_BORDER_LINES : 0);
 
 export type CardProps = Props;
 type Props = {
@@ -67,7 +72,7 @@ type Props = {
 	compacted: boolean;
 };
 
-/** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
+/** A thread's three lines on the board and the gap under them (one line in Done), outlined in yellow while it's in Local. */
 export const Card = memo(CardLines, sameCard);
 
 /**
@@ -93,7 +98,8 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 		</>
 	);
 	return (
-		<Box flexDirection="column" {...(t.local ? { borderStyle: 'round', borderColor: 'yellow' } : {})}>
+		// The gap is a margin, so it's outside the Local outline.
+		<Box flexDirection="column" marginBottom={oneLine ? 0 : CARD_GAP} {...(t.local ? { borderStyle: 'round', borderColor: 'yellow' } : {})}>
 			<Text wrap="truncate" inverse={selected}>
 				<Text color={badgeColor}>{badge} </Text>
 				<Text bold>#{t.id} </Text>
@@ -145,8 +151,6 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 						</Text>
 					) : null
 				) : null}
-				{tokens !== undefined ? <Text color={tokens >= LARGE_CONTEXT ? 'yellow' : undefined} dimColor={tokens < LARGE_CONTEXT}>{` ${compacted ? '~' : ''}${formatTokens(tokens)}`}</Text> : null}
-				{warmFor ? <Text color="green">{` ${warmFor}`}</Text> : null}
 				{/* Finished threads get one line each so more of them fit. */}
 				{oneLine ? ' ' : null}
 				{oneLine ? title : null}
@@ -155,6 +159,19 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 				<Text wrap="truncate" inverse={selected}>
 					{'  '}
 					{title}
+				</Text>
+			)}
+			{/* How much its claude would resend, and how long that stays cheap; blank without one, so every card is the same height. */}
+			{oneLine ? null : (
+				<Text wrap="truncate" inverse={selected}>
+					{'  '}
+					{tokens !== undefined ? (
+						<Text color={tokens >= LARGE_CONTEXT ? 'yellow' : undefined} dimColor={tokens < LARGE_CONTEXT}>
+							{`${compacted ? '~' : ''}${formatTokens(tokens)}`}
+						</Text>
+					) : null}
+					{tokens !== undefined && warmFor ? <Text dimColor> · </Text> : null}
+					{warmFor ? <Text color="green">{`${warmFor} warm`}</Text> : null}
 				</Text>
 			)}
 		</Box>

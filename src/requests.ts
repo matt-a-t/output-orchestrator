@@ -20,6 +20,8 @@ export type Request =
 	// Board-only too (it pushes, opens the PR and runs hooks); without a body, claude drafts the PR, and the title too unless given.
 	| { id: string; op: 'pr'; thread: string; title?: string; body?: string }
 	| { id: string; op: 'plan'; thread: string; plan: string }
+	// Set or replace the thread's ticket, or with null clear it; the branch follows it while that's safe (see renameBranch).
+	| { id: string; op: 'ticket'; thread: string; ticket: Thread['ticket'] | null }
 	| { id: string; op: 'priority'; thread: string; priority: Priority }
 	// Save (or with null, clear) the messages the commit and PR forms open with; one left out stays as it is.
 	| { id: string; op: 'draft'; thread: string; commit?: string | null; pr?: { title: string; body: string } | null }
@@ -103,7 +105,7 @@ function fresh(dir: string, now: number): boolean {
 	}
 }
 
-const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'priority', 'draft', 'todos', 'todo', 'send', 'delivered', 'block', 'unblock'] as const;
+const REQUEST_OPS = ['add', 'move', 'local', 'pr', 'plan', 'ticket', 'priority', 'draft', 'todos', 'todo', 'send', 'delivered', 'block', 'unblock'] as const;
 // Doesn't compile if an op is missing above: the board would refuse its requests as unknown.
 const allOps: [Exclude<Request['op'], (typeof REQUEST_OPS)[number]>] extends [never] ? true : never = true;
 void allOps;

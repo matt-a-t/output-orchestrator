@@ -176,3 +176,19 @@ export const fakeGh = (t: TestContext, answers: Record<string, FakeAnswer>) => f
  * nothing to close). Starting a claude isn't faked, so a test must never get that far.
  */
 export const fakeTmux = (t: TestContext, windows: string[] = []) => fakeCommand(t, 'tmux', { 'list-windows': { stdout: windows.join('\n') } });
+
+/** Jira's answers to /myself and the create call, recording what was sent; JIRA_* set for the call. */
+export function mockJira(t: TestContext, created: () => Response = () => Response.json({ key: 'AV-77' })) {
+	const calls: { url: string; method: string; body?: any }[] = [];
+	for (const [name, value] of [['JIRA_EMAIL', 'me@example.com'], ['JIRA_API_TOKEN', 'token']] as const) {
+		const was = process.env[name];
+		process.env[name] = value;
+		t.after(() => void (was === undefined ? delete process.env[name] : (process.env[name] = was)));
+	}
+	t.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
+		calls.push({ url, method: init.method!, body: init.body ? JSON.parse(String(init.body)) : undefined });
+		if (url.endsWith('/myself')) return Response.json({ accountId: 'acc-1' });
+		return created();
+	});
+	return calls;
+}

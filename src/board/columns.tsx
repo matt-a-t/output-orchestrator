@@ -7,7 +7,7 @@ import { mouse, type MouseEvent } from '../mouse.js';
 import { COLUMN_LABELS, type Column, type Thread } from '../state.js';
 import { threadWindowName } from '../tmux.js';
 import type { Board } from './board.js';
-import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES } from './card.js';
+import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES, rowLines as rowLinesOf } from './card.js';
 import { threadRunning } from '../commands.js';
 import { containerName, knownPorts, portsText } from '../container.js';
 import { blockers } from '../threads.js';
@@ -84,9 +84,11 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 		const count = threads.length;
 		// Room for the borders of the cards in Local, whether or not they're scrolled into view.
 		const lines = cardArea - LOCAL_BORDER_LINES * threads.filter(t => t.local).length;
-		const rowLines = cardHeight(column);
-		if (boardHeight === 0 || count * rowLines <= lines) return { start: 0, end: count };
-		const fits = Math.max(1, Math.floor(lines / rowLines));
+		const rowLines = rowLinesOf(column);
+		// The last card shown doesn't need room for the gap under it.
+		const gap = rowLines - cardHeight(column);
+		if (boardHeight === 0 || count * rowLines - gap <= lines) return { start: 0, end: count };
+		const fits = Math.max(1, Math.floor((lines + gap) / rowLines));
 		const last = count - fits;
 		let start = scrollOffsets[column] ?? (column === 'done' ? last : 0);
 		if (cursorRow !== undefined) start = Math.min(Math.max(start, cursorRow - fits + 1), cursorRow);

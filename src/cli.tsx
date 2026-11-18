@@ -180,6 +180,7 @@ if (cmd === 'project') {
 	writeClaudeSettings();
 	writeOoSkill();
 	claimBoard();
-	render(<App />, { stdin: mouseStdin() });
+	// Rewrite only the lines that changed: redrawing the whole full-screen frame on each keystroke flashes.
+	render(<App />, { stdin: mouseStdin(), incrementalRendering: true });
 	reportMouse();
 }
