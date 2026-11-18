@@ -151,3 +151,20 @@ test("leaving Local for Done still ends on main when origin can't be pulled", as
 	assert.equal(await currentRef(project), 'main');
 	assert.equal(thread().local, undefined);
 });
+
+test("with containers, Local forwards ports: no branch or clean checkout needed, and leaving it touches nothing", async t => {
+	const { board, thread, project, wt } = await threadInWorktree(t);
+	board.setState(s => ({ ...s, projects: s.projects.map(p => ({ ...p, container: { image: 'x', ports: [3000], allow: [] } })) }));
+	// The checkout's own changes and the thread's lack of a branch don't matter: neither moves.
+	writeFileSync(join(project, 'README'), 'yours\n');
+	assert.equal(await localProblem(board, { ...thread(), branch: undefined }, true), undefined);
+	board.updateThread('1', { local: true });
+	const before = await currentRef(project);
+	const left = await leaveLocal(board, thread());
+	assert.equal(left.ok, true);
+	assert.match(left.message, /out of Local; its ports are no longer forwarded/);
+	assert.equal(thread().local, undefined);
+	assert.equal(await currentRef(project), before);
+	// The thread's worktree and its uncommitted work stay where they were.
+	await assertCarried(wt);
+});

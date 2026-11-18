@@ -519,6 +519,11 @@ export function approvedPrompt(todos: Todo[], ticked: number, commitSubject?: st
 /** What a thread's claude is told as it starts in Local, which the move into it restarts claude for. Imported threads don't move. */
 function localBriefing(state: State, t: Thread): string | undefined {
 	if (!t.local || t.cwd) return;
+	const container = state.projects.find(p => p.name === t.project)?.container;
+	if (container) {
+		const ports = container.ports.map(p => `localhost:${p}`).join(', ');
+		return `You're in Local: the project's ports on the user's machine (${ports}) go to this thread's container, so a dev server you run here on them (say with the project's commands) is what the user's browser sees. Nothing else moved: you're still in your worktree. \`oo thread local out\` (or o on the board) stops the forwarding.`;
+	}
 	return `You're in Local: working in the project's own checkout at ${threadDir(state, t)} on ${t.branch}, which the user's dev setup runs from; your changes are live there. \`oo thread local out\` (or o on the board) brings it back to its worktree.`;
 }
 

@@ -8,7 +8,7 @@ import { DEFAULT_WAKE_PROMPT, hidden, type State, type Thread } from '../state.j
 import type { Status } from '../status.js';
 import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE } from '../status.js';
 import { containerProject, forThread, threadShell } from '../container.js';
-import { threadDir } from '../threads.js';
+import { inCheckout, threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
 import { cacheLeft, contextUse, formatTokens, LARGE_CONTEXT, recentlyActive, shortDuration, type ContextUse } from '../transcripts.js';
 import type { Binding } from './bindings.js';
@@ -141,7 +141,7 @@ export const openThread = (board: Board, thread: Thread) =>
 		board.run(async () => {
 			const project = board.project(thread.project);
 			if (!project) return board.setMessage(`✗ ${unknownProject(thread.project)}`);
-			const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
+			const cwd = thread.cwd ?? (inCheckout(project, thread) ? project.path : await createWorktree(board, project, thread));
 			await launchClaude(board, thread, cwd, fresh ? { fresh, prompt: START_PROMPT } : {});
 		}),
 	);
@@ -157,7 +157,7 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string, 
 		board.setMessage(`✗ ${unknownProject(thread.project)}`);
 		return false;
 	}
-	const cwd = thread.cwd ?? (thread.local ? project.path : await createWorktree(board, project, thread));
+	const cwd = thread.cwd ?? (inCheckout(project, thread) ? project.path : await createWorktree(board, project, thread));
 	const window = threadWindowName(thread.id);
 	const open = (await windowNames()).includes(window);
 	// Nothing to resume, so the claude starts fresh (as in launchClaude).

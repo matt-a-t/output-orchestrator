@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Thread } from './state.js';
-import { byPriority, matchesSearch, withPriority } from './threads.js';
+import { boardOnlyMove, byPriority, forwardedMoveProblem, inCheckout, matchesSearch, threadDir, withPriority } from './threads.js';
+import { fixture } from './testHelpers.js';
 
 const thread: Thread = {
 	id: '12',
@@ -38,4 +39,20 @@ test('a column shows high priority first and low last, in J/K order within each'
 test('normal priority is left out of the thread', () => {
 	assert.deepEqual(withPriority('normal'), { priority: undefined });
 	assert.deepEqual(withPriority('high'), { priority: 'high' });
+});
+
+test("Local in a project with containers keeps the thread in its worktree; only Done and hiding it need it back", () => {
+	const { state } = fixture([{ column: 'active', local: true, worktree: '/nowhere/1' }]);
+	const thread = state.threads[0]!;
+	const plain = state.projects[0]!;
+	const withContainer = { ...plain, container: { image: 'x', ports: [3000], allow: [] } };
+	assert.equal(inCheckout(plain, thread), true);
+	assert.equal(inCheckout(withContainer, thread), false);
+	assert.equal(threadDir(state, thread), plain.path);
+	// Its worktree doesn't exist here, so there's nowhere for it to be yet.
+	assert.equal(threadDir({ ...state, projects: [withContainer] }, thread), undefined);
+	assert.match(boardOnlyMove(plain, thread, 'polish') ?? '', /on the project's own checkout/);
+	assert.equal(boardOnlyMove(withContainer, thread, 'polish'), undefined);
+	for (const column of ['done', 'archived', 'ideas'] as const) assert.match(forwardedMoveProblem(thread, column) ?? '', /bring it back first/);
+	assert.equal(forwardedMoveProblem({ ...thread, local: undefined }, 'done'), undefined);
 });

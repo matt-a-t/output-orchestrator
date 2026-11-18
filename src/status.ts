@@ -75,6 +75,8 @@ description: Read and change the output-orchestrator (oo) board of threads with 
 The user tracks work as threads on a kanban board (Planned → Active → Polish → PR → Follow-up → Done).
 A thread can also be put in Local (it stays in its column, outlined in yellow), which checks its branch out in the project's own checkout
 (one per project) so the user can try it in their own dev setup; claude then works there until it comes back to its worktree.
+In a project whose threads run in containers, Local instead forwards the project's ports on the user's machine to that thread's
+container, and nothing moves: claude stays in its worktree, and the user's browser reaches the dev server it runs there.
 Each thread has its own git worktree, branch and claude. If \`OO_THREAD_ID\` is set, you are that thread's
 claude, and \`oo thread show\` describes your thread, including its plan. Threads' claudes can pass each other
 context with \`oo thread send\`.
@@ -147,7 +149,8 @@ ${THREAD_USAGE}
 - **Offer Local when the user wants to try the change.** If they want to test or try it themselves, offer to
   put the thread in Local and run \`oo thread local in\` once they agree; \`oo thread local out\` brings it back.
   Uncommitted changes move with the thread, so there's no need to commit first. This claude is closed and resumed
-  in the project's checkout (or back in its worktree) once the turn ends, so finish what you're saying first.
+  in the project's checkout (or back in its worktree) once the turn ends, so finish what you're saying first. In a container
+  (\`oo thread show\` lists one), Local just forwards ports and happens at once: start the dev server on the project's ports for the user to try.
   Never move a thread into or out of Local without asking.
 `;
 

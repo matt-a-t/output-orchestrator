@@ -6,7 +6,7 @@ import { openRun, restartCommand, runSessionName, startCommand, stopCommand, typ
 import { containerName, containerProject, ensureContainer } from '../container.js';
 import { loop } from '../input.js';
 import type { Project, ProjectCommand, Thread } from '../state.js';
-import { threadDir } from '../threads.js';
+import { inCheckout, threadDir } from '../threads.js';
 import type { Board } from './board.js';
 
 /** Who a run is for: the thread whose worktree it runs in, or none for the project's own checkout. */
@@ -20,7 +20,8 @@ export function runTarget(board: Board, project: Project, thread: Thread | undef
 	return thread && thread.project === project.name && threadDir(board.state(), thread) ? { project, thread } : { project };
 }
 
-const where = ({ project, thread }: RunTarget) => (thread ? `#${thread.id}${thread.local ? ' (in Local, the project checkout)' : ''}` : `${project.name}'s checkout`);
+const where = ({ project, thread }: RunTarget) =>
+	thread ? `#${thread.id}${inCheckout(project, thread) ? ' (in Local, the project checkout)' : thread.local ? ' (in Local, on its forwarded ports)' : ''}` : `${project.name}'s checkout`;
 
 /** How a run is going, for the list. */
 function statusText(status: RunStatus | undefined): [string, string | undefined] {

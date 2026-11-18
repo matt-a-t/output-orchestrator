@@ -2,7 +2,7 @@
 
 import { stillWorking } from '../errors.js';
 import { COLUMNS, type Thread } from '../state.js';
-import { doneProblem, merged, moveProblem, moveWarning, shelveProblem, unblockedNote, unstackChildren } from '../threads.js';
+import { doneProblem, forwardedMoveProblem, merged, moveProblem, moveWarning, shelveProblem, unblockedNote, unstackChildren } from '../threads.js';
 import { threadWindowName } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
@@ -13,7 +13,10 @@ import { syncWorktree } from './worktree.js';
 export function moveThread(board: Board, thread: Thread, column: (typeof COLUMNS)[number]) {
 	if (thread.column === column) return;
 	// Its branch is checked out in the project's checkout, not its worktree, until it comes back. Opening its PR works from there.
-	if (thread.local && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — o brings it back to the board first`);
+	if (thread.local && !board.project(thread.project)?.container && column !== 'pr') return board.setMessage(`⚠ #${thread.id} is in Local — o brings it back to the board first`);
+	// In Local by forwarding its ports, it moves freely but for Done, which removes its container.
+	const forwarded = forwardedMoveProblem(thread, column);
+	if (forwarded) return board.setMessage(forwarded);
 	const problem = moveProblem(board.state(), thread, column);
 	if (problem) return board.setMessage(problem);
 	const status = board.statuses()[thread.id];

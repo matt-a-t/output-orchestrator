@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { containerProject, knownPorts, publishedPorts, removeContainer, strayContainers, threadContainers } from '../container.js';
 import type { Board } from './board.js';
+import { restoreForwards } from './local.js';
 
 /** Once, as the board starts. Re-renders when it's found the ports, for the cards. No docker means nothing to do. */
 export function useContainerSweep(board: Board) {
@@ -17,6 +18,7 @@ export function useContainerSweep(board: Board) {
 			const stray = strayContainers(containers, threads, projects);
 			for (const name of stray) await removeContainer(name);
 			for (const name of containers.keys()) if (!stray.includes(name)) knownPorts.set(name, await publishedPorts(name));
+			await restoreForwards(board);
 			if (stray.length) board.setMessage(`Removed ${stray.length} container${stray.length === 1 ? '' : 's'} no thread needs any more`);
 			setFound(n => n + 1);
 		})().catch(() => {});

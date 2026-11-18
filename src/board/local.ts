@@ -1,4 +1,5 @@
-// Moving a thread into Local (its branch checked out in the project's own checkout) and back.
+// Moving a thread into Local (its branch checked out in the project's own checkout) and back. For a project
+// with containers, Local forwards the project's ports to the thread's container instead (see forward.ts).
 
 import { useEffect } from 'react';
 import { errorMessage, resultMessage, stillWorking, unknownProject } from '../errors.js';
@@ -12,6 +13,8 @@ import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
 import { closeClaude, launchClaude } from './claude.js';
 import { createWorktree } from './worktree.js';
+import { containerProject, ensureContainer, type ContainerProject } from '../container.js';
+import { forward, forwardMapping, unforward } from './forward.js';
 
 /** Copy the thread's transcript to where `claude --resume` looks from `cwd`. */
 function moveTranscript(thread: Thread, cwd: string): Pick<Thread, 'transcriptPath'> {
@@ -39,8 +42,8 @@ export async function localProblem(board: Board, thread: Thread, entering: boole
 		const reason = noRepo(board.state(), thread);
 		if (reason) return `${reason} — there's no checkout to bring it into`;
 	}
-	// Imported threads already run in their own directory, with no branch to move.
-	if (thread.cwd) return;
+	// Imported threads already run in their own directory, with no branch to move, and a container's stay in their worktree.
+	if (thread.cwd || project.container) return;
 	if (entering) {
 		if (!thread.branch) return `#${thread.id} has no branch yet — open it first`;
 		// The thread's own uncommitted changes come along (see enterLocal), but the checkout's tracked ones are yours.
@@ -58,6 +61,8 @@ export async function enterLocal(board: Board, thread: Thread): Promise<Outcome>
 	const problem = await localProblem(board, thread, true);
 	if (problem) return { ok: false, message: problem };
 	const project = board.project(thread.project)!;
+	const withContainer = containerProject(project);
+	if (withContainer && !thread.cwd) return forwardLocal(board, withContainer, thread);
 	if (thread.cwd) {
 		board.updateThread(thread.id, { local: true });
 		return { ok: true, message: await hook(project, 'enterLocal', thread, thread.cwd, `#${thread.id} is in Local`) };
@@ -88,6 +93,48 @@ export async function enterLocal(board: Board, thread: Thread): Promise<Outcome>
 }
 
 /**
+ * Local for a project with containers: forward the project's ports on the host to the thread's container (started
+ * if need be), then run the enter local hook in its worktree. Claude, the worktree and the container stay as they are.
+ */
+async function forwardLocal(board: Board, project: ContainerProject, thread: Thread): Promise<Outcome> {
+	if (!hasWorktree(thread)) return { ok: false, message: `#${thread.id} has no worktree yet — open it first` };
+	const cwd = worktreePath(thread);
+	const { mapping, problem } = forwardMapping(project.container.ports, await ensureContainer(project, thread, cwd));
+	if (problem) return { ok: false, message: `#${thread.id} can't go into Local: ${problem}` };
+	try {
+		await forward(thread.id, mapping);
+	} catch (err) {
+		return { ok: false, message: `#${thread.id} can't go into Local: ${errorMessage(err)}` };
+	}
+	board.updateThread(thread.id, { local: true });
+	const done = `${mapping.map(([port]) => `localhost:${port}`).join(', ')} now go${mapping.length === 1 ? 'es' : ''} to #${thread.id}'s container`;
+	return { ok: true, message: await hook(project, 'enterLocal', { ...thread, local: true }, cwd, done) };
+}
+
+/** Out of Local by port forwarding: stop forwarding, then run the leave local hook in the thread's worktree. */
+async function unforwardLocal(board: Board, project: Project, thread: Thread): Promise<string> {
+	await unforward(thread.id);
+	const back: Thread = { ...thread, local: undefined };
+	board.updateThread(thread.id, { local: undefined });
+	return hook(project, 'leaveLocal', back, worktreePath(thread), `#${thread.id} is out of Local; its ports are no longer forwarded`);
+}
+
+/** As the board starts, forward the ports of each Local thread whose project has containers again: the forwarding went when the board last quit. */
+export async function restoreForwards(board: Board): Promise<void> {
+	for (const thread of board.state().threads) {
+		const project = containerProject(board.project(thread.project));
+		if (!thread.local || thread.cwd || !project || !hasWorktree(thread)) continue;
+		try {
+			const { mapping, problem } = forwardMapping(project.container.ports, await ensureContainer(project, thread, worktreePath(thread)));
+			if (problem) throw new Error(problem);
+			await forward(thread.id, mapping);
+		} catch (err) {
+			board.setMessage(`⚠ Couldn't forward #${thread.id}'s ports for Local: ${errorMessage(err)}`);
+		}
+	}
+}
+
+/**
  * Put the project's checkout back on the default branch and move the thread back into its
  * worktree, then run the project's leave local hook.
  */
@@ -95,6 +142,7 @@ export async function leaveLocal(board: Board, thread: Thread): Promise<Outcome>
 	const problem = await localProblem(board, thread, false);
 	if (problem) return { ok: false, message: problem };
 	const project = board.project(thread.project)!;
+	if (project.container && !thread.cwd) return { ok: true, message: await unforwardLocal(board, project, thread) };
 	if (thread.cwd) {
 		board.updateThread(thread.id, { local: undefined });
 		return { ok: true, message: await hook(project, 'leaveLocal', thread, project.path, `#${thread.id} is out of Local`) };
@@ -124,6 +172,8 @@ export async function leaveLocal(board: Board, thread: Thread): Promise<Outcome>
 export async function leaveLocalForDone(board: Board, thread: Thread): Promise<string> {
 	const project = board.project(thread.project)!;
 	const back: Thread = { ...thread, local: undefined };
+	// The project's checkout was never moved, so there's nothing to put back.
+	if (project.container && !thread.cwd) return unforwardLocal(board, project, thread);
 	if (thread.cwd) {
 		board.updateThread(thread.id, { local: undefined });
 		return hook(project, 'leaveLocal', back, project.path, `#${thread.id} is out of Local`);
@@ -144,7 +194,7 @@ export async function leaveLocalForDone(board: Board, thread: Thread): Promise<s
 export const moveLocal = (board: Board, thread: Thread, entering: boolean) =>
 	board.run(async () => {
 		board.setMessage(resultMessage(await (entering ? enterLocal : leaveLocal)(board, thread)));
-	}, entering ? 'checking out for Local' : 'leaving Local');
+	}, entering ? (board.project(thread.project)?.container ? 'forwarding ports for Local' : 'checking out for Local') : 'leaving Local');
 
 /** t: into or out of Local now, dropping any move `oo thread local` left waiting. */
 export function toggleLocal(board: Board, thread: Thread) {

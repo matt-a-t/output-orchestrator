@@ -18,7 +18,8 @@ async function localRequest(board: Board, { id, thread: threadId, local }: Extra
 	if (entering === !!thread.local) return answer({ ok: true, message: `#${thread.id} is already ${entering ? 'in' : 'out of'} Local` });
 	const problem = await localProblem(board, thread, entering);
 	if (problem) return answer({ ok: false, message: problem });
-	if (!thread.cwd && board.statuses()[thread.id] === 'working') {
+	// Nothing moves under a container's claude (its Local forwards ports), so it doesn't wait for one.
+	if (!thread.cwd && !board.project(thread.project)?.container && board.statuses()[thread.id] === 'working') {
 		board.pendingLocal.set(thread.id, entering);
 		const where = entering ? 'goes into Local' : 'comes out of Local, back to its worktree,';
 		return answer({ ok: true, message: `#${thread.id} ${where} when its claude's turn ends` });
