@@ -5,6 +5,7 @@ import { resultMessage, unknownProject } from './errors.js';
 import { boardRunning, sendRequest, type DistributiveOmit, type Request, type Response } from './requests.js';
 import { ALL_COLUMNS, COLUMN_LABELS, DATA_DIR, hidden, LOCAL_LABEL, loadState, PRIORITIES, PRIORITY_MARKS, saveState, TODO_MARKS, TODO_STATUSES, UNVERIFIED_SENDER, type Column, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { applyRequest, blockers, followUps, inDir, merged, nextTodo, priorityOf, threadDir, todoProgress, todosDone, messagesPrompt, senderLabel, undelivered, type Store, type TodoItem } from './threads.js';
+import { contextUse, describeContext } from './transcripts.js';
 import { sanitize } from './sanitize.js';
 import { normalizeKey, ticketContent, ticketUrl } from './tickets.js';
 
@@ -186,6 +187,8 @@ function details(state: State, t: Thread): string {
 	if (dir) lines.push(`dir:     ${dir}`);
 	if (t.pr) lines.push(`PR:      #${t.pr.number} ${t.pr.url}`);
 	if (t.sessionId) lines.push(`session: ${t.sessionId}`);
+	const use = t.transcriptPath && contextUse(t.transcriptPath);
+	if (use) lines.push(`context: ${describeContext(use, Date.now())}`);
 	const unread = undelivered(t.inbox).length;
 	if (unread) lines.push(`inbox:   ${unread} not yet delivered (oo thread inbox)`);
 	if (t.todos?.length) lines.push(`todos:   ${todoProgress(t.todos)} done`, ...t.todos.map(todo => `  ${TODO_MARKS[todo.status]} ${todoSubject(todo)}`));

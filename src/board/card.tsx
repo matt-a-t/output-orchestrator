@@ -4,6 +4,7 @@ import type { PrStatus } from '../prHost.js';
 import { PRIORITY_COLORS, PRIORITY_MARKS, type Column, type Project, type Thread } from '../state.js';
 import type { Status } from '../status.js';
 import { followUps, preMergeDone, todosDone, undelivered } from '../threads.js';
+import { formatTokens, LARGE_CONTEXT } from '../transcripts.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
 	working: ['⚙', 'yellow'],
@@ -26,6 +27,8 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['▲', 'red', 'high priority (!)'],
 	['▽', 'gray', 'low priority (!)'],
 	['▶', 'green', 'one of its commands is running (r)'],
+	['379k', undefined, 'context resuming sends (yellow: large)'],
+	['42m', 'green', 'cache warm this long: resume before then for less'],
 ];
 
 // The columns and the import list start below the title bar, a header and a rule.
@@ -54,6 +57,9 @@ type Props = {
 	blockers: Thread[];
 	// Whether one of its project's commands is running for it (r).
 	running: boolean;
+	// The context its claude carries (tokens), and how long its cache stays warm (e.g. 42m), if it does.
+	tokens: number | undefined;
+	warmFor: string | undefined;
 };
 
 /** A thread's two lines on the board (one in Done), outlined in yellow while it's in Local. */
@@ -68,7 +74,7 @@ export function sameCard(a: Props, b: Props): boolean {
 	return a.blockers.length === b.blockers.length && a.blockers.every((t, i) => t === b.blockers[i]);
 }
 
-function CardLines({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running }: Props) {
+function CardLines({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running, tokens, warmFor }: Props) {
 	const oneLine = cardHeight(t.column) === 1;
 	const color = t.color ?? project?.color;
 	// Changes aren't ready to review until claude stops working on them.
@@ -133,6 +139,8 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 						</Text>
 					) : null
 				) : null}
+				{tokens !== undefined ? <Text color={tokens >= LARGE_CONTEXT ? 'yellow' : undefined} dimColor={tokens < LARGE_CONTEXT}>{` ${formatTokens(tokens)}`}</Text> : null}
+				{warmFor ? <Text color="green">{` ${warmFor}`}</Text> : null}
 				{/* Finished threads get one line each so more of them fit. */}
 				{oneLine ? ' ' : null}
 				{oneLine ? title : null}

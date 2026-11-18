@@ -7,6 +7,7 @@ import { FieldText, EDITING_HELP, FIELD_HELP, formHelp } from './fieldText.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from './input.js';
 import { COLORS, COLUMN_LABELS, LOCAL_LABEL, PRIORITIES, PRIORITY_COLORS, type Priority, type State, type Thread } from './state.js';
 import { priorityOf, withPriority } from './threads.js';
+import { contextUse, describeContext } from './transcripts.js';
 import { normalizeKey, ticketUrl } from './tickets.js';
 
 const FIELDS = ['title', 'ticket', 'project', 'color', 'priority', 'base', 'plan'] as const;
@@ -149,6 +150,7 @@ export function ThreadView({ state, threadId, updateThread, onClose }: Props) {
 		['directory', thread.cwd],
 		['session', thread.sessionId],
 		['transcript', thread.transcriptPath],
+		['context', (use => use && describeContext(use, Date.now()))(thread.transcriptPath ? contextUse(thread.transcriptPath) : undefined)],
 		['PR', thread.pr && `#${thread.pr.number} ${thread.pr.url}`],
 		['created', new Date(thread.createdAt).toLocaleString()],
 		['updated', new Date(thread.updatedAt).toLocaleString()],
