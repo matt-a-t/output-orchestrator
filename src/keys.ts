@@ -19,8 +19,6 @@ export const KEY_SECTIONS: KeySection[] = [
 			['J/K', 'reorder within its column (among threads of its priority)'],
 			['n', 'new thread (form)'],
 			['N', 'import a thread started outside oo'],
-			['e', 'edit the thread'],
-			['t', 'every todo on the thread (j/k scroll)'],
 			['B', 'blocked by another thread (move to it, ⏎ picks)'],
 			['!', 'cycle its priority (normal, high, low); high sorts to the top of its column, low to the bottom'],
 			['p', 'filter by project'],
@@ -30,7 +28,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['A', 'show / hide archived threads'],
 			['r', "run one of the project's commands (dev server, tests…) in the thread's worktree, in a new terminal window"],
 			['P', 'projects (their hooks, commands, wake prompt and when idle claudes close)'],
-			['?', 'these keys'],
+			['?', 'these keys, and a tab (h/l) on what the cards\' marks mean'],
 			['q', 'quit, leaving thread windows open'],
 			['Q', 'quit, closing every thread window and stopping every run (r)'],
 		],
@@ -48,6 +46,17 @@ export const KEY_SECTIONS: KeySection[] = [
 	{
 		title: 'Reviewing',
 		keys: bindingRows('Reviewing'),
+	},
+	{
+		title: 'Thread details (e, t, z)',
+		keys: [
+			['h/l 1-6', 'tabs: overview / plan / steps / messages / quiz / info'],
+			['j/k', 'overview: move between fields; the rest: scroll (space/b page, g/G ends)'],
+			['←/→ space', 'overview: change a choice (project, colour, priority)'],
+			['i ⏎ dd a', 'overview: edit a field, as in a form; a saves'],
+			['⏎', 'plan: edit it in $EDITOR'],
+			['q / esc', 'close (unsaved changes are dropped)'],
+		],
 	},
 	{
 		title: 'In a diff',
@@ -68,7 +77,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		],
 	},
 	{
-		title: 'In a form (n, e, P, commit)',
+		title: 'In a form (n, P, commit)',
 		keys: [
 			['j/k ↑/↓ tab', 'move between fields'],
 			['h/l ←/→ space', 'change a choice (project, colour, priority, recent ticket…)'],

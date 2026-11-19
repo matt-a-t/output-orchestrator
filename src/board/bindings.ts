@@ -5,6 +5,7 @@ import type { Key } from 'ink';
 import type { Thread } from '../state.js';
 import type { Board } from './board.js';
 import { claudeKeys } from './claude.js';
+import { detailsKeys } from './details.js';
 import { localKeys } from './local.js';
 import { moveKeys } from './moves.js';
 import { prKeys } from './pr.js';
@@ -20,7 +21,7 @@ export type BindingHelp = { section: 'Board' | 'Reviewing'; keys?: string; what:
 export type Binding = { key: string; meta?: boolean; run: (board: Board, thread: Thread | undefined) => unknown; help?: BindingHelp };
 
 // In the order the ? screen lists them.
-export const BINDINGS: Binding[] = [...claudeKeys, ...moveKeys, ...localKeys, ...reviewKeys, ...prKeys];
+export const BINDINGS: Binding[] = [...claudeKeys, ...moveKeys, ...localKeys, ...detailsKeys, ...reviewKeys, ...prKeys];
 
 /** Run the binding for this keypress on the highlighted `thread`; returns whether there was one. */
 export function runBinding(board: Board, input: string, key: Key, thread: Thread | undefined): boolean {

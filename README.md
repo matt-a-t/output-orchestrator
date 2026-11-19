@@ -107,15 +107,23 @@ Compacting is cheap only while the cache is warm, so when the board is about to 
 minutes if it never does). Threads in Done are closed without compacting: nothing will resume them.
 A compacted thread's card shows a rough size (`~40k`) until its next turn gives the real one.
 
-`e` opens a thread's own screen. Its title,
-ticket, project, colour, priority and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
-the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
-already has a branch or directory can't change project.
+`e` opens a thread's details in place of the columns, in tabs (`h`/`l` or `1`–`6`). The overview edits its title,
+ticket, project, colour, priority and diff base, and shows where it is beneath them: its column and Local, its
+claude, ticket, PR and merge state, what it waits on or is stacked on, its container's ports and its age. Then its
+plan (`⏎` edits it in `$EDITOR`), its steps (`t` opens the details here), the messages other threads sent it, its
+last pop quiz (`z`), and where its work lives (branch, worktree, session, context, the drafted commit and PR
+messages). A thread that already has a branch or directory can't change project.
 
-Card badges: ● working, ‖ needs you (permission prompt), ✓ stopped, ○ window open with no
+Card badges (`?`, then `l`, lists them on the board): ● working, ‖ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved, ✎ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up), then the context size and cache time left (see above). Each card shows the thread number and project abbreviation (or name, if it has none),
-with the title beneath (after its ticket key, if it has one).
+approved, ✎ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up),
+↺ a rebase pending since what it was stacked on merged (`u`), and a green → once it's ready for the next column. They follow the
+thread number on the card's first line, one glyph each with counts where they have one, so a narrow column never cuts them off.
+The project abbreviation (or name, if it has none) and the title follow on the line beneath (after its ticket key, if it has one).
+The third line says what moves the thread on from its column: the plan's first line in Ideas and Planned, steps done and the
+next one in Active (a magenta ● when one is waiting for your review), the drafted commit and PR messages and the quiz score in
+Polish, the PR's merge state in PR, and the next after-merge step in Follow-up, with how long the thread has sat unchanged
+(`3d`) at its end once that's a day. The last line is the context size and cache time left (see above).
 
 ### Tickets
 
@@ -254,8 +262,8 @@ Tickets work as usual from a container: `oo thread ticket` and `oo thread add --
 was asked for, and the board looks the ticket up or files it with its own `JIRA_EMAIL`/`JIRA_API_TOKEN` or `gh`
 sign-in. Containers never get those credentials, and their firewall doesn't need to let the tracker through.
 
-Each configured port is published on your machine's loopback at a port docker picks. The card shows them as
-`⇄3000→49153`, and so does `oo thread show`.
+Each configured port is published on your machine's loopback at a port docker picks. The card shows a ⇄, and the
+thread's details (`e`) and `oo thread show` list them as `3000→49153`.
 
 **Local** doesn't move anything for these projects. Instead, the board forwards the project's own ports on your
 machine to the thread's container, so `localhost:3000` reaches that thread's dev server. Its branch stays in its
@@ -325,7 +333,7 @@ Two gaps remain:
 ### Blocked threads
 
 When a thread can't go on until another one lands, `B` records that: move the cursor to the thread it waits on and
-press `⏎` (`esc` cancels). The card gets a red ⧗#12 and a dimmed title, and the details below it list the blockers.
+press `⏎` (`esc` cancels). The card gets a red ⧗1 (how many it waits on) and a dimmed title, and the thread's details (`e`) list the blockers.
 A thread can wait on several. Picking one again takes it off, and `⏎` on the thread itself clears them all. A
 block goes away by itself once its blocker merges (reaching Follow-up or Done) or is archived, and the move's
 message says which threads it unblocked. Moving a blocked thread into Active warns, but doesn't stop you.
@@ -423,7 +431,7 @@ claude grades the written answer. If you get any wrong, the results show the rig
 isn't opened unless you press `y` to open it anyway. `s` skips the quiz, while claude is writing it or in
 the form, and a change of under 30 lines (added plus removed) skips it on its own. `q` while claude is
 writing or grading, or in the form, cancels the whole move. The thread keeps its last quiz, passed
-or not, and `z` on its card shows it again. Only opening a new PR from the
+or not, and `z` on its card shows it again in the thread's details. Only opening a new PR from the
 board quizzes you: a thread whose PR is already open just pushes, and `oo thread pr` skips it.
 A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
@@ -443,7 +451,7 @@ background), otherwise once its turn ends. A conversation of 50k tokens or more 
 the time a PR merges its cache has usually gone cold. A fresh claude on the plan and checkpoints is started
 instead, after closing the old one if it's at its prompt. It works through them like any other checkpoints, showing you any
 query or command against shared or production systems before running it and committing nothing. Its card
-shows ⤳ with how many are left, then ✓ done, and you move it on to Done yourself (`L` or `F`). Anything can
+shows ⤳ with how many are left, then a green →, and you move it on to Done yourself (`L` or `F`). Anything can
 wait in Follow-up: `L` from PR moves a thread there by hand once its PR has merged.
 
 GitHub won't let you approve your own PR, so on someone else's the viewer has `a` approve,

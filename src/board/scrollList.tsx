@@ -120,3 +120,62 @@ export function ScrollList<T>({ board, items, itemKey, itemHeight, renderItem, t
 		</Box>
 	);
 }
+
+// Lines the wheel scrolls a Scroller at a time.
+const WHEEL_LINES = 3;
+
+/**
+ * Text too long for its space, scrolled a line at a time (j/k, the arrows), a page at a time (space/b), to the ends (g/G) or with
+ * the wheel. `start` places it once there's a height to place it in (the details' current step, say).
+ */
+export function Scroller({ active, start, children }: { active: boolean; start?: (lines: number) => number; children: ReactNode }) {
+	const space = useRef<DOMElement>(null);
+	const content = useRef<DOMElement>(null);
+	const [lines, setLines] = useState({ space: 0, content: 0 });
+	useEffect(() => {
+		if (!space.current || !content.current) return;
+		const measured = { space: measureElement(space.current).height, content: measureElement(content.current).height };
+		if (measured.space !== lines.space || measured.content !== lines.content) setLines(measured);
+	});
+	const [offset, setOffset] = useState<number | null>(null);
+	const last = Math.max(0, lines.content - lines.space);
+	const first = Math.min(last, offset ?? (lines.space && start ? start(lines.space) : 0));
+	const scrollTo = (to: number) => setOffset(Math.max(0, Math.min(last, to)));
+	const page = Math.max(1, lines.space - 1);
+
+	useInput(
+		(input, key) => {
+			if (input === 'j' || key.downArrow) return scrollTo(first + 1);
+			if (input === 'k' || key.upArrow) return scrollTo(first - 1);
+			if (input === ' ' || key.pageDown) return scrollTo(first + page);
+			if (input === 'b' || key.pageUp) return scrollTo(first - page);
+			if (input === 'g') return scrollTo(0);
+			if (input === 'G') return scrollTo(last);
+		},
+		{ isActive: active },
+	);
+
+	const onMouse = ({ button }: MouseEvent) => {
+		if (!active) return;
+		if (button === 'wheelDown') scrollTo(first + WHEEL_LINES);
+		if (button === 'wheelUp') scrollTo(first - WHEEL_LINES);
+	};
+	const onMouseRef = useRef(onMouse);
+	onMouseRef.current = onMouse;
+	useEffect(() => {
+		const listener = (event: MouseEvent) => onMouseRef.current(event);
+		mouse.on('press', listener);
+		return () => void mouse.off('press', listener);
+	}, []);
+
+	return (
+		<Box ref={space} flexGrow={1} flexBasis={0} overflow="hidden">
+			<Box flexGrow={1} flexDirection="column" overflow="hidden">
+				<Box ref={content} flexDirection="column" flexShrink={0} marginTop={-first}>
+					{children}
+				</Box>
+			</Box>
+			{last > 0 ? <ScrollBar total={lines.content} first={first} shown={lines.space} height={lines.space} /> : null}
+		</Box>
+	);
+}

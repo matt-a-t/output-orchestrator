@@ -10,12 +10,10 @@ import { OO_COMMAND } from './status.js';
 export const QUIZ_FORM = [...OO_COMMAND, 'quiz-form'].join(' ');
 
 /**
- * What the form is opened on: the quiz to answer, or how it went, either before the PR opens (results, which
- * asks whether to go on) or afterwards from the board (review, which only shows it).
+ * What the form is opened on: the quiz to answer, or how it went, before the PR opens (results, which asks
+ * whether to go on). The board's details screen shows it again afterwards (QuizReview).
  */
-export type QuizFormInput =
-	| { mode: 'answer'; title: string; quiz: Quiz }
-	| { mode: 'results' | 'review'; title: string; quiz: Quiz; answers: Answers; grades: Grade[] };
+export type QuizFormInput = { mode: 'answer'; title: string; quiz: Quiz } | { mode: 'results'; title: string; quiz: Quiz; answers: Answers; grades: Grade[] };
 
 /** What the answer form gives back: the answers, skipped, or null if it was cancelled. */
 export type AnswerReply = { answers: Answers } | 'skipped' | null;
@@ -79,10 +77,9 @@ export function answerKey(quiz: Quiz, state: AnswerState, input: string, key: Ke
 	return { ...state, edit: null };
 }
 
-/** A keypress on the results: true to go on to the PR, false to stop, undefined to ignore it. `review` only closes. */
-export function resultsKey(mode: 'results' | 'review', passed: boolean, input: string, key: Key): boolean | undefined {
+/** A keypress on the results: true to go on to the PR, false to stop, undefined to ignore it. */
+export function resultsKey(passed: boolean, input: string, key: Key): boolean | undefined {
 	if (key.escape || input === 'q') return false;
-	if (mode === 'review') return input === 'z' ? false : undefined;
 	if (passed) return key.return || input === 'a' ? true : undefined;
 	return input === 'y' ? true : input === 'n' ? false : undefined;
 }
@@ -148,26 +145,10 @@ function AnswerForm({ title, quiz, onDone }: { title: string; quiz: Quiz; onDone
 	);
 }
 
-/** What you got right and wrong; `results` also asks whether to go on, `review` only shows it. */
-function Results({ input, onDone }: { input: Extract<QuizFormInput, { mode: 'results' | 'review' }>; onDone: (open: boolean) => void }) {
-	const { exit } = useApp();
-	const { mode, title, quiz, answers, grades } = input;
-	const passed = grades.every(g => g.correct);
-	useInput((input, key) => {
-		const open = resultsKey(mode, passed, input, key);
-		if (open === undefined) return;
-		onDone(open);
-		exit();
-	});
-	const help =
-		mode === 'review' ? 'q/esc close' : passed ? '⏎/a go on to the PR description  q/esc cancel the PR' : 'open the PR anyway? y open it  n/q/esc don’t';
+/** Each question of a quiz taken, with your answer, the right one where you missed it, and the grader's note. */
+export function QuizReview({ quiz, answers, grades }: { quiz: Quiz; answers: Answers; grades: Grade[] }) {
 	return (
 		<Box flexDirection="column">
-			<Header title={title} />
-			<Text>
-				{passed ? <Text color="green">✓ {score(grades)}</Text> : <Text color="red">✗ {score(grades)}</Text>}
-				{passed ? '' : ' — the PR opens only if you say so'}
-			</Text>
 			{quiz.map((q, i) => {
 				const grade = grades[i]!;
 				const answer = answers[i];
@@ -199,8 +180,32 @@ function Results({ input, onDone }: { input: Extract<QuizFormInput, { mode: 'res
 					</Box>
 				);
 			})}
+		</Box>
+	);
+}
+
+/** What you got right and wrong, and whether to go on to the PR. */
+function Results({ input, onDone }: { input: Extract<QuizFormInput, { mode: 'results' }>; onDone: (open: boolean) => void }) {
+	const { exit } = useApp();
+	const { title, quiz, answers, grades } = input;
+	const passed = grades.every(g => g.correct);
+	useInput((input, key) => {
+		const open = resultsKey(passed, input, key);
+		if (open === undefined) return;
+		onDone(open);
+		exit();
+	});
+	const help = passed ? '⏎/a go on to the PR description  q/esc cancel the PR' : 'open the PR anyway? y open it  n/q/esc don’t';
+	return (
+		<Box flexDirection="column">
+			<Header title={title} />
+			<Text>
+				{passed ? <Text color="green">✓ {score(grades)}</Text> : <Text color="red">✗ {score(grades)}</Text>}
+				{passed ? '' : ' — the PR opens only if you say so'}
+			</Text>
+			<QuizReview quiz={quiz} answers={answers} grades={grades} />
 			<Box flexGrow={1} />
-			<Text dimColor={passed || mode === 'review'} color={passed || mode === 'review' ? undefined : 'yellow'}>
+			<Text dimColor={passed} color={passed ? undefined : 'yellow'}>
 				{help}
 			</Text>
 		</Box>

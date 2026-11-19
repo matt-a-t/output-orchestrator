@@ -30,10 +30,21 @@ async function editLines(text: string, title: string): Promise<string[]> {
 	return uncommented(await editInPopup(text, EDITOR, title));
 }
 
+// The note under a plan being edited. Plans are markdown, so `# ` starts a heading there, not a note.
+const planNote = (thread: string) => `<!-- oo: the plan for ${thread}. This line is dropped when you save. -->`;
+
+/** The plan as written in the editor: everything but the note editPlan put under it. */
+export function planFromEditor(text: string): string {
+	return text
+		.split('\n')
+		.filter(line => !/^<!-- oo: .* -->$/.test(line))
+		.join('\n')
+		.trim();
+}
+
 /** Edit a thread's plan in $EDITOR. */
 export async function editPlan(plan: string, thread: string): Promise<string> {
-	const lines = await editLines([plan, '', `# The plan for ${thread}. Lines starting with "# " are ignored.`, ''].join('\n'), ' plan ');
-	return lines.join('\n').trim();
+	return planFromEditor(await editInPopup([plan, '', planNote(thread), ''].join('\n'), EDITOR, ' plan '));
 }
 
 /** Edit a project's commands in $EDITOR, one `name: command` a line. */

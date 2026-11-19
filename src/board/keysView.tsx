@@ -1,62 +1,53 @@
-import { useEffect, useRef, useState } from 'react';
-import { Box, Text, measureElement, useInput, type DOMElement } from 'ink';
+import { useState } from 'react';
+import { Box, Text, useInput, useWindowSize } from 'ink';
 import { KEY_SECTIONS } from '../keys.js';
-import { mouse, type MouseEvent } from '../mouse.js';
-import { ScrollBar } from './scrollList.js';
+import { TabBar } from '../tabBar.js';
+import { LEGEND } from './card.js';
+import { Scroller } from './scrollList.js';
 
-// Lines the wheel scrolls at a time.
-const WHEEL_LINES = 3;
+const TABS = ['keys', 'legend'] as const;
+
+/** What the cards' badges mean, wrapping only between entries so none is split across lines. */
+export function Legend({ width }: { width: number }) {
+	return (
+		<Box flexWrap="wrap" columnGap={3} width={width}>
+			{LEGEND.map(([badge, color, label]) => (
+				<Box key={label} flexShrink={0}>
+					<Text>
+						<Text color={color}>{badge}</Text>
+						<Text dimColor> {label}</Text>
+					</Text>
+				</Box>
+			))}
+		</Box>
+	);
+}
 
 /**
- * The `?` screen: every key, a section per box, as many side by side as fit. When they don't all
- * fit it scrolls a line at a time (j/k, the arrows), a page at a time (space/b) or with the wheel.
+ * The `?` screen, in two tabs (h/l): every key, a section per box, as many side by side as fit, and what the
+ * cards' marks mean. Either scrolls when it doesn't fit (see Scroller).
  */
 export function KeysView({ active }: { active: boolean }) {
-	// The space it has and the sections' height there, measured after each render.
-	const space = useRef<DOMElement>(null);
-	const content = useRef<DOMElement>(null);
-	const [lines, setLines] = useState({ space: 0, content: 0 });
-	useEffect(() => {
-		if (!space.current || !content.current) return;
-		const measured = { space: measureElement(space.current).height, content: measureElement(content.current).height };
-		if (measured.space !== lines.space || measured.content !== lines.content) setLines(measured);
-	});
-	const [offset, setOffset] = useState(0);
-	const last = Math.max(0, lines.content - lines.space);
-	const first = Math.min(offset, last);
-	const scrollBy = (delta: number) => setOffset(Math.max(0, Math.min(last, first + delta)));
-
+	const { columns: width } = useWindowSize();
+	const [tab, setTab] = useState<(typeof TABS)[number]>('keys');
 	useInput(
 		(input, key) => {
-			if (input === 'j' || key.downArrow) return scrollBy(1);
-			if (input === 'k' || key.upArrow) return scrollBy(-1);
-			if (input === ' ' || key.pageDown) return scrollBy(Math.max(1, lines.space - 1));
-			if (input === 'b' || key.pageUp) return scrollBy(-Math.max(1, lines.space - 1));
+			if (input === 'h' || input === 'l' || key.leftArrow || key.rightArrow) setTab(tab === 'keys' ? 'legend' : 'keys');
 		},
 		{ isActive: active },
 	);
 
-	const onMouse = ({ button }: MouseEvent) => {
-		if (!active) return;
-		if (button === 'wheelDown') scrollBy(WHEEL_LINES);
-		if (button === 'wheelUp') scrollBy(-WHEEL_LINES);
-	};
-	const onMouseRef = useRef(onMouse);
-	onMouseRef.current = onMouse;
-	useEffect(() => {
-		const listener = (event: MouseEvent) => onMouseRef.current(event);
-		mouse.on('press', listener);
-		return () => void mouse.off('press', listener);
-	}, []);
-
 	return (
 		<Box flexGrow={1} overflow="hidden" flexDirection="column">
-			<Text bold>
-				Keys <Text dimColor>({last > 0 ? 'j/k space/b scroll · ' : ''}? / q / esc close · also in KEYS.md)</Text>
-			</Text>
-			<Box ref={space} flexGrow={1} flexBasis={0} overflow="hidden">
-				<Box flexGrow={1} flexDirection="column" overflow="hidden">
-					<Box ref={content} flexWrap="wrap" flexShrink={0} marginTop={-first}>
+			<TabBar labels={[...TABS]} current={TABS.indexOf(tab)} />
+			<Text dimColor>{`h/l tab · j/k space/b g/G scroll · ? / q / esc close${tab === 'keys' ? ' · also in KEYS.md' : ''}`}</Text>
+			<Scroller key={tab} active={active}>
+				{tab === 'legend' ? (
+					<Box marginTop={1}>
+						<Legend width={width - 2} />
+					</Box>
+				) : (
+					<Box flexWrap="wrap">
 						{KEY_SECTIONS.map(section => {
 							const keyWidth = Math.max(...section.keys.map(([k]) => k.length)) + 2;
 							return (
@@ -76,9 +67,8 @@ export function KeysView({ active }: { active: boolean }) {
 							);
 						})}
 					</Box>
-				</Box>
-				{last > 0 ? <ScrollBar total={lines.content} first={first} shown={lines.space} height={lines.space} /> : null}
-			</Box>
+				)}
+			</Scroller>
 		</Box>
 	);
 }

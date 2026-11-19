@@ -44,6 +44,15 @@ export function inDir(cwd: string, dir: string): boolean {
 	return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
+/** A plan's first non-blank line, without markdown's heading marks (a "#61" that starts a heading's text stays). */
+export function planLine(plan: string): string {
+	for (const line of plan.split('\n')) {
+		const text = line.trim().replace(/^#+\s+/, '');
+		if (text) return text;
+	}
+	return '';
+}
+
 /** How many of the todos are done, as `3/7`. */
 export function todoProgress(todos: Todo[]): string {
 	return `${todos.filter(t => t.status === 'done').length}/${todos.length}`;
@@ -142,15 +151,6 @@ export function todoWindow(todos: Todo[], max: number): { start: number; end: nu
 	const first = current === -1 ? todos.length : Math.max(0, current - 1);
 	const start = Math.max(0, Math.min(first, todos.length - max));
 	return { start, end: Math.min(todos.length, start + max) };
-}
-
-/** Like `todoWindow`, but the "↑/↓ N more" rows count towards `rows` too, so the list fits in that many. */
-export function todoRows(todos: Todo[], rows: number): { start: number; end: number } {
-	for (let shown = rows; ; shown--) {
-		const window = todoWindow(todos, Math.max(1, shown));
-		const arrows = (window.start > 0 ? 1 : 0) + (window.end < todos.length ? 1 : 0);
-		if (shown <= 1 || window.end - window.start + arrows <= rows) return window;
-	}
 }
 
 /** The thread's priority, normal when it has none. */

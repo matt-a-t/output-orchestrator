@@ -16,8 +16,8 @@ tables here list every bound key, so keep the two in step.
 | `u` | rebase on origin/main, or the branch it builds on (pushes a PR; conflicts go to claude) |
 | `n` | new thread (the form below) |
 | `N` | import a thread started outside oo |
-| `e` | edit the thread |
-| `t` | every todo on the thread, when there are more than the details box shows (`j`/`k` or the wheel scroll, `g`/`G` top / bottom) |
+| `e` | the thread's details, on its fields to edit (see below) |
+| `t` | the thread's details, on its steps |
 | `o` | into / out of Local (`oo thread local` from the shell) |
 | `B` | blocked by another thread: move to it and `⏎` (again unpicks it, `⏎` on the thread itself clears them all, `esc` cancels; `oo thread block` from the shell) |
 | `F` | straight to Done |
@@ -26,11 +26,11 @@ tables here list every bound key, so keep the two in step.
 | `p` | filter by project |
 | `/` | search the id, title, plan, ticket, branch and PR as you type; `⏎` keeps it, `esc` drops it |
 | `esc` | clear the search, then the project filter |
-| `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `b`, `J`/`K` and `!`) |
-| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K` and `!`) |
+| `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `t`, `z`, `b`, `J`/`K` and `!`) |
+| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `t`, `z`, `b`, `J`/`K` and `!`) |
 | `r` | run one of the project's commands (dev server, tests, migrations…) in a new terminal window (see below) |
 | `P` | projects (their hooks, commands, wake prompt and when idle claudes close) |
-| `?` | all keys |
+| `?` | all keys, and a Legend tab (`h`/`l`) on what the cards' marks mean |
 | `q` | quit, leaving thread windows open |
 | `Q` | quit, closing every thread window (claude resumes next time) and stopping every run (`r`) |
 
@@ -59,7 +59,7 @@ or for a thread with no worktree yet).
 | `c` | comment on the diff in vim |
 | `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
 | `b` | open the PR in your browser |
-| `z` | its last pop quiz: your answers and how they were graded |
+| `z` | the thread's details, on its last pop quiz: your answers and how they were graded |
 
 ## In a diff
 
@@ -90,7 +90,7 @@ The mouse wheel scrolls too.
 
 ## In a form
 
-The new thread (`n`), thread (`e`), project (`P`), commit and pop quiz forms. Text fields are only typed into
+The new thread (`n`), project (`P`), commit and pop quiz forms, and the thread details' overview (`e`, see below), where `h`/`l` change tab instead. Text fields are only typed into
 once you start editing one, vim-style, so letters are keys until then.
 
 | Key | |
@@ -102,11 +102,26 @@ once you start editing one, vim-style, so letters are keys until then.
 | `y` / `n` | on the pop quiz results, when you got any wrong: open the PR anyway / don't |
 | `i` / `I` | edit a text field, cursor at the end / at the start |
 | `dd` | clear it and edit |
-| `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). On the thread's plan: open `$EDITOR` |
+| `⏎` | on a text field: edit it. While editing, or on a choice: save the field and go on to editing the next one (on the last field, just stop editing). |
 | `a` / `shift-⏎` | submit: create the thread (starting its claude on the initial prompt if there is one), save, commit or hand in the quiz. `a` only while not editing; `shift-⏎` from any field, editing or not, where the terminal sends it apart from `⏎` (inside tmux it usually doesn't without extended-keys, so use `a`) |
 | `q` / `esc` | cancel the form. While editing, `esc` stops editing, keeping the text, and `q` is just typed |
 | `←`/`→` `ctrl-a`/`ctrl-e` | while editing: move the cursor / to the start or end |
 | `ctrl-u` / `ctrl-w` | while editing: delete back to the start / back over a word |
+
+## Thread details
+
+`e`, `t` and `z` open the highlighted thread's details in place of the columns, on the overview, steps or quiz tab.
+They follow the thread as claude works.
+
+| Key | |
+|---|---|
+| `h`/`l` `1`–`6` | change tab: overview (its fields to edit, then its column, claude, ticket, PR, blockers, stack, ports and age), plan, steps, messages, quiz, info (branch, worktree, session, context, drafts) |
+| `j`/`k` `↑`/`↓` | on the overview: move between fields. Elsewhere: scroll (`space`/`b` a page, `g`/`G` the ends, the wheel too) |
+| `←`/`→` `space` | on the overview's project, colour or priority: change it (`h`/`l` change tab here too) |
+| `i` `I` `dd` `⏎` | on the overview's text fields: edit them, as in a form |
+| `a` | on the overview: save (renaming the branch to follow a new ticket while that's safe) |
+| `⏎` | on the plan: edit it in `$EDITOR`, saved when you quit it |
+| `q` / `esc` | close, dropping unsaved changes (`esc` while editing a field just stops editing) |
 
 ## On the projects screen
 
