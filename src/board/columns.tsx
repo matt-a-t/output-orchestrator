@@ -7,7 +7,7 @@ import { mouse, type MouseEvent } from '../mouse.js';
 import { COLUMN_LABELS, type Column, type Thread } from '../state.js';
 import { threadWindowName } from '../tmux.js';
 import type { Board } from './board.js';
-import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES, rowLines as rowLinesOf } from './card.js';
+import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES, MIN_COLUMN_WIDTH, rowLines as rowLinesOf } from './card.js';
 import { threadRunning } from '../commands.js';
 import { containerName, knownPorts, portsText } from '../container.js';
 import { blockers } from '../threads.js';
@@ -65,7 +65,7 @@ type Props = {
 
 export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, jobs, layout, onPick }: Props) {
 	const { columns: width } = useWindowSize();
-	const colWidth = Math.max(16, Math.floor(width / shown.length));
+	const colWidth = Math.max(MIN_COLUMN_WIDTH, Math.floor(width / shown.length));
 	const now = useClock();
 
 	// Lines the columns get, measured after layout (0 until then); taller columns scroll.

@@ -114,8 +114,11 @@ already has a branch or directory can't change project.
 
 Card badges: ● working, ‖ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved, ✎ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up), then the context size and cache time left (see above). Each card shows the thread number and project abbreviation (or name, if it has none),
-with the title beneath (after its ticket key, if it has one).
+approved, ✎ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up),
+↺ a rebase pending since what it was stacked on merged (`u`), and a green → once it's ready for the next column. They follow the
+thread number on the card's first line, one glyph each with counts where they have one, so a narrow column never cuts them off.
+The project abbreviation (or name, if it has none) and the title follow on the line beneath (after its ticket key, if it has one),
+then the context size and cache time left (see above).
 
 ### Tickets
 
@@ -254,8 +257,8 @@ Tickets work as usual from a container: `oo thread ticket` and `oo thread add --
 was asked for, and the board looks the ticket up or files it with its own `JIRA_EMAIL`/`JIRA_API_TOKEN` or `gh`
 sign-in. Containers never get those credentials, and their firewall doesn't need to let the tracker through.
 
-Each configured port is published on your machine's loopback at a port docker picks. The card shows them as
-`⇄3000→49153`, and so does `oo thread show`.
+Each configured port is published on your machine's loopback at a port docker picks. The card shows a ⇄, and
+`oo thread show` lists them as `3000→49153`.
 
 **Local** doesn't move anything for these projects. Instead, the board forwards the project's own ports on your
 machine to the thread's container, so `localhost:3000` reaches that thread's dev server. Its branch stays in its
@@ -325,7 +328,7 @@ Two gaps remain:
 ### Blocked threads
 
 When a thread can't go on until another one lands, `B` records that: move the cursor to the thread it waits on and
-press `⏎` (`esc` cancels). The card gets a red ⧗#12 and a dimmed title, and the details below it list the blockers.
+press `⏎` (`esc` cancels). The card gets a red ⧗1 (how many it waits on) and a dimmed title, and the details below it list the blockers.
 A thread can wait on several. Picking one again takes it off, and `⏎` on the thread itself clears them all. A
 block goes away by itself once its blocker merges (reaching Follow-up or Done) or is archived, and the move's
 message says which threads it unblocked. Moving a blocked thread into Active warns, but doesn't stop you.
@@ -443,7 +446,7 @@ background), otherwise once its turn ends. A conversation of 50k tokens or more 
 the time a PR merges its cache has usually gone cold. A fresh claude on the plan and checkpoints is started
 instead, after closing the old one if it's at its prompt. It works through them like any other checkpoints, showing you any
 query or command against shared or production systems before running it and committing nothing. Its card
-shows ⤳ with how many are left, then ✓ done, and you move it on to Done yourself (`L` or `F`). Anything can
+shows ⤳ with how many are left, then a green →, and you move it on to Done yourself (`L` or `F`). Anything can
 wait in Follow-up: `L` from PR moves a thread there by hand once its PR has merged.
 
 GitHub won't let you approve your own PR, so on someone else's the viewer has `a` approve,

@@ -21,20 +21,27 @@ export const LEGEND: [string, string | undefined, string][] = [
 	['↻', 'red', 'closed mid-work, w wakes it'],
 	['±', 'magenta', 'changes to review'],
 	['⚡', 'red', 'PR has conflicts'],
-	['✎', 'cyan', 'messages from other threads, told when claude stops'],
-	['⧗', 'red', 'blocked by another thread (B)'],
-	['⤳', 'blue', 'after-merge checkpoints left'],
+	['✎2', 'cyan', 'messages from other threads, told when claude stops'],
+	['⧗2', 'red', 'blocked by this many threads (B)'],
+	['⤳2', 'blue', 'after-merge checkpoints left'],
+	['↺', 'yellow', 'what it was stacked on merged: u rebases it'],
+	['→', 'green', 'ready for the next column'],
 	['▲', 'red', 'high priority (!)'],
 	['▽', 'gray', 'low priority (!)'],
 	['►', 'green', 'one of its commands is running (r)'],
 	['⟳', 'cyan', 'busy in the background (Local, waking)'],
-	['⇄3000→49153', 'cyan', "its container's port 3000 is on localhost:49153"],
+	['⇄', 'cyan', "its container's ports are on localhost"],
 	['379k', undefined, 'context to resend (yellow: large, ~: compacted)'],
 	['42m warm', 'green', 'cache warm this long: resume before then for less'],
 ];
 
 // The columns and the import list start below the title bar, a header and a rule.
 export const LIST_TOP = 3;
+/**
+ * The narrowest a column gets: room for the longest first line a card can have (headMarks, with a three-digit id
+ * and one-digit counts), its Local outline and the space between columns. card.test.ts checks it.
+ */
+export const MIN_COLUMN_WIDTH = 22;
 // Each card is three lines (badges, title, context), or one in Done and Archived so more of them fit.
 const CARD_HEIGHT = 3;
 // The blank line under each three-line card, so they don't run together.
@@ -87,15 +94,51 @@ export function sameCard(a: Props, b: Props): boolean {
 	return a.blockers.length === b.blockers.length && a.blockers.every((t, i) => t === b.blockers[i]);
 }
 
-function CardLines({ thread: t, selected, project, live, status, resumable, stalled, unreviewed, merge, blockers, running, job, ports, tokens, warmFor, compacted }: Props) {
-	const oneLine = cardHeight(t.column) === 1;
-	const color = t.color ?? project?.color;
+type Mark = { text: string; color?: string; bold?: boolean };
+
+/**
+ * A card's first line: its status badge, #id and its alerts, one glyph each and packed together (their colours
+ * tell them apart), so even a narrow column shows them all (see MIN_COLUMN_WIDTH).
+ */
+export function headMarks({ thread: t, live, status, resumable, stalled, unreviewed, merge, blockers, running, job, ports }: Props): Mark[] {
+	const [badge, badgeColor] = live ? (BADGES[status!] ?? ['○', 'gray']) : resumable ? ['↻', stalled ? 'red' : 'gray'] : [' ', undefined];
 	// Changes aren't ready to review until claude stops working on them.
 	const working = live && status === 'working';
-	const [badge, badgeColor] = live ? (BADGES[status!] ?? ['○', 'gray']) : resumable ? ['↻', stalled ? 'red' : 'gray'] : [' ', undefined];
+	const messages = undelivered(t.inbox).length;
+	const marks: (Mark | false | undefined)[] = [
+		{ text: `${badge} `, color: badgeColor },
+		{ text: `#${t.id} `, bold: true },
+		!!t.priority && { text: PRIORITY_MARKS[t.priority], color: PRIORITY_COLORS[t.priority], bold: t.priority === 'high' },
+		running && { text: '►', color: 'green' },
+		// Busy in the background (see jobs.ts): leaving Local, waking.
+		!!job && { text: '⟳', color: 'cyan' },
+		!!ports && { text: '⇄', color: 'cyan' },
+		unreviewed && !working && { text: '±', color: 'magenta', bold: true },
+		blockers.length > 0 && { text: `⧗${blockers.length}`, color: 'red', bold: true },
+		merge?.mergeable === 'CONFLICTING' && { text: '⚡', color: 'red', bold: true },
+		// Messages from other threads its claude hasn't heard yet.
+		messages > 0 && { text: `✎${messages}`, color: 'cyan', bold: true },
+		// The thread it was stacked on merged, so u rebases its own commits onto the base.
+		!!t.rebaseFrom && { text: '↺', color: 'yellow', bold: true },
+		// Merged with steps still to do (deploying, checking prod).
+		t.column === 'followup' && followUps(t.todos).length > 0 && { text: `⤳${followUps(t.todos).length}`, color: 'blue', bold: true },
+		readyToMove(t) && { text: '→', color: 'green', bold: true },
+	];
+	return marks.filter((m): m is Mark => !!m);
+}
+
+/** Every step before the merge approved in Active (on to Polish), or every step done in Follow-up (on to Done). */
+const readyToMove = (t: Thread) =>
+	(t.column === 'active' && preMergeDone(t.todos)) || (t.column === 'followup' && !followUps(t.todos).length && todosDone(t.todos));
+
+function CardLines(props: Props) {
+	const { thread: t, selected, project, blockers, tokens, warmFor, compacted } = props;
+	const oneLine = cardHeight(t.column) === 1;
+	const color = t.color ?? project?.color;
 	// A blocked thread's title is dimmed, so the threads that can go on stand out.
 	const title = (
 		<>
+			<Text color={color}>{project?.abbrev || t.project} </Text>
 			{t.ticket ? <Text color="blue">{t.ticket.key} </Text> : null}
 			<Text dimColor={blockers.length > 0}>{t.title}</Text>
 		</>
@@ -103,58 +146,13 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 	return (
 		// The gap is a margin, so it's outside the Local outline.
 		<Box flexDirection="column" marginBottom={oneLine ? 0 : CARD_GAP} {...(t.local ? { borderStyle: 'round', borderColor: 'yellow' } : {})}>
+			{/* Never truncated: MIN_COLUMN_WIDTH leaves room for every mark a card in its column can have. */}
 			<Text wrap="truncate" inverse={selected}>
-				<Text color={badgeColor}>{badge} </Text>
-				<Text bold>#{t.id} </Text>
-				<Text color={color}>{project?.abbrev || t.project}</Text>
-				{t.priority ? (
-					<Text color={PRIORITY_COLORS[t.priority]} bold={t.priority === 'high'}>
-						{' '}
-						{PRIORITY_MARKS[t.priority]}
+				{headMarks(props).map((m, i) => (
+					<Text key={i} color={m.color} bold={m.bold}>
+						{m.text}
 					</Text>
-				) : null}
-				{running ? <Text color="green"> ►</Text> : null}
-				{job ? <Text color="cyan"> ⟳ {job}</Text> : null}
-				{ports ? <Text color="cyan"> ⇄{ports}</Text> : null}
-				{unreviewed && !working ? (
-					<Text color="magenta" bold>
-						{' '}±
-					</Text>
-				) : null}
-				{blockers.length ? (
-					<Text color="red" bold>
-						{' '}⧗{blockers.map(b => `#${b.id}`).join(',')}
-					</Text>
-				) : null}
-				{merge?.mergeable === 'CONFLICTING' ? (
-					<Text color="red" bold>
-						{' '}⚡
-					</Text>
-				) : null}
-				{/* Messages from other threads its claude hasn't heard yet. */}
-				{undelivered(t.inbox).length ? (
-					<Text color="cyan" bold>
-						{' '}✎{undelivered(t.inbox).length}
-					</Text>
-				) : null}
-				{/* Every step before the merge approved: ready to move on to Polish and a PR. */}
-				{t.column === 'active' && preMergeDone(t.todos) ? (
-					<Text color="green" bold>
-						{' '}✓ polish
-					</Text>
-				) : null}
-				{/* Merged with steps still to do (deploying, checking prod), or with them all done and ready for Done. */}
-				{t.column === 'followup' ? (
-					followUps(t.todos).length ? (
-						<Text color="blue" bold>
-							{' '}⤳{followUps(t.todos).length}
-						</Text>
-					) : todosDone(t.todos) ? (
-						<Text color="green" bold>
-							{' '}✓ done
-						</Text>
-					) : null
-				) : null}
+				))}
 				{/* Finished threads get one line each so more of them fit. */}
 				{oneLine ? ' ' : null}
 				{oneLine ? title : null}

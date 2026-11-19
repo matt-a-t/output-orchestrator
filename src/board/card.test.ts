@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture } from '../testHelpers.js';
-import { cardLines, LEGEND, sameCard, type CardProps } from './card.js';
+import stringWidth from 'string-width';
+import type { PrStatus } from '../prHost.js';
+import { COLUMN_LABELS, type Column } from '../state.js';
+import { cardLines, headMarks, LEGEND, LOCAL_BORDER_LINES, MIN_COLUMN_WIDTH, sameCard, type CardProps } from './card.js';
 
 test('a card redraws only when something it shows changed', () => {
 	const { state } = fixture([{}, {}]);
@@ -31,4 +34,29 @@ test('unfinished cards take three lines and a gap, finished ones one line, and L
 test('badges are glyphs terminals and Ink agree on the width of', () => {
 	for (const [badge] of LEGEND)
 		for (const ch of badge) assert.ok(!/\p{Extended_Pictographic}/u.test(ch) || /\p{Emoji_Presentation}/u.test(ch), `${ch} in ${badge} can draw as a wide emoji`);
+});
+
+test("a card's first line fits the narrowest column with every mark its column can show", () => {
+	const { state } = fixture([{}, {}]);
+	const [base, blocker] = state.threads as [CardProps['thread'], CardProps['thread']];
+	const message = { from: '1', text: 'hi', ts: new Date(0).toISOString(), delivered: false };
+	for (const column of Object.keys(COLUMN_LABELS) as Column[]) {
+		// A three-digit id, and every alert at once with a one-digit count.
+		const thread: CardProps['thread'] = {
+			...base,
+			id: '999',
+			column,
+			local: true,
+			priority: 'high',
+			rebaseFrom: 'abc',
+			inbox: Array(9).fill(message),
+			// A step after the merge left in Follow-up; elsewhere, every step before it approved.
+			todos: column === 'followup' ? [{ subject: 'deploy', status: 'pending', afterMerge: true }] : [{ subject: 'do it', status: 'done' }],
+		};
+		const props: CardProps = { thread, selected: true, project: state.projects[0], live: true, status: 'waiting', resumable: true, stalled: true, unreviewed: true, // Only threads in PR have their merge state polled.
+			merge: column === 'pr' ? ({ mergeable: 'CONFLICTING' } as PrStatus) : undefined, blockers: Array(9).fill(blocker), running: true, job: 'leaving Local', ports: '3000→49153', tokens: undefined, warmFor: undefined, compacted: false };
+		const width = stringWidth(headMarks(props).map(m => m.text).join(''));
+		// The Local outline takes a column each side, and one is left between columns.
+		assert.ok(width + LOCAL_BORDER_LINES + 1 <= MIN_COLUMN_WIDTH, `${column}: ${headMarks(props).map(m => m.text).join('')} is ${width} wide`);
+	}
 });
