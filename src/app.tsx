@@ -220,7 +220,7 @@ export function App() {
 			}),
 	};
 	useRequests(board);
-	usePendingLocal(board, statuses);
+	usePendingLocal(board, statuses, jobs.shown);
 	useMessageDelivery(board, state, statuses);
 	useIdleClose(board);
 	useContainerSweep(board);

@@ -12,6 +12,7 @@ import { forwardsPorts, noRepo } from '../threads.js';
 import { copyTranscript } from '../transcripts.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board, type Outcome } from './board.js';
+import type { Job } from './jobs.js';
 import { closeClaude, launchClaude } from './claude.js';
 import { createWorktree } from './worktree.js';
 import { containerName, containerProject, ensureContainer, type ContainerProject } from '../container.js';
@@ -37,6 +38,11 @@ async function hook(project: Project, event: ProjectHook, thread: Thread, cwd: s
 export async function localProblem(board: Board, thread: Thread, entering: boolean): Promise<string | undefined> {
 	const project = board.project(thread.project);
 	if (!project) return unknownProject(thread.project);
+	// Its threads share the one checkout (or the ports and stack), so one move at a time. t.local isn't set until a move ends.
+	for (const [id, job] of board.jobs()) {
+		const other = board.state().threads.find(t => t.id === id);
+		if (job.kind === 'local' && id !== thread.id && other?.project === thread.project) return `#${id} is still ${job.label}`;
+	}
 	if (entering) {
 		const other = board.state().threads.find(t => t.local && t.project === thread.project);
 		if (other) return `${thread.project} already has #${other.id} ${other.title} in Local`;
@@ -235,11 +241,17 @@ export async function leaveLocalForDone(board: Board, thread: Thread): Promise<s
 	return hook(project, 'leaveLocal', back, project.path, `${project.name} checkout is back on ${main}, ${pulled}`);
 }
 
-/** Into or out of Local, saying how it went on the message line. */
+/** The job a move into or out of Local runs as, labelled for the thread's card. */
+export const localJob = (board: Board, thread: Thread, entering: boolean): Job => ({
+	kind: 'local',
+	label: entering ? (forwardsPorts(board.project(thread.project), thread) ? 'forwarding ports for Local' : 'checking out for Local') : 'leaving Local',
+});
+
+/** Into or out of Local in the background, saying how it went on the message line. */
 export const moveLocal = (board: Board, thread: Thread, entering: boolean) =>
-	board.run(async () => {
+	board.startJob(thread, localJob(board, thread, entering), async () => {
 		board.setMessage(resultMessage(await (entering ? enterLocal : leaveLocal)(board, thread)));
-	}, entering ? (forwardsPorts(board.project(thread.project), thread) ? 'forwarding ports for Local' : 'checking out for Local') : 'leaving Local');
+	});
 
 /** t: into or out of Local now, dropping any move `oo thread local` left waiting. */
 export function toggleLocal(board: Board, thread: Thread) {
@@ -247,16 +259,19 @@ export function toggleLocal(board: Board, thread: Thread) {
 	return moveLocal(board, thread, !thread.local);
 }
 
-/** Moves asked for while the thread's claude was working run once its turn ends (a permission prompt is still mid-turn). */
-export function usePendingLocal(board: Board, statuses: Record<string, Status>) {
+/**
+ * Moves asked for while the thread's claude was working run once its turn ends (a permission prompt is still mid-turn),
+ * and once any job the thread has running ends. `jobs` is the board's shown copy, so one ending runs this again.
+ */
+export function usePendingLocal(board: Board, statuses: Record<string, Status>, jobs: ReadonlyMap<string, Job>) {
 	useEffect(() => {
 		for (const [id, entering] of board.pendingLocal) {
-			if (statuses[id] === 'working' || statuses[id] === 'waiting') continue;
+			if (statuses[id] === 'working' || statuses[id] === 'waiting' || jobs.has(id)) continue;
 			board.pendingLocal.delete(id);
 			const thread = board.state().threads.find(t => t.id === id);
 			if (thread && entering !== !!thread.local) void moveLocal(board, thread, entering);
 		}
-	}, [statuses]);
+	}, [statuses, jobs]);
 }
 
 export const localKeys: Binding[] = [{ key: 'o', run: onThread(toggleLocal), help: { section: 'Board', what: 'into / out of Local' } }];

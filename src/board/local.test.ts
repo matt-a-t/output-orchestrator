@@ -59,6 +59,26 @@ test("localProblem says why a thread can't go into Local", async () => {
 	assert.equal(await localProblem(board, { ...noBranch, local: true }, false), undefined);
 });
 
+test('localProblem refuses a move while another thread in the project is moving into or out of Local', async () => {
+	const { state } = fixture([{ branch: BRANCH, cwd: '/tmp' }, { branch: BRANCH, cwd: '/tmp' }, { project: 'q' }]);
+	state.projects.push({ ...state.projects[0]!, name: 'q' });
+	const board = fakeBoard(state);
+	const [one, two, elsewhere] = state.threads as [Thread, Thread, Thread];
+	let finish!: () => void;
+	const job = board.startJob(one, { kind: 'local', label: 'checking out for Local' }, () => new Promise<void>(resolve => (finish = resolve)));
+	assert.equal(await localProblem(board, two, true), '#1 is still checking out for Local');
+	assert.equal(await localProblem(board, { ...two, local: true }, false), '#1 is still checking out for Local');
+	// Not the moving thread itself, another project's threads, or another kind of job.
+	assert.equal(await localProblem(board, one, true), undefined);
+	assert.equal(await localProblem(board, elsewhere, false), undefined);
+	finish();
+	await job;
+	await board.startJob(one, { kind: 'wake', label: 'waking' }, async () => {
+		assert.equal(await localProblem(board, two, true), undefined);
+	});
+	assert.equal(await localProblem(board, two, true), undefined);
+});
+
 test("localProblem stops a thread going into Local over the checkout's own tracked changes, not untracked ones", async () => {
 	const { project, state } = await gitFixture([{ column: 'active', branch: BRANCH }]);
 	const board = fakeBoard(state);
