@@ -15,6 +15,7 @@ import { useContainerSweep } from './board/containers.js';
 import { useFreshStarts } from './board/claude.js';
 import { ImportList, ImportProject } from './board/importPicker.js';
 import { KeysView } from './board/keysView.js';
+import { jobsWarning, useJobs } from './board/jobs.js';
 import { usePendingLocal } from './board/local.js';
 import { useMessageDelivery } from './board/messages.js';
 import { NewThread } from './board/newThread.js';
@@ -66,6 +67,8 @@ export function App() {
 	shownColumnsRef.current = shownColumns;
 	const [message, setMessage] = useState('');
 	const [busy, setBusy] = useState<string | null>(null);
+	// Local in/out and waking, running per thread while the board stays usable.
+	const jobs = useJobs(setMessage);
 	const [screen, setScreen] = useState<Screen>(BOARD);
 	const toBoard = () => setScreen(BOARD);
 	// The new-thread form (n) or the project's commands to run (r).
@@ -159,11 +162,11 @@ export function App() {
 	const quitClosingWindows = async () => {
 		const windows = await ooWindows();
 		const runs = runsRef.current.size;
-		if (windows.length === 0 && runs === 0) return ask('Quit?', exit);
+		if (windows.length === 0 && runs === 0) return ask(`Quit?${jobsWarning(jobs.jobs())}`, exit);
 		const working = stateRef.current.threads
 			.filter(t => statusesRef.current[t.id] === 'working' && windows.includes(threadWindowName(t.id)))
 			.map(t => `#${t.id}`);
-		const warning = working.length ? ` ⚠ ${working.join(', ')} ${working.length === 1 ? 'is' : 'are'} still working` : '';
+		const warning = (working.length ? ` ⚠ ${working.join(', ')} ${working.length === 1 ? 'is' : 'are'} still working` : '') + jobsWarning(jobs.jobs());
 		const count = [
 			windows.length ? `${windows.length} window${windows.length === 1 ? '' : 's'}` : '',
 			runs ? `${runs} run${runs === 1 ? '' : 's'}` : '',
@@ -205,6 +208,8 @@ export function App() {
 		setMessage,
 		setBusy,
 		run,
+		jobs: jobs.jobs,
+		startJob: jobs.startJob,
 		ask,
 		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current, searchRef.current, shownColumnsRef.current)),
 		shownColumns: () => shownColumnsRef.current,
@@ -302,7 +307,7 @@ export function App() {
 			if (!/^[hjkl]$/.test(input) && !key.leftArrow && !key.rightArrow && !key.upArrow && !key.downArrow) return;
 		}
 		if (search.key(input, key)) return;
-		if (input === 'q') return ask('Quit?', exit);
+		if (input === 'q') return ask(`Quit?${jobsWarning(jobs.jobs())}`, exit);
 		if (input === 'Q') return void run(quitClosingWindows, 'listing windows');
 		// esc drops the search, then the project filter.
 		if (key.escape && (search.query || filter)) {
@@ -394,6 +399,7 @@ export function App() {
 						active={!busy && !overlay && !confirm && !search.typing}
 						unreviewed={unreviewed}
 						merge={merge}
+						jobs={jobs.shown}
 						layout={columnsLayout}
 						onPick={pickingThread ? target => pickBlocker(pickingThread, target) : undefined}
 					/>
@@ -405,7 +411,8 @@ export function App() {
 		<Box flexDirection="column" height={height}>
 			<Box justifyContent="space-between" width={width}>
 				<Text bold>
-					output-orchestrator{busy ? <Text color="cyan"> ● busy</Text> : null}
+					output-orchestrator
+					{busy ? <Text color="cyan"> ● busy</Text> : jobs.shown.size ? <Text color="cyan"> ● {jobs.shown.size} in background</Text> : null}
 				</Text>
 				<Text dimColor>
 					filter: {filter ?? 'all'}

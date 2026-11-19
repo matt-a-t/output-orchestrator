@@ -4,6 +4,7 @@ import { delimiter, join } from 'node:path';
 import type { TestContext } from 'node:test';
 import { execa } from 'execa';
 import type { Board } from './board/board.js';
+import { jobTracker } from './board/jobs.js';
 import type { PrStatus } from './prHost.js';
 import { COLUMNS, saveState, type State, type Thread } from './state.js';
 import { setColumn } from './threads.js';
@@ -59,6 +60,7 @@ export function fakeBoard(state: State, overrides: Partial<Board> = {}): Board &
 	let merge: Record<string, PrStatus> = {};
 	const messages: string[] = [];
 	const setState: Board['setState'] = next => void (current = typeof next === 'function' ? next(current) : next);
+	const { jobs, startJob } = jobTracker(message => void messages.push(message));
 	return {
 		store: { get: () => current, update: fn => void (current = fn(current)) },
 		state: () => current,
@@ -83,6 +85,8 @@ export function fakeBoard(state: State, overrides: Partial<Board> = {}): Board &
 				messages.push(`✗ ${err instanceof Error ? err.message : String(err)}`);
 			}
 		},
+		jobs,
+		startJob,
 		ask: question => void messages.push(question),
 		shown: () => current.threads,
 		shownColumns: () => COLUMNS,
