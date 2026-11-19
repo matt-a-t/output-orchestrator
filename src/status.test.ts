@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { claudeSettings, fromThreadDir, nextStatus, ooWrapper, threadStatus, type HookEvent } from './status.js';
+import { claudeSettings, fromThreadDir, nextStatus, ooWrapper, SKILL, skillPrompt, threadStatus, type HookEvent } from './status.js';
 
 const dir = '/home/matt/.local/share/output-orchestrator/worktrees/output-orchestrator/15';
 const event = (cwd?: string): HookEvent => ({ thread: '15', event: 'SessionStart', cwd, ts: '' });
@@ -60,4 +60,12 @@ test("a container's oo runs this cli with the image's node", () => {
 	const wrapper = ooWrapper();
 	assert.match(wrapper, /^#!\/bin\/sh\nexec node --no-warnings .*cli\.tsx?' "\$@"\n$/);
 	assert.ok(!wrapper.includes(process.execPath));
+});
+
+test('the skill prompt is the skill without its frontmatter', () => {
+	const prompt = skillPrompt();
+	assert.ok(!prompt.startsWith('---'));
+	assert.ok(!prompt.includes('description: Read and change'));
+	assert.ok(SKILL.endsWith(prompt));
+	assert.equal(skillPrompt('---\nname: x\n---\n\n# Body\n'), '# Body\n');
 });
