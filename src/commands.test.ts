@@ -47,6 +47,18 @@ test('on WSL a run opens in a new Windows Terminal window, in this distro', () =
 	});
 });
 
+test('on WSL a tab opens in the most recent Windows Terminal window, while runs keep a window of their own', () => {
+	const env = { WSL_DISTRO_NAME: 'Ubuntu' };
+	const shell = ['/usr/bin/node', '/oo/dist/cli.js', 'shell', '12', '--here'];
+	assert.deepEqual(terminalCommand({ env, hasWt: true }, shell, '#12 shell', { tab: true }), {
+		argv: ['wt.exe', '-w', '0', 'new-tab', '--title', '#12 shell', 'wsl.exe', '-d', 'Ubuntu', '--', ...shell],
+	});
+	assert.deepEqual(terminalCommand({ env, hasWt: true }, attach, 't'), { argv: ['wt.exe', '-w', 'new', 'new-tab', '--title', 't', 'wsl.exe', '-d', 'Ubuntu', '--', ...attach] });
+	// Elsewhere a tab is just another terminal.
+	assert.deepEqual(terminalCommand({ env: { OO_TERMINAL: 'kitty -e' }, hasWt: false }, shell, 't', { tab: true }), { argv: ['kitty', '-e', ...shell] });
+	assert.deepEqual(terminalCommand({ env: {}, hasWt: false }, shell, 't', { tab: true }), { switchClient: true });
+});
+
 test("on a Linux desktop it's $TERMINAL or x-terminal-emulator, and without one the board switches to the run", () => {
 	assert.deepEqual(terminalCommand({ env: { DISPLAY: ':0', TERMINAL: 'alacritty' }, hasWt: false }, attach, 't'), { argv: ['alacritty', '-e', ...attach] });
 	assert.deepEqual(terminalCommand({ env: { WAYLAND_DISPLAY: 'wayland-0' }, hasWt: false }, attach, 't'), { argv: ['x-terminal-emulator', '-e', ...attach] });

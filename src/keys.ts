@@ -96,7 +96,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		keys: [
 			['M-h / M-l', 'claude / the pane beside it'],
 			['M-j / M-k', 'next / previous thread'],
-			['M-s', 'shell beside claude'],
+			['M-s', "shell on the thread's worktree, in a new tab"],
 			['M-u', 'scroll up (tmux copy mode, q leaves)'],
 			['M-z', 'zoom the pane'],
 			['M-q', 'back to the board'],

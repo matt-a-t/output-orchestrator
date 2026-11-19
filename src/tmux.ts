@@ -168,25 +168,6 @@ export async function openWindow(
 }
 
 /**
- * Open `command` in a pane on the right of the thread's window (or swap the one already there,
- * if it's showing something else), then jump to it. `role` tags the pane so it's found again.
- */
-export async function openSplit(window: string, cwd: string, role: string, command: string[], env: Record<string, string> = {}): Promise<void> {
-	const split = (await panes(window)).find(([, r]) => r);
-	const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-	let pane = split?.[0];
-	if (!pane) {
-		const created = await execa('tmux', ['split-window', '-h', '-l', '50%', '-P', '-F', '#{pane_id}', '-t', `:${window}`, '-c', cwd, ...envArgs, ...command]);
-		pane = created.stdout.trim();
-	} else if (split![1] !== role) {
-		await execa('tmux', ['respawn-pane', '-k', '-t', pane, '-c', cwd, ...envArgs, ...command]);
-	}
-	await execa('tmux', ['set-option', '-p', '-t', pane, '@oo-split', role]);
-	await execa('tmux', ['select-pane', '-t', pane]);
-	await execa('tmux', ['select-window', '-t', `:${window}`]);
-}
-
-/**
  * From outside tmux: attach to the `oo` session, starting it (or a board window in it) with
  * `command` if needed. Resolves with tmux's exit code once detached.
  */
@@ -216,7 +197,7 @@ export async function selectExistingBoard(): Promise<boolean> {
 	return other;
 }
 
-/** A window's panes, as [pane ID, the role openSplit tagged it with (empty for claude's)]. */
+/** A window's panes, as [pane ID, the role it was tagged with when oo split it off (empty for claude's and the user's own)]. */
 async function panes(window: string): Promise<string[][]> {
 	const { stdout } = await execa('tmux', ['list-panes', '-t', `:${window}`, '-F', '#{pane_id}\t#{@oo-split}']);
 	return stdout.split('\n').map(line => line.split('\t'));
@@ -258,23 +239,19 @@ function cycleThreads(step: 1 | -1): string[] {
 /**
  * Bind `prefix b`, `prefix C-b` (for when ctrl is still held; from a run session too) and `M-q` (no prefix)
  * to jump back to the board, and in thread windows: `M-h` / `M-l` to move between claude and the pane
- * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` to open a shell beside claude
- * (via `split`, the command prefix that runs `oo split`), `M-u` to scroll up (copy
+ * beside it, `M-j` / `M-k` to the next / previous thread, `M-s` to open a shell on the thread in a new
+ * terminal tab (via `shell`, the command prefix that runs `oo shell`), `M-u` to scroll up (copy
  * mode) and `M-z` to zoom the pane. Not `M-v` (claude's image paste) or `M-[` (the start of
  * arrow keys' escape codes) or `M-b` (readline's and claude's back-a-word). Keys the user has bound
  * to something themselves are left alone.
  */
-export async function bindBoardKeys(split: string): Promise<void> {
+export async function bindBoardKeys(shell: string): Promise<void> {
 	const back = ['select-window', '-t', BOARD_WINDOW];
 	// From a run session the board switched to (no terminal to open it in, see openRun), back to the board's session.
 	const backFromAnywhere = ['if-shell', '-F', '#{m:oo-run_*,#{session_name}}', 'switch-client -l', tmuxCommand(back)];
 	// Only in thread windows; everywhere else the key still reaches the program.
 	const inThreads = (key: string, command: string[]) => ['if-shell', '-F', IN_THREAD_WINDOW, tmuxCommand(command), `send-keys ${key}`];
-	const beside = (role: string) => [
-		'run-shell',
-		'-b',
-		`out=$(${split} ${role} #{s/^oo-//:window_name} 2>&1) || tmux display-message "$out"`,
-	];
+	const openShell = ['run-shell', '-b', `out=$(${shell} #{s/^oo-//:window_name} 2>&1); tmux display-message "$out"`];
 	const bindings: [table: string, key: string, command: string[]][] = [
 		['prefix', 'b', backFromAnywhere],
 		['prefix', 'C-b', backFromAnywhere],
@@ -283,7 +260,7 @@ export async function bindBoardKeys(split: string): Promise<void> {
 		['root', 'M-l', inThreads('M-l', ['select-pane', '-R'])],
 		['root', 'M-j', inThreads('M-j', cycleThreads(1))],
 		['root', 'M-k', inThreads('M-k', cycleThreads(-1))],
-		['root', 'M-s', inThreads('M-s', beside('shell'))],
+		['root', 'M-s', inThreads('M-s', openShell)],
 		['root', 'M-u', inThreads('M-u', ['copy-mode', '-u'])],
 		['root', 'M-z', inThreads('M-z', ['resize-pane', '-Z'])],
 	];

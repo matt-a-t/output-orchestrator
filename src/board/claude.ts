@@ -8,11 +8,12 @@ import { DEFAULT_WAKE_PROMPT, hidden, type State, type Thread } from '../state.j
 import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE, SKILL_PROMPT_FILE, type Status } from '../status.js';
 import { containerName, containerProject, forThread, stopKeyed, threadShell } from '../container.js';
 import { inCheckout, threadDir } from '../threads.js';
-import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
+import { killWindow, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
 import { cacheLeft, contextUse, formatTokens, LARGE_CONTEXT, recentlyActive, shortDuration, type ContextUse } from '../transcripts.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
 import { createWorktree, inWorktree } from './worktree.js';
+import { openShellTab } from '../shell.js';
 
 export type PermissionMode = 'plan' | 'auto';
 
@@ -207,23 +208,9 @@ export function wakeStalled(board: Board, threads: Thread[]) {
 	});
 }
 
-/** Open claude with a shell beside it, starting claude first if it isn't running. */
+/** M-s: a shell on the thread's worktree in a new terminal tab (see openShellTab). */
 export const openShell = (board: Board, thread: Thread) =>
-	inWorktree(
-		board,
-		thread,
-		async cwd => {
-			const window = threadWindowName(thread.id);
-			if (!(await windowNames()).includes(window)) {
-				await launchClaude(board, thread, cwd, { background: true });
-				// It may be waiting on "resume anyway?" instead.
-				if (!(await windowNames()).includes(window)) return;
-			}
-			const project = board.project(thread.project);
-			const shell = await forThread(project, thread, cwd, threadShell(project), { OO_THREAD_ID: thread.id });
-			await openSplit(window, cwd, 'shell', shell.command, shell.env);
-		},
-	);
+	inWorktree(board, thread, async () => board.setMessage(await openShellTab(thread)));
 
 export const claudeKeys: Binding[] = [
 	{ key: '⏎', run: onThread(openThread), help: { section: 'Board', what: 'open (or resume) its claude' } },
@@ -233,7 +220,7 @@ export const claudeKeys: Binding[] = [
 		help: { section: 'Board', keys: 'w / W', what: 'wake it ("keep going", or start it on its thread) / every thread closed mid-work' },
 	},
 	{ key: 'W', run: board => wakeStalled(board, board.shown()) },
-	{ key: 's', run: onThread(openShell), help: { section: 'Reviewing', what: 'claude + a shell beside it' } },
+	{ key: 's', meta: true, run: onThread(openShell), help: { section: 'Reviewing', keys: 'M-s', what: 'a shell on its worktree in a new terminal tab' } },
 ];
 
 /**

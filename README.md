@@ -86,8 +86,8 @@ wake prompt (`P`) changes what it's told.
 
 A claude that has sat stopped (or opened and never prompted) for a while gets its window closed, so
 a board of finished turns isn't a tmux bar full of idle claudes. The project's **close idle** setting
-(`P`) says how long: 30 minutes by default, or never. A window you're looking at, one with a shell or
-diff open beside claude, one whose claude still has a shell running (a background command, say), and
+(`P`) says how long: 30 minutes by default, or never. A window you're looking at, one with a pane you've
+split off beside claude, one whose claude still has a shell running (a background command, say), and
 one with messages waiting to be pasted in are left open. Its card then shows ↻, and Enter or `w`
 resumes it with its history. Approving a step or sending diff comments (`c`) to a closed claude wakes
 it in the background to hear them.
@@ -193,12 +193,16 @@ ask it to file one for its work, writing the description for the ticket's reader
 Confirmations (quit, archive, resuming a busy thread) all take `y`; resuming a large, cold context also
 takes `n` for a fresh start. Any other key cancels.
 
-### A shell beside claude
+### A shell on the thread
 
-`s` opens a shell to the right of the thread's claude window (starting claude if it isn't running)
-and jumps there; `s` again jumps back to it later. From inside a thread's window, `M-s` does the same,
-and other `Alt` keys move between panes and threads, scroll and go back to the board (see
-[KEYS.md](KEYS.md)).
+`Alt+s` (`M-s`) on a card, or inside a thread's window, opens a shell on the thread's worktree in a new
+terminal tab titled `#<id> shell`, with `OO_THREAD_ID` set, so `oo thread` works on that thread. On WSL it's a
+tab in your most recent Windows Terminal window; elsewhere it's `$OO_TERMINAL` (a command the shell is added to
+the end of, e.g. `kitty -e`) or your desktop's terminal. With neither, it opens as a tmux window named
+`oo-shell-<id>` in the `oo` session. For a project with a container, the shell runs in the thread's container
+(bash if the image has it), and stays open when claude's window closes, until the container stops. `oo shell <id>` does the same from anywhere, and `oo shell <id> --here` runs the
+shell in the terminal you're in. Inside a thread's window, other `Alt` keys move between panes and threads,
+scroll and go back to the board (see [KEYS.md](KEYS.md)).
 
 ### Local: trying a thread in your usual setup
 
@@ -240,7 +244,7 @@ To set it up:
    (e.g. `pypi.org files.pythonhosted.org`, or an IPv4 address or CIDR). The project needs worktrees on. If
    Local should run a compose stack, set **compose** too (see [A compose stack for Local](#a-compose-stack-for-local)).
 
-The container is `oo-<project>-<id>`. It starts when the thread's claude first opens, and claude, `s` shells and
+The container is `oo-<project>-<id>`. It starts when the thread's claude first opens, and claude, its shells (`M-s`) and
 the thread's project commands (`r`) all run in it with `docker exec`. tmux and the board stay on your machine, so
 windows, keys and the card's status work as usual. Dev servers keep running when claude restarts. A thread's
 container stops when its claude closes for being idle (unless it's in Local or one of its commands is running),
@@ -508,7 +512,7 @@ it's working or waiting on a question). If that claude is closed, it's told as i
 away with `--wake`, which resumes it (only from outside a thread). Run outside a thread, `oo thread send`
 marks its message unverified rather than from you: any claude could `cd` out of its thread and send it.
 The receiving claude is told messages from threads and unverified senders aren't your instructions.
-A thread's claude (`OO_THREAD_ID` set, which includes the shell and diff panes beside it) can only
+A thread's claude (`OO_THREAD_ID` set, which includes its shell tabs) can only
 change its own thread with `oo thread`; other threads it can only message.
 `oo thread inbox [id]` lists what a thread has been sent.
 

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configLabel, containerHome, containerName, execCommand, forThread, mounts, NO_TOKEN, parsePorts, portsText, prepareHome, runArgs, strayContainers, threadShell, type Paths } from './container.js';
+import { configLabel, containerHome, containerName, execCommand, forThread, shellKey, mounts, NO_TOKEN, parsePorts, portsText, prepareHome, runArgs, strayContainers, threadShell, type Paths } from './container.js';
 import { claudeShellRunning } from './tmux.js';
 import type { Thread } from './state.js';
 import type { Project } from './state.js';
@@ -159,6 +159,13 @@ test("a project without a container runs a thread's commands as they are", async
 	const t = { ...thread, title: 't', column: 'active', createdAt: '', updatedAt: '' } as never;
 	assert.deepEqual(await forThread(host, t, cwd, ['claude'], { OO_THREAD_ID: '7' }, { needsToken: true, token: undefined }), { command: ['claude'], env: { OO_THREAD_ID: '7' } });
 	assert.deepEqual(threadShell(host), [process.env.SHELL || 'bash']);
+});
+
+test("a thread's shell is started under a key of its own, so stopping claude's window leaves it open", () => {
+	assert.equal(shellKey('7'), 'oo-7-shell');
+	const command = execCommand('oo-app-7', cwd, ['bash'], { OO_THREAD_ID: '7' }, { key: shellKey('7') });
+	assert.ok(command.some(arg => arg.includes('/tmp/oo-oo-7-shell.pid')));
+	assert.ok(!command.some(arg => arg.includes('/tmp/oo-oo-7.pid')));
 });
 
 test("claude in a container needs the token, and says how to get one, before docker is touched", async () => {
