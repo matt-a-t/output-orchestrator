@@ -178,7 +178,7 @@ export type HookEvent = {
 	ts: string;
 };
 
-/** working ⚙, waiting ⏸ (needs you), stopped ✓, idle (window open, nothing yet), ended, or interrupted (ended mid-work). */
+/** working ●, waiting ‖ (needs you), stopped ✓, idle (window open, nothing yet), ended, or interrupted (ended mid-work). */
 export type Status = 'working' | 'waiting' | 'stopped' | 'idle' | 'ended' | 'interrupted';
 
 export function nextStatus(current: Status | undefined, e: HookEvent): Status | undefined {
