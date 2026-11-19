@@ -45,7 +45,7 @@ test('the project comes from --project, the thread you\'re in, or the project pa
 	assert.throws(() => resolveProject(state, '/elsewhere', 'nope'), /Unknown project "nope"/);
 });
 
-test('with the board closed, add and move write state.json', async t => {
+test('with the board closed, add and move write state.json, and history.jsonl records them', async t => {
 	const { dir, project } = fixture([{ cwd: '/work/one' }]);
 	const output = capture(t);
 	const ctx = context(dir, join(project, 'sub'));
@@ -56,6 +56,12 @@ test('with the board closed, add and move write state.json', async t => {
 	assert.deepEqual(
 		threads.map(t => [t.id, t.title, t.plan, t.column]),
 		[['2', 'new thing', 'plan from stdin', 'planned'], ['1', 'thread 1', '', 'archived']],
+	);
+	assert.equal(threads[0]!.origin, 'cli');
+	const history = readFileSync(join(dir, 'history.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+	assert.deepEqual(
+		history.map(e => [e.event, e.thread, e.origin ?? e.to]),
+		[['created', '1', undefined], ['created', '2', 'cli'], ['moved', '1', 'archived']],
 	);
 });
 
@@ -631,7 +637,7 @@ test('a project inside a thread\'s directory is nearer than the thread', () => {
 	// A thread in a project at the parent dir without worktrees, as ~ would be.
 	const { dir, project, state } = fixture();
 	const home = { ...state.projects[0]!, name: 'home', path: dir, worktrees: false };
-	const s = addThread({ ...state, projects: [...state.projects, home] }, { project: 'home', title: 'x' }).state;
+	const s = addThread({ ...state, projects: [...state.projects, home] }, { project: 'home', title: 'x', origin: 'cli' }).state;
 	assert.equal(resolveProject(s, join(project, 'sub'), undefined), 'p');
 	assert.equal(resolveProject(s, dir, undefined), 'home');
 });

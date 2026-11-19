@@ -122,6 +122,10 @@ export type Priority = (typeof PRIORITIES)[number];
 export const PRIORITY_MARKS: Record<Priority, string> = { high: '▲', normal: '', low: '▽' };
 export const PRIORITY_COLORS: Record<Priority, string | undefined> = { high: 'red', normal: undefined, low: 'gray' };
 
+/** Where a thread was started: the board's new-thread form (a), `oo thread add` (from claude or a shell) or imported with i. */
+export const ORIGINS = ['board', 'cli', 'import'] as const;
+export type Origin = (typeof ORIGINS)[number];
+
 export const TODO_MARKS: Record<TodoStatus, string> = { pending: '○', active: '▸', review: '●', done: '✓' };
 
 const ThreadSchema = z.preprocess(
@@ -202,6 +206,8 @@ const ThreadSchema = z.preprocess(
 		// Set when the thread it built on merges: that branch's last commit, so u rebases only this thread's own
 		// commits onto the default branch (a squash merge leaves the originals behind). Cleared once u runs.
 		rebaseFrom: z.string().optional(),
+		// Unset for threads made before it was recorded.
+		origin: z.enum(ORIGINS).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),

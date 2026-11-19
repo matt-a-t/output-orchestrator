@@ -24,8 +24,8 @@ const state = (...threads: Thread[]): State => ({ version: 1, projects: [], thre
 const change = (before: Partial<Thread>, after: Partial<Thread>) => threadChanges(state(thread(before)), state(thread(after)), TS);
 
 test('threadChanges: a new thread is created, with its column, ticket and what it stacks on', () => {
-	assert.deepEqual(threadChanges(state(), state(thread({ plan: 'do it', column: 'active', ticket: { key: 'AV-1', url: 'u' }, stackedOn: '7' })), TS), [
-		{ ts: TS, thread: '1', project: 'p', event: 'created', title: 'a thread', column: 'active', plan: true, ticket: 'AV-1', stackedOn: '7' },
+	assert.deepEqual(threadChanges(state(), state(thread({ plan: 'do it', column: 'active', origin: 'cli', ticket: { key: 'AV-1', url: 'u' }, stackedOn: '7' })), TS), [
+		{ ts: TS, thread: '1', project: 'p', event: 'created', title: 'a thread', column: 'active', plan: true, origin: 'cli', ticket: 'AV-1', stackedOn: '7' },
 	]);
 	assert.deepEqual(threadChanges(state(), state(thread()), TS), [{ ts: TS, thread: '1', project: 'p', event: 'created', title: 'a thread', column: 'planned', plan: false }]);
 });

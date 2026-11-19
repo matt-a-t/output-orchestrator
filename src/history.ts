@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync } from 'node:fs';
-import type { Column, State, Thread } from './state.js';
+import type { Column, Origin, State, Thread } from './state.js';
 
 /**
  * One line of history.jsonl: a change in a thread's life, worked out by diffing the state on each save (see
@@ -12,6 +12,8 @@ export type HistoryEntry = { ts: string; thread: string; project: string } & (
 			title: string;
 			column: Column;
 			plan: boolean;
+			// Unset for threads made before origin was recorded.
+			origin?: Origin;
 			ticket?: string;
 			stackedOn?: string;
 			// Written for a thread that was already there when history started: `ts` is its createdAt, and
@@ -35,6 +37,7 @@ function created(t: Thread, ts: string, backfilled = false): HistoryEntry {
 		title: t.title,
 		column: t.column,
 		plan: !!t.plan,
+		...(t.origin && { origin: t.origin }),
 		...(t.ticket && { ticket: t.ticket.key }),
 		...(t.stackedOn && { stackedOn: t.stackedOn }),
 		...(backfilled && { backfilled: true as const }),
