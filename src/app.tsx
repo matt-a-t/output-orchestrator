@@ -17,7 +17,7 @@ import { ImportList, ImportProject } from './board/importPicker.js';
 import { KeysView } from './board/keysView.js';
 import { usePendingLocal } from './board/local.js';
 import { useMessageDelivery } from './board/messages.js';
-import { NewThread, useRecentTickets } from './board/newThread.js';
+import { NewThread } from './board/newThread.js';
 import { TodoView } from './board/todoView.js';
 import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
@@ -71,7 +71,6 @@ export function App() {
 	// The new-thread form (n) or the project's commands to run (r).
 	const [overlay, setOverlay] = useState<Overlay>(null);
 	const closeOverlay = () => setOverlay(null);
-	const recent = useRecentTickets();
 	const { statuses, statusesRef, sessionStarts, statusSince } = useStatuses(stateRef, setState);
 	const { liveWindowsRef, refreshWindows, runsRef, refreshRuns } = useTmux();
 	const { unreviewed, recheckUnreviewed } = useUnreviewed(stateRef, statuses, liveWindowsRef);
@@ -227,7 +226,6 @@ export function App() {
 	const newThread = () => {
 		const project = projectByName(filter ?? selected?.project ?? '') ?? state.projects[0]!;
 		setOverlay({ kind: 'newThread', project });
-		recent.loadRecent(project);
 	};
 
 	/** Import from the filtered project, asking which one when there's no filter (and more than one). */
@@ -436,7 +434,7 @@ export function App() {
 				{overlay?.kind === 'run' ? <RunPicker board={board} target={overlay.target} active={!busy} onClose={closeOverlay} /> : null}
 				<SearchBox search={search} />
 				{overlay?.kind === 'newThread' ? (
-					<NewThread board={board} project={overlay.project} recent={recent} active={!busy} onClose={closeOverlay} />
+					<NewThread board={board} project={overlay.project} active={!busy} onClose={closeOverlay} />
 				) : null}
 			</Footer>
 		</Box>
