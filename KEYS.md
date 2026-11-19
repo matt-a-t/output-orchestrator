@@ -26,8 +26,8 @@ tables here list every bound key, so keep the two in step.
 | `p` | filter by project |
 | `/` | search the id, title, plan, ticket, branch and PR as you type; `⏎` keeps it, `esc` drops it |
 | `esc` | clear the search, then the project filter |
-| `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `b`, `J`/`K` and `!`) |
-| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K` and `!`) |
+| `I` | show / hide an IDEAS column before Planned (its cards take only `L`, `x`, `e`, `t`, `z`, `b`, `J`/`K` and `!`) |
+| `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `t`, `z`, `b`, `J`/`K` and `!`) |
 | `r` | run one of the project's commands (dev server, tests, migrations…) in a new terminal window (see below) |
 | `P` | projects (their hooks, commands, wake prompt and when idle claudes close) |
 | `?` | all keys, and a Legend tab (`h`/`l`) on what the cards' marks mean |
@@ -90,7 +90,7 @@ The mouse wheel scrolls too.
 
 ## In a form
 
-The new thread (`n`), project (`P`), commit and pop quiz forms, and the thread details' overview (`e`, see below). Text fields are only typed into
+The new thread (`n`), project (`P`), commit and pop quiz forms, and the thread details' overview (`e`, see below), where `h`/`l` change tab instead. Text fields are only typed into
 once you start editing one, vim-style, so letters are keys until then.
 
 | Key | |

@@ -93,6 +93,7 @@ export function fakeBoard(state: State, overrides: Partial<Board> = {}): Board &
 		shown: () => current.threads,
 		shownColumns: () => COLUMNS,
 		showAtEnd: () => {},
+		openDetails: () => {},
 		...overrides,
 		messages,
 		merge: () => merge,

@@ -41,8 +41,20 @@ function contextProps(t: Thread, now: number): { tokens: number | undefined; war
 }
 
 /** What the columns keep while another screen covers them, so they come back as they were. */
-export type ColumnsLayout = { height: number; scrollOffsets: Partial<Record<Column, number>> };
-export const newColumnsLayout = (): ColumnsLayout => ({ height: 0, scrollOffsets: {} });
+export type ColumnsLayout = { height: number; scrollOffsets: Partial<Record<Column, number>>; firstColumn: number };
+export const newColumnsLayout = (): ColumnsLayout => ({ height: 0, scrollOffsets: {}, firstColumn: 0 });
+
+/**
+ * Which of `count` columns fit in `width` at MIN_COLUMN_WIDTH or wider, and how wide each is. When they don't all
+ * fit, the ones shown slide along from `first` (where they were) just far enough to keep the cursor's column in.
+ */
+export function columnWindow(count: number, width: number, cursor: number, first: number): { first: number; fits: number; colWidth: number } {
+	const fits = Math.max(1, Math.min(count, Math.floor(width / MIN_COLUMN_WIDTH)));
+	let start = Math.max(0, Math.min(first, count - fits));
+	if (cursor < start) start = cursor;
+	else if (cursor >= start + fits) start = cursor - fits + 1;
+	return { first: start, fits, colWidth: Math.floor(width / fits) };
+}
 
 type Props = {
 	board: Board;
@@ -65,7 +77,9 @@ type Props = {
 
 export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, jobs, layout, onPick }: Props) {
 	const { columns: width } = useWindowSize();
-	const colWidth = Math.max(MIN_COLUMN_WIDTH, Math.floor(width / shown.length));
+	const { first: firstColumn, fits, colWidth } = columnWindow(shown.length, width, cursor.col, layout.current.firstColumn);
+	layout.current.firstColumn = firstColumn;
+	const onScreen = shown.slice(firstColumn, firstColumn + fits);
 	const now = useClock();
 
 	// Lines the columns get, measured after layout (0 until then); taller columns scroll.
@@ -110,8 +124,8 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 		board.setMessage('');
 		const wheel = button === 'wheelDown' ? 1 : button === 'wheelUp' ? -1 : 0;
 		if (wheel) return setCursor({ col: cursor.col, row: Math.max(0, Math.min(columns[cursor.col]!.length - 1, cursor.row + wheel)) });
-		const col = Math.floor(x / colWidth);
-		if (button !== 'left' || y < 1 || col >= shown.length) return;
+		const col = firstColumn + Math.floor(x / colWidth);
+		if (button !== 'left' || y < 1 || col >= firstColumn + onScreen.length) return;
 		const slice = columnSlice(col);
 		let top = LIST_TOP;
 		// The column's header.
@@ -142,7 +156,8 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 
 	return (
 		<Box ref={boardRef} flexGrow={1} overflow="hidden">
-			{shown.map((column, c) => {
+			{onScreen.map((column, i) => {
+				const c = firstColumn + i;
 				const threads = columns[c]!;
 				const { start, end } = columnSlice(c);
 				const linesOf = (from: number, to: number) => threads.slice(from, to).reduce((n, t) => n + cardLines(t), 0);
@@ -150,7 +165,10 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 					<Box key={column} flexDirection="column" width={colWidth}>
 						<Box paddingRight={1}>
 							<Text bold color={c === cursor.col ? 'white' : 'gray'}>
+								{/* Arrows on the outer columns say there are more beyond them (h/l go there). */}
+								{i === 0 && firstColumn > 0 ? '‹ ' : ''}
 								{COLUMN_LABELS[column]} ({threads.length})
+								{i === onScreen.length - 1 && c < shown.length - 1 ? ' ›' : ''}
 							</Text>
 						</Box>
 						<Text dimColor>{'─'.repeat(colWidth - 1)}</Text>
@@ -173,7 +191,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 										running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
 										ports={portsText(knownPorts.get(containerName(t)))}
 										{...contextProps(t, now)}
-										age={staleAge(t.updatedAt, now)}
+										age={cardHeight(t.column) > 1 ? staleAge(t.updatedAt, now) : undefined}
 									/>
 								))}
 							</Box>

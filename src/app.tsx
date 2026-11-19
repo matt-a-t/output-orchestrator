@@ -209,6 +209,7 @@ export function App() {
 		ask,
 		shown: () => stateRef.current.threads.filter(t => visible(t, filterRef.current, searchRef.current, shownColumnsRef.current)),
 		shownColumns: () => shownColumnsRef.current,
+		openDetails: (thread, tab) => setScreen({ kind: 'details', threadId: thread.id, tab }),
 		showAtEnd: column =>
 			setCursor({
 				col: shownColumnsRef.current.indexOf(column),
@@ -349,9 +350,6 @@ export function App() {
 		if (!selected) return;
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
-		if (input === 'e') return setScreen({ kind: 'details', threadId: selected.id, tab: 'overview' });
-		if (input === 't') return setScreen({ kind: 'details', threadId: selected.id, tab: 'steps' });
-		if (input === 'z') return setScreen({ kind: 'details', threadId: selected.id, tab: 'quiz' });
 		if (input === 'B') {
 			if (selected.column === 'done' || selected.column === 'archived') return setMessage(`⚠ #${selected.id} is finished, so nothing blocks it`);
 			return setPicking(selected.id);

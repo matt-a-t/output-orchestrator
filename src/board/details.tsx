@@ -1,53 +1,55 @@
 // A thread's details (e, t, z), in place of the columns: its fields to edit, and tabs for its plan, steps, messages,
 // last pop quiz and where its work lives. It reads the thread live, so it keeps up as claude works.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Box, Text, measureElement, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
+import { useState, type ReactNode } from 'react';
+import { Box, Text, useInput, useWindowSize, type Key } from 'ink';
 import { containerName, knownPorts, portsText } from '../container.js';
 import { editPlan } from '../editor.js';
 import { errorMessage, messageColor } from '../errors.js';
 import { EDITING_HELP, FIELD_HELP, FieldText } from '../fieldText.js';
 import { hasWorktree, renameBranch, worktreePath } from '../git.js';
 import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, type Edit } from '../input.js';
-import { mouse, type MouseEvent } from '../mouse.js';
 import { mergeLabel, type PrStatus } from '../prHost.js';
 import type { Quiz } from '../quiz.js';
 import { QuizReview } from '../quizForm.js';
 import { COLORS, COLUMN_LABELS, LOCAL_LABEL, PRIORITIES, PRIORITY_COLORS, type Priority, type State, type Thread } from '../state.js';
-import type { Status } from '../status.js';
 import { blockers, inCheckout, merged, priorityOf, senderLabel, todoProgress, todoWindow, undelivered, withPriority } from '../threads.js';
-import { threadWindowName } from '../tmux.js';
 import { normalizeKey, ticketUrl } from '../tickets.js';
 import { contextUse, describeContext, shortDuration } from '../transcripts.js';
-import { fitTabs, TAB_FRAME } from '../viewerModel.js';
-import type { Board } from './board.js';
+import { TabBar } from '../tabBar.js';
+import { fitTabs } from '../viewerModel.js';
+import { onThread, type Board } from './board.js';
+import type { Binding } from './bindings.js';
+import { claudeState, QUIZ_COLORS } from './card.js';
 import { resumeId, stalled } from './claude.js';
-import { ScrollBar } from './scrollList.js';
+import { Scroller } from './scrollList.js';
+import { threadWindowName } from '../tmux.js';
 import { TodoRow } from './todoList.js';
 
 export const DETAIL_TABS = ['overview', 'plan', 'steps', 'messages', 'quiz', 'info'] as const;
 export type DetailTab = (typeof DETAIL_TABS)[number];
 
+// IDEAS and archived threads have details too.
+const opens = (tab: DetailTab) => onThread((board, thread) => board.openDetails(thread, tab), { hidden: true });
+export const detailsKeys: Binding[] = [
+	{ key: 'e', run: opens('overview'), help: { section: 'Board', what: "the thread's details, on its fields to edit" } },
+	{ key: 't', run: opens('steps'), help: { section: 'Board', what: "the thread's details, on its steps" } },
+	{ key: 'z', run: opens('quiz'), help: { section: 'Reviewing', what: "the thread's details, on its last pop quiz: your answers and how they were graded" } },
+];
+
 const FIELDS = ['title', 'ticket', 'project', 'color', 'priority', 'base'] as const;
 type Field = (typeof FIELDS)[number];
 const FIELD_LABELS: Record<Field, string> = { title: 'title', ticket: 'ticket', project: 'project', color: 'colour', priority: 'priority', base: 'base' };
-const TEXT_FIELDS: readonly Field[] = ['title', 'ticket', 'base'];
+const TEXT_FIELDS = ['title', 'ticket', 'base'] as const;
+type TextField = (typeof TEXT_FIELDS)[number];
+const isText = (f: Field): f is TextField => (TEXT_FIELDS as readonly Field[]).includes(f);
 // undefined means the project's colour.
 const COLOR_CHOICES = [undefined, ...COLORS];
 const LABEL_WIDTH = 13;
-// Lines the wheel scrolls at a time.
-const WHEEL_LINES = 3;
 
 // The ticket is edited as its key, and normal priority is spelled out.
 type Draft = Pick<Thread, 'title' | 'project' | 'color'> & { base: string; ticket: string; priority: Priority };
 const draftOf = (t: Thread): Draft => ({ title: t.title, ticket: t.ticket?.key ?? '', project: t.project, color: t.color, priority: priorityOf(t), base: t.base ?? '' });
-const sameDraft = (a: Draft, b: Draft) => FIELDS.every(f => a[f] === b[f]);
-
-const STATUS_LABELS: Partial<Record<Status, [string, string]>> = {
-	working: ['working', 'yellow'],
-	waiting: ['needs you', 'red'],
-	stopped: ['stopped', 'green'],
-};
 
 type Props = {
 	board: Board;
@@ -63,16 +65,21 @@ type Props = {
 
 export function Details({ board, state, thread, tab, setTab, merge, active, onClose }: Props) {
 	const { columns: width } = useWindowSize();
-	// Unsaved changes to the Overview's fields; null shows the thread as it is.
-	const [changes, setChanges] = useState<Draft | null>(null);
-	const draft = changes ?? draftOf(thread);
+	// The Overview's fields you've changed and not saved; the rest show the thread as it is now, so saving
+	// doesn't put back what claude changed meanwhile. null when there are none.
+	const [changes, setChanges] = useState<Partial<Draft> | null>(null);
+	const live = draftOf(thread);
+	const draft: Draft = { ...live, ...changes };
 	const [field, setField] = useState(0);
 	// The focused text field is being edited (see fieldKey).
 	const [edit, setEdit] = useState<Edit>(null);
 	const [message, setMessage] = useState('');
 	// Looking up the ticket, renaming the branch or editing the plan.
 	const [working, setWorking] = useState<string | null>(null);
-	const setDraft = (next: Draft) => setChanges(sameDraft(next, draftOf(thread)) ? null : next);
+	const setDraft = (next: Draft) => {
+		const changed = FIELDS.filter(f => next[f] !== live[f]);
+		setChanges(changed.length ? Object.fromEntries(changed.map(f => [f, next[f]])) : null);
+	};
 
 	const save = (draft: Draft) => {
 		const title = draft.title.trim();
@@ -121,20 +128,20 @@ export function Details({ board, state, thread, tab, setTab, merge, active, onCl
 			.finally(() => setWorking(null));
 	};
 
-	/** The Overview's form keys, once fieldKey has passed one on. */
+	const name = FIELDS[field]!;
+
+	/** The Overview's form keys, once fieldKey has passed one on (h/l change tab before this). */
 	const formKey = (input: string, key: Key) => {
-		const name = FIELDS[field]!;
 		if (isSubmit(input, key, edit)) return save(draft);
 		const move = fieldStep(input, key);
 		if (move) return setField(loop(field, move, FIELDS.length));
 		if (key.return) {
-			const next = nextField(field, FIELDS.length, i => (TEXT_FIELDS.includes(FIELDS[i]!) ? draft[FIELDS[i] as 'title'].length : undefined));
+			const next = nextField(field, FIELDS.length, i => (f => (isText(f) ? draft[f].length : undefined))(FIELDS[i]!));
 			setField(next.field);
 			return setEdit(next.edit);
 		}
-		// h/l change tabs here as everywhere else, so a choice turns with ←/→ and space.
-		const delta = input === 'h' || input === 'l' ? 0 : choiceStep(input, key);
-		if (!delta || TEXT_FIELDS.includes(name)) return;
+		const delta = choiceStep(input, key);
+		if (!delta || isText(name)) return;
 		const step = <T,>(choices: readonly T[], current: T) => choices[loop(choices.indexOf(current), delta, choices.length)]!;
 		if (name === 'color') return setDraft({ ...draft, color: step(COLOR_CHOICES, draft.color) });
 		if (name === 'priority') return setDraft({ ...draft, priority: step(PRIORITIES, draft.priority) });
@@ -145,20 +152,19 @@ export function Details({ board, state, thread, tab, setTab, merge, active, onCl
 		(input, key) => {
 			if (working) return;
 			setMessage('');
-			const name = FIELDS[field]!;
-			if (tab === 'overview' && TEXT_FIELDS.includes(name)) {
-				const text = name as 'title' | 'ticket' | 'base';
-				const next = fieldKey(draft[text], edit, input, key);
+			if (tab === 'overview' && isText(name)) {
+				const next = fieldKey(draft[name], edit, input, key);
 				if (next) {
 					setEdit(next.edit);
-					return setDraft({ ...draft, [text]: next.value });
+					return setDraft({ ...draft, [name]: next.value });
 				}
 			}
 			setEdit(null);
 			if (isBack(input, key, edit)) return close();
 			const index = DETAIL_TABS.indexOf(tab);
 			if (input === 'h' || input === 'l') return setTab(DETAIL_TABS[loop(index, input === 'h' ? -1 : 1, DETAIL_TABS.length)]!);
-			if (/^[1-6]$/.test(input)) return setTab(DETAIL_TABS[Number(input) - 1]!);
+			const n = Number(input);
+			if (Number.isInteger(n) && n >= 1 && n <= DETAIL_TABS.length) return setTab(DETAIL_TABS[n - 1]!);
 			if (tab === 'overview') return formKey(input, key);
 			if (tab === 'plan' && key.return) return writePlan();
 		},
@@ -167,28 +173,21 @@ export function Details({ board, state, thread, tab, setTab, merge, active, onCl
 
 	const todos = thread.todos ?? [];
 	const unheard = undelivered(thread.inbox).length;
-	const labels: Record<DetailTab, string> = {
-		overview: '1 overview',
-		plan: '2 plan',
-		steps: `3 steps${todos.length ? ` ${todoProgress(todos)}` : ''}`,
-		messages: `4 messages${thread.inbox?.length ? ` ${thread.inbox.length}` : ''}${unheard ? ` (${unheard} new)` : ''}`,
-		quiz: `5 quiz${thread.quiz ? ` ${thread.quiz.score}` : ''}`,
-		info: '6 info',
+	// What each tab has, after its number (the key that opens it).
+	const counts: Record<DetailTab, string> = {
+		overview: '',
+		plan: '',
+		steps: todos.length ? ` ${todoProgress(todos)}` : '',
+		messages: `${thread.inbox?.length ? ` ${thread.inbox.length}` : ''}${unheard ? ` (${unheard} new)` : ''}`,
+		quiz: thread.quiz ? ` ${thread.quiz.score}` : '',
+		info: '',
 	};
-	const fitted = fitTabs(
-		DETAIL_TABS.map(t => labels[t]),
+	const labels = fitTabs(
+		DETAIL_TABS.map((t, i) => `${i + 1} ${t}${counts[t]}`),
 		width,
 	);
 	const project = state.projects.find(p => p.name === thread.project);
-	const tabRow = (draw: (label: string) => string) => (
-		<Text wrap="truncate">
-			{DETAIL_TABS.map((t, i) => (
-				<Text key={t} color={t === tab ? 'cyan' : undefined} dimColor={t !== tab} bold={t === tab}>
-					{draw(fitted[i]!)}
-				</Text>
-			))}
-		</Text>
-	);
+	const tabKeys = `h/l 1-${DETAIL_TABS.length} tab`;
 
 	const scroll = (children: ReactNode, start?: (lines: number) => number) => (
 		<Scroller key={tab} active={active && !working} start={start}>
@@ -218,7 +217,7 @@ export function Details({ board, state, thread, tab, setTab, merge, active, onCl
 					thread.quiz ? (
 						<>
 							<Text>
-								<Text color={thread.quiz.result === 'passed' ? 'green' : thread.quiz.result === 'overridden' ? 'yellow' : 'red'} bold>
+								<Text color={QUIZ_COLORS[thread.quiz.result]} bold>
 									{thread.quiz.score} {thread.quiz.result === 'overridden' ? 'failed, PR opened anyway' : thread.quiz.result}
 								</Text>
 								<Text dimColor> · {new Date(thread.quiz.at).toLocaleString()}</Text>
@@ -235,21 +234,19 @@ export function Details({ board, state, thread, tab, setTab, merge, active, onCl
 	};
 
 	const editing = typeof edit === 'number';
-	const fieldName = FIELDS[field]!;
 	const keys =
 		tab === 'overview'
 			? editing
 				? EDITING_HELP
-				: `${TEXT_FIELDS.includes(fieldName) ? FIELD_HELP : '←/→ change'}  j/k field  a save  h/l 1-6 tab  q/esc close`
-			: `${tab === 'plan' ? '⏎ edit in $EDITOR  ' : ''}j/k scroll  h/l 1-6 tab  q/esc close`;
+				: `${isText(name) ? FIELD_HELP : '←/→ change'}  j/k field  a save  ${tabKeys}  q/esc close`
+			: `${tab === 'plan' ? '⏎ edit in $EDITOR  ' : ''}j/k scroll  ${tabKeys}  q/esc close`;
 
 	return (
 		<Box flexDirection="column" flexGrow={1} overflow="hidden">
 			<Text bold wrap="truncate">
 				#{thread.id} <Text color={thread.color ?? project?.color}>{project?.abbrev || thread.project}</Text> {thread.title}
 			</Text>
-			{tabRow(label => `╭${'─'.repeat(label.length + TAB_FRAME - 2)}╮`)}
-			{tabRow(label => `│ ${label} │`)}
+			<TabBar labels={labels} current={DETAIL_TABS.indexOf(tab)} />
 			<Box flexDirection="column" flexGrow={1} borderStyle="round" borderDimColor paddingX={1} overflow="hidden">
 				{body()}
 			</Box>
@@ -271,15 +268,7 @@ function Overview({ board, state, thread: t, draft, field, edit, merge }: { boar
 		if (name === 'color') return draft.color ? choice(draft.color, draft.color) : choice(`project's (${project?.color ?? '?'})`, project?.color);
 		return <FieldText value={draft[name]} edit={focused ? edit : null} />;
 	};
-	const live = board.liveWindows().has(threadWindowName(t.id));
-	const status = board.statuses()[t.id];
-	const claude: [string, string | undefined] = live
-		? (STATUS_LABELS[status!] ?? ['open, no activity yet', undefined])
-		: resumeId(t)
-			? stalled(board, t)
-				? ['closed mid-work (w wakes it)', 'red']
-				: ['closed, resumable', undefined]
-			: ['not started', undefined];
+	const [, claudeColor, claudeLabel] = claudeState(board.liveWindows().has(threadWindowName(t.id)), board.statuses()[t.id], !!resumeId(t), stalled(board, t));
 	const local = t.local ? (inCheckout(state.projects.find(p => p.name === t.project), t) ? ', checked out in the project' : t.forwarded ? ', its ports forwarded' : '') : '';
 	const label = merge && mergeLabel(merge);
 	const byId = (id: string) => state.threads.find(x => x.id === id);
@@ -287,37 +276,31 @@ function Overview({ board, state, thread: t, draft, field, edit, merge }: { boar
 	const stacked = t.stackedOn ? byId(t.stackedOn) : undefined;
 	const ports = portsText(knownPorts.get(containerName(t)));
 	const now = Date.now();
-	const rows: [string, ReactNode][] = [
-		['column', `${COLUMN_LABELS[t.column]}${t.local ? ` (in ${LOCAL_LABEL}${local})` : ''}`],
-		['claude', <Text color={claude[1]}>{claude[0]}</Text>],
-		...(t.ticket
-			? [
-					[
-						'ticket',
-						<Text>
-							{t.ticket.url || t.ticket.key}
-							{t.ticket.author ? <Text dimColor> by {t.ticket.author}</Text> : null}
-							{t.ticket.outsider ? <Text color="yellow"> (from outside the repo's team)</Text> : null}
-						</Text>,
-					] as [string, ReactNode],
-				]
-			: []),
-		...(t.pr
-			? [
-					[
-						'PR',
-						<Text>
-							#{t.pr.number} {label ? <Text color={label[1]}>{label[0]}</Text> : null} <Text dimColor>{t.pr.url}</Text>
-						</Text>,
-					] as [string, ReactNode],
-				]
-			: []),
-		...(waits.length ? [['blocked by', <Text color="red">{waits.map(b => `#${b.id} ${b.title}`).join(', ')}</Text>] as [string, ReactNode]] : []),
-		...(t.stackedOn ? [['stacked on', `#${t.stackedOn}${stacked ? ` ${stacked.title}` : ''}`] as [string, ReactNode]] : []),
-		...(t.rebaseFrom ? [['rebase', <Text color="yellow">pending: what it was stacked on merged, u rebases its own commits</Text>] as [string, ReactNode]] : []),
-		...(ports ? [['ports', <Text color="cyan">{ports}</Text>] as [string, ReactNode]] : []),
-		['age', `created ${shortDuration(now - Date.parse(t.createdAt))} ago, changed ${shortDuration(now - Date.parse(t.updatedAt))} ago`],
-	];
+	const rows = (
+		[
+			['column', `${COLUMN_LABELS[t.column]}${t.local ? ` (in ${LOCAL_LABEL}${local})` : ''}`],
+			['claude', <Text color={claudeColor}>{claudeLabel}</Text>],
+			t.ticket && [
+				'ticket',
+				<Text>
+					{t.ticket.url || t.ticket.key}
+					{t.ticket.author ? <Text dimColor> by {t.ticket.author}</Text> : null}
+					{t.ticket.outsider ? <Text color="yellow"> (from outside the repo's team)</Text> : null}
+				</Text>,
+			],
+			t.pr && [
+				'PR',
+				<Text>
+					#{t.pr.number} {label ? <Text color={label[1]}>{label[0]}</Text> : null} <Text dimColor>{t.pr.url}</Text>
+				</Text>,
+			],
+			waits.length > 0 && ['blocked by', <Text color="red">{waits.map(b => `#${b.id} ${b.title}`).join(', ')}</Text>],
+			t.stackedOn && ['stacked on', `#${t.stackedOn}${stacked ? ` ${stacked.title}` : ''}`],
+			t.rebaseFrom && ['rebase', <Text color="yellow">pending: what it was stacked on merged, u rebases its own commits</Text>],
+			ports && ['ports', <Text color="cyan">{ports}</Text>],
+			['age', `created ${shortDuration(now - Date.parse(t.createdAt))} ago, changed ${shortDuration(now - Date.parse(t.updatedAt))} ago`],
+		] satisfies ([string, ReactNode] | false | '' | undefined)[]
+	).filter(row => !!row);
 	return (
 		<Box flexDirection="column" overflow="hidden">
 			{FIELDS.map((name, i) => {
@@ -393,61 +376,5 @@ function Info({ thread: t }: { thread: Thread }) {
 				</Box>
 			))}
 		</>
-	);
-}
-
-/**
- * A tab's text, scrolled a line at a time (j/k, the arrows), a page at a time (space/b), to the ends (g/G) or with
- * the wheel. `start` places it once there's a height to place it in (the current step, for Steps).
- */
-function Scroller({ active, start, children }: { active: boolean; start?: (lines: number) => number; children: ReactNode }) {
-	const space = useRef<DOMElement>(null);
-	const content = useRef<DOMElement>(null);
-	const [lines, setLines] = useState({ space: 0, content: 0 });
-	useEffect(() => {
-		if (!space.current || !content.current) return;
-		const measured = { space: measureElement(space.current).height, content: measureElement(content.current).height };
-		if (measured.space !== lines.space || measured.content !== lines.content) setLines(measured);
-	});
-	const [offset, setOffset] = useState<number | null>(null);
-	const last = Math.max(0, lines.content - lines.space);
-	const first = Math.min(last, offset ?? (lines.space && start ? start(lines.space) : 0));
-	const scrollTo = (to: number) => setOffset(Math.max(0, Math.min(last, to)));
-	const page = Math.max(1, lines.space - 1);
-
-	useInput(
-		(input, key) => {
-			if (input === 'j' || key.downArrow) return scrollTo(first + 1);
-			if (input === 'k' || key.upArrow) return scrollTo(first - 1);
-			if (input === ' ' || key.pageDown) return scrollTo(first + page);
-			if (input === 'b' || key.pageUp) return scrollTo(first - page);
-			if (input === 'g') return scrollTo(0);
-			if (input === 'G') return scrollTo(last);
-		},
-		{ isActive: active },
-	);
-
-	const onMouse = ({ button }: MouseEvent) => {
-		if (!active) return;
-		if (button === 'wheelDown') scrollTo(first + WHEEL_LINES);
-		if (button === 'wheelUp') scrollTo(first - WHEEL_LINES);
-	};
-	const onMouseRef = useRef(onMouse);
-	onMouseRef.current = onMouse;
-	useEffect(() => {
-		const listener = (event: MouseEvent) => onMouseRef.current(event);
-		mouse.on('press', listener);
-		return () => void mouse.off('press', listener);
-	}, []);
-
-	return (
-		<Box ref={space} flexGrow={1} flexBasis={0} overflow="hidden">
-			<Box flexGrow={1} flexDirection="column" overflow="hidden">
-				<Box ref={content} flexDirection="column" flexShrink={0} marginTop={-first}>
-					{children}
-				</Box>
-			</Box>
-			{last > 0 ? <ScrollBar total={lines.content} first={first} shown={lines.space} height={lines.space} /> : null}
-		</Box>
 	);
 }

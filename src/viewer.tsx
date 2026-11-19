@@ -3,12 +3,13 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { execa } from 'execa';
 import { Box, measureElement, render, Text, useApp, useInput, useWindowSize, type DOMElement, type Key } from 'ink';
 import { errorMessage } from './errors.js';
 import { mouse, mouseStdin, reportMouse } from './mouse.js';
 import { OO_COMMAND } from './status.js';
+import { TabBar } from './tabBar.js';
 import { shellQuote } from './tmux.js';
 import {
 	clampScroll,
@@ -23,7 +24,6 @@ import {
 	plainLines,
 	splitPatch,
 	stepContext,
-	TAB_FRAME,
 	type FilePatch,
 	type Match,
 } from './viewerModel.js';
@@ -363,28 +363,14 @@ function Viewer({ spec, files, place, onExit }: { spec: ViewSpec; files: FilePat
 		[spec.intro.label, `${files.length} file${files.length === 1 ? '' : 's'} changed`, shown ? `${file + 1}/${files.length} ${fileLabel(shown)}` : 'diff'],
 		columns - statWidth,
 	);
-	const extra = (i: number) => (i === 2 ? statWidth : 0);
-	// Framed on top and at the sides, the current one in colour and the others dim.
-	const tabRow = (draw: (label: string, i: number) => ReactNode) => (
-		<Text wrap="truncate">
-			{tabLabels.map((label, i) => (
-				<Text key={i} color={i === tab ? (spec.accent ?? 'cyan') : undefined} dimColor={i !== tab} bold={i === tab}>
-					{draw(label, i)}
-				</Text>
-			))}
-		</Text>
-	);
 	const tabBar = (
-		<>
-			{tabRow((label, i) => `╭${'─'.repeat(label.length + extra(i) + TAB_FRAME - 2)}╮`)}
-			{tabRow((label, i) => (
-				<>
-					{`│ ${label}`}
-					{i === 2 && shown ? fileStat(shown) : null}
-					{' │'}
-				</>
-			))}
-		</>
+		<TabBar
+			labels={tabLabels}
+			current={tab}
+			accent={spec.accent}
+			suffix={i => (i === 2 && shown ? fileStat(shown) : null)}
+			suffixWidth={i => (i === 2 ? statWidth : 0)}
+		/>
 	);
 
 	const where = tab === 2 && files.length ? <Text dimColor>{`${contextLabel(context)} · `}</Text> : null;

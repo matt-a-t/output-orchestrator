@@ -3,22 +3,31 @@ import { Box, Text } from 'ink';
 import { mergeLabel, type PrStatus } from '../prHost.js';
 import { PRIORITY_COLORS, PRIORITY_MARKS, type Column, type Project, type Thread } from '../state.js';
 import type { Status } from '../status.js';
-import { followUps, nextTodo, planSummary, preMergeDone, todoProgress, todosDone, undelivered } from '../threads.js';
+import { followUps, nextTodo, planLine, preMergeDone, todoProgress, todosDone, undelivered } from '../threads.js';
 import { formatTokens, LARGE_CONTEXT } from '../transcripts.js';
 
-const BADGES: Partial<Record<Status, [string, string]>> = {
-	working: ['●', 'yellow'],
-	waiting: ['‖', 'red'],
-	stopped: ['✓', 'green'],
-};
+/** A mark, its colour and what it means. */
+type LegendEntry = [mark: string, color: string | undefined, meaning: string];
 
-export const LEGEND: [string, string | undefined, string][] = [
-	['●', 'yellow', 'working'],
-	['‖', 'red', 'needs you'],
-	['✓', 'green', 'stopped'],
-	['○', 'gray', 'open, no activity yet'],
-	['↻', 'gray', 'closed, resumable'],
-	['↻', 'red', 'closed mid-work, w wakes it'],
+// The status badge for a thread's claude: its window's status while one is open, else whether it can be resumed.
+const CLAUDE_STATES = {
+	working: ['●', 'yellow', 'working'],
+	waiting: ['‖', 'red', 'needs you'],
+	stopped: ['✓', 'green', 'stopped'],
+	open: ['○', 'gray', 'open, no activity yet'],
+	resumable: ['↻', 'gray', 'closed, resumable'],
+	stalled: ['↻', 'red', 'closed mid-work, w wakes it'],
+	none: [' ', undefined, 'not started'],
+} satisfies Record<string, LegendEntry>;
+
+/** Its claude's badge, colour and what that means, as the card and the details show it. */
+export function claudeState(live: boolean, status: Status | undefined, resumable: boolean, stalled: boolean): LegendEntry {
+	if (live) return status === 'working' || status === 'waiting' || status === 'stopped' ? CLAUDE_STATES[status] : CLAUDE_STATES.open;
+	return resumable ? (stalled ? CLAUDE_STATES.stalled : CLAUDE_STATES.resumable) : CLAUDE_STATES.none;
+}
+
+export const LEGEND: LegendEntry[] = [
+	...Object.values(CLAUDE_STATES).filter(entry => entry !== CLAUDE_STATES.none),
 	['±', 'magenta', 'changes to review'],
 	['⚡', 'red', 'PR has conflicts'],
 	['✎2', 'cyan', 'messages from other threads, told when claude stops'],
@@ -107,7 +116,7 @@ type Mark = { text: string; color?: string; bold?: boolean; dim?: boolean };
  * tell them apart), so even a narrow column shows them all (see MIN_COLUMN_WIDTH).
  */
 export function headMarks({ thread: t, live, status, resumable, stalled, unreviewed, merge, blockers, running, job, ports }: Props): Mark[] {
-	const [badge, badgeColor] = live ? (BADGES[status!] ?? ['○', 'gray']) : resumable ? ['↻', stalled ? 'red' : 'gray'] : [' ', undefined];
+	const [badge, badgeColor] = claudeState(live, status, resumable, stalled);
 	// Changes aren't ready to review until claude stops working on them.
 	const working = live && status === 'working';
 	const messages = undelivered(t.inbox).length;
@@ -139,7 +148,7 @@ export function staleAge(updatedAt: string, now: number): string | undefined {
 	return days >= 1 ? `${days}d` : undefined;
 }
 
-const QUIZ_COLORS = { passed: 'green', overridden: 'yellow', failed: 'red' } as const;
+export const QUIZ_COLORS = { passed: 'green', overridden: 'yellow', failed: 'red' } as const;
 
 /** Done, in green, or still to come, dimmed: one of Polish's drafts or the quiz. */
 const ready = (label: string, done: boolean): Mark => (done ? { text: `${label}✓`, color: 'green' } : { text: label, dim: true });
@@ -151,7 +160,7 @@ export function nextLine(t: Thread, merge: PrStatus | undefined, job?: string): 
 	switch (t.column) {
 		case 'ideas':
 		case 'planned':
-			return t.plan ? [{ text: planSummary(t.plan, 1), dim: true }] : [];
+			return t.plan ? [{ text: planLine(t.plan), dim: true }] : [];
 		case 'active': {
 			if (!todos.length) return [];
 			// The step handed over for review comes first: it's what's waiting on you.

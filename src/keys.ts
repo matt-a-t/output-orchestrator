@@ -19,8 +19,6 @@ export const KEY_SECTIONS: KeySection[] = [
 			['J/K', 'reorder within its column (among threads of its priority)'],
 			['n', 'new thread (form)'],
 			['N', 'import a thread started outside oo'],
-			['e', "the thread's details, on its fields to edit"],
-			['t', "the thread's details, on its steps"],
 			['B', 'blocked by another thread (move to it, ⏎ picks)'],
 			['!', 'cycle its priority (normal, high, low); high sorts to the top of its column, low to the bottom'],
 			['p', 'filter by project'],
@@ -47,7 +45,7 @@ export const KEY_SECTIONS: KeySection[] = [
 	},
 	{
 		title: 'Reviewing',
-		keys: [...bindingRows('Reviewing'), ['z', "the thread's details, on its last pop quiz: your answers and how they were graded"]],
+		keys: bindingRows('Reviewing'),
 	},
 	{
 		title: 'Thread details (e, t, z)',
@@ -79,7 +77,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		],
 	},
 	{
-		title: 'In a form (n, P, commit, the overview in e)',
+		title: 'In a form (n, P, commit)',
 		keys: [
 			['j/k ↑/↓ tab', 'move between fields'],
 			['h/l ←/→ space', 'change a choice (project, colour, priority, recent ticket…)'],

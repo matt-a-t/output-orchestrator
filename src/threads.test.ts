@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Thread } from './state.js';
-import { boardOnlyMove, byPriority, forwardedMoveProblem, forwardsPorts, inCheckout, matchesSearch, planSummary, threadDir, withPriority } from './threads.js';
+import { boardOnlyMove, byPriority, forwardedMoveProblem, forwardsPorts, inCheckout, matchesSearch, planLine, threadDir, withPriority } from './threads.js';
 import { fixture } from './testHelpers.js';
 
 const thread: Thread = {
@@ -77,8 +77,7 @@ test("a thread in Local stays the kind it went in as, whatever its project's con
 });
 
 test('the plan line skips blank lines and drops heading marks', () => {
-	assert.equal(planSummary('# #61 Rework the keys\n\n## Context\nThe keys are confusing.\n- more'), '#61 Rework the keys · Context · The keys are confusing.');
-	assert.equal(planSummary('  \n#hashtag, not a heading\n### Plan  '), '#hashtag, not a heading · Plan');
-	assert.equal(planSummary('\n\n'), '');
-	assert.equal(planSummary('# Card rethink\n\nFour lines.', 1), 'Card rethink');
+	assert.equal(planLine('\n# #61 Rework the keys\n\n## Context'), '#61 Rework the keys');
+	assert.equal(planLine('  \n#hashtag, not a heading\n### Plan  '), '#hashtag, not a heading');
+	assert.equal(planLine('\n\n'), '');
 });

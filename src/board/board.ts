@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { RunStatus } from '../commands.js';
 import type { PrStatus } from '../prHost.js';
 import type { Column, Project, State, Thread } from '../state.js';
+import type { DetailTab } from './details.js';
 import type { Status } from '../status.js';
 import type { Store } from '../threads.js';
 import { jobProblem, type Job } from './jobs.js';
@@ -53,6 +54,8 @@ export type Board = {
 	shownColumns: () => readonly Column[];
 	/** Put the cursor where a thread just added to the bottom of `column` lands. */
 	showAtEnd: (column: Column) => void;
+	/** Open the thread's details (e, t, z) on `tab`. */
+	openDetails: (thread: Thread, tab: DetailTab) => void;
 };
 
 /**
