@@ -41,7 +41,7 @@ export function useIdleClose(board: Board) {
 				// (or given up on) if it's still left alone, as though it had stayed quiet throughout.
 				for (const [id, sentAt] of compacting) {
 					const thread = board.state().threads.find(t => t.id === id);
-					const use = thread?.transcriptPath ? contextUse(thread.transcriptPath) : undefined;
+					const use = thread?.transcriptPath ? contextUse(thread.transcriptPath, { fresh: true }) : undefined;
 					// A turn since means someone took it up again: leave it to the usual quiet clock.
 					const usedSince = !!use && !use.compacted && use.at > sentAt;
 					if (thread && !usedSince && !compactedSince(use, sentAt) && now - sentAt < COMPACT_TIMEOUT) continue;
@@ -52,7 +52,7 @@ export function useIdleClose(board: Board) {
 				}
 				for (const thread of quietAmong(board.state().threads)) {
 					if (compacting.has(thread.id) || candidates.some(c => c.thread.id === thread.id)) continue;
-					const use = thread.transcriptPath ? contextUse(thread.transcriptPath) : undefined;
+					const use = thread.transcriptPath ? contextUse(thread.transcriptPath, { fresh: true }) : undefined;
 					if (use && worthCompacting(thread, use, now) && tried.get(thread.id) !== use.at) {
 						tried.set(thread.id, use.at);
 						await compact(board, thread, use.tokens);

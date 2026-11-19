@@ -33,7 +33,7 @@ export function resumeId(thread: Thread): string | undefined {
  */
 export function coldResume(board: Board, thread: Thread, now = Date.now()): ContextUse | undefined {
 	if (board.liveWindows().has(threadWindowName(thread.id)) || !(thread.branch || thread.cwd) || !resumeId(thread)) return;
-	const use = contextUse(thread.transcriptPath!);
+	const use = contextUse(thread.transcriptPath!, { fresh: true });
 	if (use && use.tokens >= LARGE_CONTEXT && cacheLeft(use, now) <= 0) return use;
 }
 
