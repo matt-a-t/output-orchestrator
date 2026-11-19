@@ -55,7 +55,7 @@ or for a thread with no worktree yet).
 | Key | |
 |---|---|
 | `d` / `D` | step / whole thread diff (`d` with no changes: mark the step done) |
-| `s` | claude with a shell beside it |
+| `M-s` | a shell on its worktree in a new terminal tab |
 | `c` | comment on the diff in vim |
 | `v` | view the PR: description, checks, reviews and its diff (`m` merges it) |
 | `b` | open the PR in your browser |
@@ -129,7 +129,7 @@ reaches the program, and a key you've bound yourself is left alone.
 |---|---|
 | `M-h` / `M-l` | claude / the pane beside it |
 | `M-j` / `M-k` | next / previous thread window |
-| `M-s` | shell beside claude (like `s` on the board) |
+| `M-s` | a shell on the thread's worktree in a new terminal tab (like `M-s` on the board) |
 | `M-u` | scroll up: tmux copy mode, with your `mode-keys` (`q` leaves) |
 | `M-z` | zoom the pane |
 | `M-q` | back to the board |
