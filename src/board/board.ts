@@ -4,6 +4,7 @@ import type { PrStatus } from '../prHost.js';
 import type { Column, Project, State, Thread } from '../state.js';
 import type { Status } from '../status.js';
 import type { Store } from '../threads.js';
+import { jobProblem, type Job } from './jobs.js';
 
 /** How a move went, for the message line or an `oo thread` response. */
 export type Outcome = { ok: boolean; message: string };
@@ -40,6 +41,10 @@ export type Board = {
 	setBusy: (label: string | null) => void;
 	/** Run fn with `label` shown as busy, putting any error on the message line. */
 	run: (fn: () => Promise<void>, label?: string) => Promise<void>;
+	/** What each thread is doing in the background (see jobs.ts), by thread id. */
+	jobs: () => ReadonlyMap<string, Job>;
+	/** Run fn in the background as the thread's job, the board staying usable; refused while it has one. */
+	startJob: (thread: Thread, job: Job, fn: () => Promise<void>) => Promise<void>;
 	/** An action waiting on y, and with `no` another on n (any other key cancels); its question is shown as the message. */
 	ask: (question: string, action: () => void, no?: () => void) => void;
 	/** The threads on the board, with the filter applied. */
@@ -53,11 +58,14 @@ export type Board = {
 /**
  * For a key binding that acts on the highlighted thread, and does nothing when there isn't one.
  * Threads in IDEAS or archived have no worktree or window, so only bindings that say `hidden` act on them.
+ * None act on a thread while it has a job running in the background.
  */
 export const onThread =
 	(run: (board: Board, thread: Thread) => unknown, { hidden = false } = {}) =>
 	(board: Board, thread: Thread | undefined) => {
 		if (!thread) return;
+		const busy = jobProblem(board, thread);
+		if (busy) return board.setMessage(busy);
 		if (thread.column === 'archived' && !hidden) return board.setMessage(`⚠ #${thread.id} is archived — H brings it back to Done`);
 		if (thread.column === 'ideas' && !hidden) return board.setMessage(`⚠ #${thread.id} is in IDEAS — L brings it back to Planned`);
 		return run(board, thread);

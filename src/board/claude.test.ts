@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fakeBoard, fixture } from '../testHelpers.js';
 import { threadWindowName } from '../tmux.js';
-import { coldResume, wake } from './claude.js';
+import { coldResume, wake, wakeStalled } from './claude.js';
 
 const HOUR = 60 * 60_000;
 
@@ -39,4 +39,35 @@ test('w asks before resuming a costly one, offering a fresh start', () => {
 	void wake(board, thread);
 	assert.match(board.messages[0]!, /300k tokens of context and its cache went cold 1h ago.*y resumes · n starts a fresh claude/);
 	assert.ok(no);
+});
+
+test('w wakes in the background, as the thread\'s job', async () => {
+	// A project that's gone stops the wake before it reaches tmux.
+	const { state } = fixture([{ project: 'gone' }]);
+	const board = fakeBoard(state);
+	const waking = wake(board, state.threads[0]!);
+	assert.equal(board.jobs().get('1')?.label, 'waking');
+	await waking;
+	assert.equal(board.jobs().size, 0);
+	assert.deepEqual(board.messages, ['✗ Unknown project "gone"']);
+});
+
+test('W leaves out threads with a job running', async () => {
+	const { state } = fixture([
+		{ column: 'active', project: 'gone' },
+		{ column: 'active', project: 'gone' },
+	]);
+	let yes: (() => unknown) | undefined;
+	const board = fakeBoard(state, {
+		statuses: () => ({ '1': 'interrupted', '2': 'interrupted' }),
+		ask: (question, y) => void (board.messages.push(question), (yes = y)),
+	});
+	let finish!: () => void;
+	const job = board.startJob(state.threads[0]!, { kind: 'local', label: 'leaving Local' }, () => new Promise<void>(resolve => (finish = resolve)));
+	wakeStalled(board, state.threads);
+	assert.deepEqual(board.messages, ['Wake #2?']);
+	await yes!();
+	assert.equal(board.messages.at(-1), '✗ Unknown project "gone"');
+	finish();
+	await job;
 });

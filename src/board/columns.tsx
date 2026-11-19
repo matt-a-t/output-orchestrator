@@ -14,6 +14,7 @@ import { blockers } from '../threads.js';
 import { cacheLeft, contextUse, shortDuration } from '../transcripts.js';
 import { openThread, resumeId, stalled } from './claude.js';
 import { useDoubleClick } from './doubleClick.js';
+import { jobProblem, type Job } from './jobs.js';
 import { ScrollBar } from './scrollList.js';
 
 type Cursor = { col: number; row: number };
@@ -55,12 +56,14 @@ type Props = {
 	active: boolean;
 	unreviewed: Set<string>;
 	merge: Record<string, PrStatus>;
+	// What threads are doing in the background, by id.
+	jobs: ReadonlyMap<string, Job>;
 	layout: RefObject<ColumnsLayout>;
 	// While B is picking a blocker, a double-click picks the thread instead of opening it.
 	onPick?: (thread: Thread) => void;
 };
 
-export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, layout, onPick }: Props) {
+export function Columns({ board, shown, columns, cursor, setCursor, active, unreviewed, merge, jobs, layout, onPick }: Props) {
 	const { columns: width } = useWindowSize();
 	const colWidth = Math.max(16, Math.floor(width / shown.length));
 	const now = useClock();
@@ -123,7 +126,11 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 		const thread = r < slice.end ? threads[r] : undefined;
 		if (!thread) return;
 		setCursor({ col, row: r });
-		if (isDoubleClick(thread.id)) (onPick ?? (t => openThread(board, t)))(thread);
+		if (!isDoubleClick(thread.id)) return;
+		if (onPick) return onPick(thread);
+		const busy = jobProblem(board, thread);
+		if (busy) return board.setMessage(busy);
+		openThread(board, thread);
 	};
 	const onMouseRef = useRef(onMouse);
 	onMouseRef.current = onMouse;
@@ -161,6 +168,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 										stalled={stalled(board, t)}
 										unreviewed={unreviewed.has(t.id)}
 										merge={merge[t.id]}
+										job={jobs.get(t.id)?.label}
 										blockers={blockers(board.state(), t)}
 										running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
 										ports={portsText(knownPorts.get(containerName(t)))}

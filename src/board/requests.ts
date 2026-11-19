@@ -5,7 +5,8 @@ import { RequestReader, requestsFile, respond, type Request, type Response } fro
 import { draftPr, withTicket } from '../prHost.js';
 import { applyRequest, forwardsPorts, moveProblem } from '../threads.js';
 import type { Board, Outcome } from './board.js';
-import { enterLocal, leaveLocal, localProblem } from './local.js';
+import { jobProblem } from './jobs.js';
+import { enterLocal, leaveLocal, localJob, localProblem } from './local.js';
 import { messageRequest } from './messages.js';
 import { openPr } from './pr.js';
 
@@ -16,7 +17,7 @@ async function localRequest(board: Board, { id, thread: threadId, local }: Extra
 	const answer = (outcome: Outcome): Response => ({ id, ...outcome, thread: thread.id });
 	const entering = local === 'toggle' ? !thread.local : local;
 	if (entering === !!thread.local) return answer({ ok: true, message: `#${thread.id} is already ${entering ? 'in' : 'out of'} Local` });
-	const problem = await localProblem(board, thread, entering);
+	const problem = jobProblem(board, thread) ?? (await localProblem(board, thread, entering));
 	if (problem) return answer({ ok: false, message: problem });
 	// Nothing moves under a container's claude (its Local forwards ports), so it doesn't wait for one.
 	if (!thread.cwd && !forwardsPorts(board.project(thread.project), thread) && board.statuses()[thread.id] === 'working') {
@@ -24,12 +25,16 @@ async function localRequest(board: Board, { id, thread: threadId, local }: Extra
 		const where = entering ? 'goes into Local' : 'comes out of Local, back to its worktree,';
 		return answer({ ok: true, message: `#${thread.id} ${where} when its claude's turn ends` });
 	}
-	board.setBusy(entering ? 'checking out for Local' : 'leaving Local');
-	try {
-		return answer(await (entering ? enterLocal : leaveLocal)(board, thread));
-	} finally {
-		board.setBusy(null);
-	}
+	// In the background, like o: later requests wait for it, but the board's keys don't.
+	let outcome: Outcome = { ok: false, message: `#${thread.id} didn't move` };
+	await board.startJob(thread, localJob(board, thread, entering), async () => {
+		try {
+			outcome = await (entering ? enterLocal : leaveLocal)(board, thread);
+		} catch (err) {
+			outcome = { ok: false, message: `✗ ${errorMessage(err)}` };
+		}
+	});
+	return answer(outcome);
 }
 
 /** Like moving to PR on the board, except the description is given (or claude's draft, unedited) and there's no popup. */

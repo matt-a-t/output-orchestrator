@@ -12,6 +12,7 @@ import { killWindow, openWindow, pasteInto, threadWindowLabel, threadWindowName,
 import { cacheLeft, contextUse, formatTokens, LARGE_CONTEXT, recentlyActive, shortDuration, type ContextUse } from '../transcripts.js';
 import type { Binding } from './bindings.js';
 import { onThread, type Board } from './board.js';
+import type { Job } from './jobs.js';
 import { createWorktree, inWorktree } from './worktree.js';
 import { openShellTab } from '../shell.js';
 
@@ -189,21 +190,30 @@ export async function wakeThread(board: Board, thread: Thread, prompt?: string, 
 	return true;
 }
 
-/** w: wake the thread, unless its claude is plainly still at it. Asks first if resuming would be costly (askBeforeColdResume). */
+const WAKING: Job = { kind: 'wake', label: 'waking' };
+
+/**
+ * w: wake the thread in the background, unless its claude is plainly still at it. Asks first if resuming would be
+ * costly (askBeforeColdResume).
+ */
 export function wake(board: Board, thread: Thread) {
 	if (board.statuses()[thread.id] === 'working' && !stalled(board, thread)) return board.setMessage(`⚠ ${stillWorking(thread.id)}`);
-	return askBeforeColdResume(board, thread, fresh => board.run(async () => void (await wakeThread(board, thread, undefined, { fresh })), `waking #${thread.id}`));
+	return askBeforeColdResume(board, thread, fresh => board.startJob(thread, WAKING, async () => void (await wakeThread(board, thread, undefined, { fresh }))));
 }
 
-/** W: wake every one of `threads` (those shown) that was closed mid-work, once asked. */
+/** W: wake every one of `threads` (those shown) that was closed mid-work and has no job running, once asked, in the background. */
 export function wakeStalled(board: Board, threads: Thread[]) {
-	const woken = threads.filter(t => t.column !== 'done' && !hidden(t.column) && stalled(board, t));
+	const woken = threads.filter(t => t.column !== 'done' && !hidden(t.column) && stalled(board, t) && !board.jobs().has(t.id));
 	if (woken.length === 0) return board.setMessage('No interrupted threads');
 	const ids = (threads: Thread[]) => threads.map(t => `#${t.id}`).join(', ');
 	return board.ask(`Wake ${ids(woken)}?`, async () => {
 		const failed: Thread[] = [];
-		// One at a time, as each waits for its claude to start.
-		for (const t of woken) await board.run(async () => void ((await wakeThread(board, t)) || failed.push(t)), `waking #${t.id}`);
+		// One at a time, as each waits for its claude to start. One refused (it started a job meanwhile) or failing counts as not woken.
+		for (const t of woken) {
+			let woke = false;
+			await board.startJob(t, WAKING, async () => void (woke = await wakeThread(board, t)));
+			if (!woke) failed.push(t);
+		}
 		if (woken.length > 1) board.setMessage(failed.length ? `⚠ Woke all but ${ids(failed)}` : `Woke ${ids(woken)}`);
 	});
 }
