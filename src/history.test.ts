@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { backfill, threadChanges } from './history.js';
-import type { State, Thread } from './state.js';
+import { backfill, recordHistory, threadChanges } from './history.js';
+import { saveState, type State, type Thread } from './state.js';
+import { fixture } from './testHelpers.js';
 
 const TS = '2026-11-19T12:00:00.000Z';
 
@@ -79,4 +82,54 @@ test('backfill: a created entry per thread at its createdAt, marked backfilled',
 		{ ts: '2026-11-01T00:00:00.000Z', thread: '1', project: 'p', event: 'created', title: 'a thread', column: 'done', plan: false, backfilled: true },
 		{ ts: 'then', thread: '2', project: 'p', event: 'created', title: 'a thread', column: 'planned', plan: false, backfilled: true },
 	]);
+});
+
+const lines = (dir: string) =>
+	readFileSync(join(dir, 'history.jsonl'), 'utf8')
+		.split('\n')
+		.filter(Boolean)
+		.map(l => JSON.parse(l));
+
+test('saveState: appends each change beside the state file, privately, and nothing for a save that changes nothing', () => {
+	const { dir, state } = fixture([{ title: 'one' }]);
+	const file = join(dir, 'state.json');
+	assert.deepEqual(lines(dir).map(e => [e.event, e.thread, e.backfilled]), [['created', '1', undefined]], "the first save's threads are new, not backfilled");
+	assert.equal(statSync(join(dir, 'history.jsonl')).mode & 0o777, 0o600);
+	const t = state.threads[0]!;
+	saveState({ ...state, threads: [{ ...t, column: 'active' }] }, file);
+	saveState({ ...state, threads: [{ ...t, column: 'active', updatedAt: 'later' }] }, file);
+	saveState({ ...state, threads: [{ ...t, column: 'active', local: true }] }, file);
+	assert.deepEqual(lines(dir).map(e => e.event), ['created', 'moved', 'local']);
+});
+
+test('saveState: history starts with a backfill of the threads already there, only once', () => {
+	const { dir, state } = fixture([{ title: 'one' }, { title: 'two' }]);
+	const file = join(dir, 'state.json');
+	rmSync(join(dir, 'history.jsonl'));
+	saveState({ ...state, threads: [{ ...state.threads[0]!, column: 'active' }, state.threads[1]!] }, file);
+	saveState({ ...state, threads: [{ ...state.threads[0]!, column: 'polish' }, state.threads[1]!] }, file);
+	assert.deepEqual(
+		lines(dir).map(e => [e.event, e.thread, e.backfilled, e.ts === state.threads[0]!.createdAt]),
+		[
+			['created', '1', true, true],
+			['created', '2', true, true],
+			['moved', '1', undefined, false],
+			['moved', '1', undefined, false],
+		],
+	);
+});
+
+test("saveState: a state file it can't read still gets saved over, with no history made up from it", () => {
+	const { dir, state } = fixture();
+	const file = join(dir, 'state.json');
+	rmSync(join(dir, 'history.jsonl'), { force: true });
+	writeFileSync(file, '{not json');
+	saveState({ ...state, threads: [] }, file);
+	assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).threads, []);
+	assert.throws(() => statSync(join(dir, 'history.jsonl')));
+});
+
+test("recordHistory: a history file it can't write doesn't throw", () => {
+	const { dir } = fixture();
+	assert.doesNotThrow(() => recordHistory(state(), state(thread()), join(dir, 'missing', 'history.jsonl')));
 });

@@ -1,3 +1,4 @@
+import { appendFileSync, existsSync } from 'node:fs';
 import type { Column, State, Thread } from './state.js';
 
 /**
@@ -64,3 +65,16 @@ export function threadChanges(before: State, after: State, ts: string): HistoryE
 
 /** A `created` entry for each thread already in `state`, for starting history on a board that has threads. */
 export const backfill = (state: State): HistoryEntry[] => state.threads.map(t => created(t, t.createdAt, true));
+
+/**
+ * Append what changed between `before` and `after` to the history file. With no file yet, history starts with a
+ * backfilled `created` entry for each thread in `before`. Never throws: losing a line beats losing a save.
+ */
+export function recordHistory(before: State, after: State, file: string, ts = new Date().toISOString()): void {
+	try {
+		const entries = [...(existsSync(file) ? [] : backfill(before)), ...threadChanges(before, after, ts)];
+		if (!entries.length) return;
+		// Private, like the rest of oo's data (PRIVATE_FILE in state.ts, which this can't import at runtime).
+		appendFileSync(file, entries.map(e => JSON.stringify(e) + '\n').join(''), { mode: 0o600 });
+	} catch {}
+}
