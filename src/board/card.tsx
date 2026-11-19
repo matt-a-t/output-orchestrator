@@ -7,26 +7,26 @@ import { followUps, preMergeDone, todosDone, undelivered } from '../threads.js';
 import { formatTokens, LARGE_CONTEXT } from '../transcripts.js';
 
 const BADGES: Partial<Record<Status, [string, string]>> = {
-	working: ['⚙', 'yellow'],
-	waiting: ['⏸', 'red'],
+	working: ['●', 'yellow'],
+	waiting: ['‖', 'red'],
 	stopped: ['✓', 'green'],
 };
 
 export const LEGEND: [string, string | undefined, string][] = [
-	['⚙', 'yellow', 'working'],
-	['⏸', 'red', 'needs you'],
+	['●', 'yellow', 'working'],
+	['‖', 'red', 'needs you'],
 	['✓', 'green', 'stopped'],
 	['○', 'gray', 'open, no activity yet'],
 	['↻', 'gray', 'closed, resumable'],
 	['↻', 'red', 'closed mid-work, w wakes it'],
 	['±', 'magenta', 'changes to review'],
 	['⚡', 'red', 'PR has conflicts'],
-	['✉', 'cyan', 'messages from other threads, told when claude stops'],
+	['✎', 'cyan', 'messages from other threads, told when claude stops'],
 	['⧗', 'red', 'blocked by another thread (B)'],
 	['⤳', 'blue', 'after-merge checkpoints left'],
 	['▲', 'red', 'high priority (!)'],
 	['▽', 'gray', 'low priority (!)'],
-	['▶', 'green', 'one of its commands is running (r)'],
+	['►', 'green', 'one of its commands is running (r)'],
 	['⇄3000→49153', 'cyan', "its container's port 3000 is on localhost:49153"],
 	['379k', undefined, 'context to resend (yellow: large, ~: compacted)'],
 	['42m warm', 'green', 'cache warm this long: resume before then for less'],
@@ -110,7 +110,7 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 						{PRIORITY_MARKS[t.priority]}
 					</Text>
 				) : null}
-				{running ? <Text color="green"> ▶</Text> : null}
+				{running ? <Text color="green"> ►</Text> : null}
 				{ports ? <Text color="cyan"> ⇄{ports}</Text> : null}
 				{unreviewed && !working ? (
 					<Text color="magenta" bold>
@@ -130,7 +130,7 @@ function CardLines({ thread: t, selected, project, live, status, resumable, stal
 				{/* Messages from other threads its claude hasn't heard yet. */}
 				{undelivered(t.inbox).length ? (
 					<Text color="cyan" bold>
-						{' '}✉{undelivered(t.inbox).length}
+						{' '}✎{undelivered(t.inbox).length}
 					</Text>
 				) : null}
 				{/* Every step before the merge approved: ready to move on to Polish and a PR. */}

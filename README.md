@@ -112,9 +112,9 @@ ticket, project, colour, priority and diff base are edited in place and its plan
 the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
 already has a branch or directory can't change project.
 
-Card badges: ⚙ working, ⏸ needs you (permission prompt), ✓ stopped, ○ window open with no
+Card badges: ● working, ‖ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
-approved, ✉ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up), then the context size and cache time left (see above). Each card shows the thread number and project abbreviation (or name, if it has none),
+approved, ✎ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up), then the context size and cache time left (see above). Each card shows the thread number and project abbreviation (or name, if it has none),
 with the title beneath (after its ticket key, if it has one).
 
 ### Tickets
@@ -400,7 +400,7 @@ highlighted). It opens in a new terminal window of its own, apart from the board
   run, and `prefix b` comes back.
 
 Each run is its own tmux session, `oo-run_<project>_<thread>_<command>`, which the window
-attaches to, so closing the window leaves it running. A card shows `▶` while a command runs for
+attaches to, so closing the window leaves it running. A card shows `►` while a command runs for
 its thread, and `r` shows each command's status: running, or how it exited. A finished command
 leaves a shell with its output. In the list, `⏎` on a running command opens another window on it,
 `R` restarts it in the windows already open, and `X` stops it. A thread's runs stop when its
@@ -507,7 +507,7 @@ finished.
 Threads whose work is related can pass each other context. A thread's claude runs
 `oo thread send <id> <message>` (or `--file -`) when its work changes something another thread
 relies on, such as an API, a shared file or a decision, and the message waits in that thread's inbox,
-shown as ✉ on its card. The board pastes it into the other claude once its turn ends (never while
+shown as ✎ on its card. The board pastes it into the other claude once its turn ends (never while
 it's working or waiting on a question). If that claude is closed, it's told as it next starts, or straight
 away with `--wake`, which resumes it (only from outside a thread). Run outside a thread, `oo thread send`
 marks its message unverified rather than from you: any claude could `cd` out of its thread and send it.

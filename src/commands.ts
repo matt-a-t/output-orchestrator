@@ -68,7 +68,7 @@ export async function tmuxSnapshot(): Promise<TmuxSnapshot> {
 	return parseSnapshot(stdout, session);
 }
 
-/** Whether any of the thread's commands are running (the ▶ on its card). */
+/** Whether any of the thread's commands are running (the ► on its card). */
 export function threadRunning(runs: Map<string, RunStatus>, project: Project, thread: Thread): boolean {
 	const prefix = runPrefix(project, thread);
 	return [...runs].some(([name, status]) => status.running && name.startsWith(prefix));

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture } from '../testHelpers.js';
-import { cardLines, sameCard, type CardProps } from './card.js';
+import { cardLines, LEGEND, sameCard, type CardProps } from './card.js';
 
 test('a card redraws only when something it shows changed', () => {
 	const { state } = fixture([{}, {}]);
@@ -24,4 +24,11 @@ test('unfinished cards take three lines and a gap, finished ones one line, and L
 	assert.equal(cardLines({ ...thread, column: 'planned', local: true }), 6);
 	assert.equal(cardLines({ ...thread, column: 'done' }), 1);
 	assert.equal(cardLines({ ...thread, column: 'archived', local: true }), 3);
+});
+
+// Characters that can show as text or emoji: string-width (and so Ink) counts them one cell, but some terminals
+// draw them two wide (Windows Terminal does ⚙ ⏸ ✉), which wraps full-width rows and throws Ink's redraw off.
+test('badges are glyphs terminals and Ink agree on the width of', () => {
+	for (const [badge] of LEGEND)
+		for (const ch of badge) assert.ok(!/\p{Extended_Pictographic}/u.test(ch) || /\p{Emoji_Presentation}/u.test(ch), `${ch} in ${badge} can draw as a wide emoji`);
 });

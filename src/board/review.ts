@@ -79,7 +79,7 @@ async function tellClaude(board: Board, thread: Thread, prompt: string, claude: 
 	if (claude === 'told') return ' · told claude';
 	const sent = await applyRequest(board.store, { id: 'approve', op: 'send', thread: thread.id, from: USER_SENDER, text: prompt });
 	if (!sent.ok) return ` · ⚠ claude not told: ${sent.message}`;
-	return ` · ✉ claude hears it ${claude === 'busy' ? 'when its turn ends' : 'when it next starts'}`;
+	return ` · ✎ claude hears it ${claude === 'busy' ? 'when its turn ends' : 'when it next starts'}`;
 }
 
 /**

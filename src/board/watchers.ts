@@ -103,7 +103,7 @@ export function useStatuses(stateRef: RefObject<State>, setState: SetState) {
 /**
  * What the board polls tmux for, in one call every 2s: the open windows (badges only mean something
  * while the thread's window is open) and the project commands' run sessions (r) and how each is going,
- * for the run picker and the ▶ on cards.
+ * for the run picker and the ► on cards.
  */
 export function useTmux() {
 	const [liveWindows, setLiveWindows] = useState<Set<string>>(new Set());
