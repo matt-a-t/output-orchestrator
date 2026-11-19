@@ -117,8 +117,11 @@ activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w
 approved, ✎ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up),
 ↺ a rebase pending since what it was stacked on merged (`u`), and a green → once it's ready for the next column. They follow the
 thread number on the card's first line, one glyph each with counts where they have one, so a narrow column never cuts them off.
-The project abbreviation (or name, if it has none) and the title follow on the line beneath (after its ticket key, if it has one),
-then the context size and cache time left (see above).
+The project abbreviation (or name, if it has none) and the title follow on the line beneath (after its ticket key, if it has one).
+The third line says what moves the thread on from its column: the plan's first line in Ideas and Planned, steps done and the
+next one in Active (a magenta ● when one is waiting for your review), the drafted commit and PR messages and the quiz score in
+Polish, the PR's merge state in PR, and the next after-merge step in Follow-up, with how long the thread has sat unchanged
+(`3d`) at its end once that's a day. The last line is the context size and cache time left (see above).
 
 ### Tickets
 

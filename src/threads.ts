@@ -44,6 +44,19 @@ export function inDir(cwd: string, dir: string): boolean {
 	return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
+/**
+ * The start of a plan on one line: its first `lines` non-blank lines, without markdown's heading marks
+ * (a "#61" that starts a heading's text stays).
+ */
+export function planSummary(plan: string, lines = 3): string {
+	return plan
+		.split('\n')
+		.map(line => line.trim().replace(/^#+\s+/, ''))
+		.filter(Boolean)
+		.slice(0, lines)
+		.join(' · ');
+}
+
 /** How many of the todos are done, as `3/7`. */
 export function todoProgress(todos: Todo[]): string {
 	return `${todos.filter(t => t.status === 'done').length}/${todos.length}`;

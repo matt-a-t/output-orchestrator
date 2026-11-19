@@ -7,7 +7,7 @@ import { mouse, type MouseEvent } from '../mouse.js';
 import { COLUMN_LABELS, type Column, type Thread } from '../state.js';
 import { threadWindowName } from '../tmux.js';
 import type { Board } from './board.js';
-import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES, MIN_COLUMN_WIDTH, rowLines as rowLinesOf } from './card.js';
+import { Card, cardHeight, cardLines, LIST_TOP, LOCAL_BORDER_LINES, MIN_COLUMN_WIDTH, staleAge, rowLines as rowLinesOf } from './card.js';
 import { threadRunning } from '../commands.js';
 import { containerName, knownPorts, portsText } from '../container.js';
 import { blockers } from '../threads.js';
@@ -173,6 +173,7 @@ export function Columns({ board, shown, columns, cursor, setCursor, active, unre
 										running={(p => !!p && threadRunning(board.runs(), p, t))(board.project(t.project))}
 										ports={portsText(knownPorts.get(containerName(t)))}
 										{...contextProps(t, now)}
+										age={staleAge(t.updatedAt, now)}
 									/>
 								))}
 							</Box>

@@ -5,7 +5,7 @@ import { mergeLabel, type PrStatus } from '../prHost.js';
 import type { Thread } from '../state.js';
 import { LEGEND } from './card.js';
 import { TodoList } from './todoList.js';
-import { merged as isMerged } from '../threads.js';
+import { merged as isMerged, planSummary } from '../threads.js';
 
 // Rows inside the thread's details window, which stays this tall so the board above doesn't jump.
 const INFO_HEIGHT = 8;
@@ -27,19 +27,6 @@ type Props = {
 	// Whatever is being asked for (the `n` flow's prompts), between the thread's details and the message.
 	children?: ReactNode;
 };
-
-/**
- * The start of a plan on one line: its first three non-blank lines, without markdown's heading marks
- * (a "#61" that starts a heading's text stays).
- */
-export function planSummary(plan: string): string {
-	return plan
-		.split('\n')
-		.map(line => line.trim().replace(/^#+\s+/, ''))
-		.filter(Boolean)
-		.slice(0, 3)
-		.join(' · ');
-}
 
 /** What the cards' badges mean, wrapping only between entries so none is split across lines. */
 export function Legend({ width }: { width: number }) {
