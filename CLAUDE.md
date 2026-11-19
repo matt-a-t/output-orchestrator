@@ -28,6 +28,14 @@ hooks or `oo thread` run, rebuild here: containers pick it up straight away, lik
 The reference image and firewall are in `docker/`. To try them, build the image (see README, Containers) and
 set it on a scratch project, not on this one while you're running threads on it.
 
+## Data files
+
+oo's data lives in `~/.local/share/output-orchestrator` (`DATA_DIR`, state.ts), private to the user. `state.json` is
+the board as it is now. `history.jsonl` gets a line for each change in a thread's life (created, moved, Local, PR, ticket,
+plan), appended by `saveState` from a diff of the old and new state (`history.ts`), so every writer is covered.
+`events.jsonl` gets a line for each claude hook event (`hook.ts`). The oo skill's "Asking about how the user works"
+(`SKILL` in status.ts) tells claude how to read and join them, so describe a change to their shape there too.
+
 ## Nomenclature
 
 - **Thread**: what moves through the board. It has a worktree, a branch and maybe a PR, and can

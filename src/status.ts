@@ -67,7 +67,7 @@ export const SKILL_FILE = join(homedir(), '.claude', 'skills', 'oo', 'SKILL.md')
 
 export const SKILL = `---
 name: oo
-description: Read and change the output-orchestrator (oo) board of threads with the \`oo thread\` CLI. Use when OO_THREAD_ID is set (this claude was launched from the board), when the user mentions the board, a thread by number (#12) or oo, when follow-up work turns up that belongs in its own thread, or when your work affects another thread (send it a message).
+description: Read and change the output-orchestrator (oo) board of threads with the \`oo thread\` CLI. Use when OO_THREAD_ID is set (this claude was launched from the board), when the user mentions the board, a thread by number (#12) or oo, when follow-up work turns up that belongs in its own thread, when your work affects another thread (send it a message), or when the user asks how they work with it (how long threads take, where they come from, time spent waiting).
 ---
 
 # The oo board
@@ -159,6 +159,35 @@ ${THREAD_USAGE}
   in the project's checkout (or back in its worktree) once the turn ends, so finish what you're saying first. In a container
   (\`oo thread show\` lists one), Local just forwards ports and happens at once: start the dev server on the project's ports for the user to try.
   Never move a thread into or out of Local without asking.
+
+## Asking about how the user works
+
+oo records facts and leaves the analysis to you. When the user asks how long threads take, where they come from or
+where the time goes, read the files in \`~/.local/share/output-orchestrator\` (they can be large, so filter with
+\`jq\` or a script instead of reading them whole):
+
+- **\`state.json\`**: the board as it is now. \`threads[]\` has each thread's \`id\`, \`title\`, \`plan\`, \`project\`,
+  \`column\`, \`ticket\` (\`key\`, \`url\`), \`pr\`, \`todos\`, \`origin\`, \`sessionId\`, \`createdAt\`. \`updatedAt\` is only the last change.
+- **\`history.jsonl\`**: one line per change in a thread's life, each \`{ts, thread, project, event, …}\`:
+  \`created\` (\`title\`, \`column\`, \`plan\` true/false, \`origin\`, \`ticket\`, \`stackedOn\`), \`moved\` (\`from\`, \`to\`, columns
+  including \`archived\` and \`ideas\`), \`local\` (\`on\`), \`pr\` (\`number\`, \`url\`), \`ticket\` (\`key\`), \`plan\` (the plan was edited)
+  and \`removed\`. \`created\` lines marked \`backfilled: true\` are for threads made before history began: nothing they did
+  before then is known, so leave them out of anything timed.
+- **\`events.jsonl\`**: one line per claude hook event in a thread, \`{thread, event, session, transcript, cwd, type, ts}\`,
+  with \`event\` one of SessionStart, UserPromptSubmit, Stop, Notification, … and \`type\` the notification's type.
+- **Transcripts**: \`events.jsonl\` gives each session's transcript path (\`~/.claude/projects/…/<session>.jsonl\`), the
+  conversation itself. Claude Code deletes them after \`cleanupPeriodDays\` (30 by default), so older ones may be gone.
+
+Join them on the thread id, and on the session id to reach a transcript. The conventions:
+
+- **Cycle time**: from a thread's first \`moved\` to \`active\` to its \`moved\` to \`done\` (or \`followup\`, if it's after the merge you want).
+- **Claude's time**: the spans from each UserPromptSubmit to the next Stop. **Waiting on the user**: from a Stop or
+  Notification to the next UserPromptSubmit.
+- **Where a thread came from**: \`origin\` is \`board\` (made on the board), \`cli\` (\`oo thread add\`, often by a claude
+  planning from a ticket) or \`import\` (began as a claude chat outside the board); \`ticket\` says whether it had one.
+  Whether it started as a backlog story or an idea in a chat takes judgment: read the plan, ticket and first transcript.
+
+Say how many threads an answer rests on, and which ones you left out and why.
 `;
 
 /** Install the skill that tells claude about \`oo thread\` (see threadCommand.ts). */
