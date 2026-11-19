@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execaSync } from 'execa';
 import { z } from 'zod';
+import { recordHistory } from './history.js';
 
 export const COLUMNS = ['planned', 'active', 'polish', 'pr', 'followup', 'done'] as const;
 export const COLUMN_LABELS: Record<Column, string> = {
@@ -121,6 +122,10 @@ export type Priority = (typeof PRIORITIES)[number];
 export const PRIORITY_MARKS: Record<Priority, string> = { high: '▲', normal: '', low: '▽' };
 export const PRIORITY_COLORS: Record<Priority, string | undefined> = { high: 'red', normal: undefined, low: 'gray' };
 
+/** Where a thread was started: the board's new-thread form (a), `oo thread add` (from claude or a shell) or imported with i. */
+export const ORIGINS = ['board', 'cli', 'import'] as const;
+export type Origin = (typeof ORIGINS)[number];
+
 export const TODO_MARKS: Record<TodoStatus, string> = { pending: '○', active: '▸', review: '●', done: '✓' };
 
 const ThreadSchema = z.preprocess(
@@ -201,6 +206,8 @@ const ThreadSchema = z.preprocess(
 		// Set when the thread it built on merges: that branch's last commit, so u rebases only this thread's own
 		// commits onto the default branch (a squash merge leaves the originals behind). Cleared once u runs.
 		rebaseFrom: z.string().optional(),
+		// Unset for threads made before it was recorded.
+		origin: z.enum(ORIGINS).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string(),
 	}),
@@ -217,6 +224,8 @@ export type State = z.infer<typeof StateSchema>;
 
 export const DATA_DIR = join(homedir(), '.local', 'share', 'output-orchestrator');
 export const STATE_FILE = join(DATA_DIR, 'state.json');
+/** Beside the state file: one line per change in a thread's life (see history.ts). */
+export const HISTORY_FILE_NAME = 'history.jsonl';
 /** Mode for the files oo writes there: thread prompts, messages and claude's events are nobody else's business. */
 export const PRIVATE_FILE = 0o600;
 
@@ -255,12 +264,27 @@ export function withHome(state: State, home = homedir()): State {
 /** What the state file looked like right after a save, to tell that save apart from another program's write. */
 export type Saved = { mtimeMs: number; size: number };
 
-/** Save the state, compactly: it's rewritten on every change, and the board, the CLI and claude's hooks all parse it. */
+/** The state file as it was, for history: empty when there isn't one, undefined when it can't be read. */
+function previousState(file: string): State | undefined {
+	try {
+		if (!existsSync(file)) return { version: 1, projects: [], threads: [] };
+		return StateSchema.parse(JSON.parse(readFileSync(file, 'utf8')));
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Save the state, compactly: it's rewritten on every change, and the board, the CLI and claude's hooks all parse it.
+ * What changed in each thread's life is appended to history.jsonl beside it (see history.ts), so every writer is covered.
+ */
 export function saveState(state: State, file = STATE_FILE): Saved {
 	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+	const before = previousState(file);
 	const tmp = `${file}.tmp`;
 	writeFileSync(tmp, JSON.stringify(state), { mode: PRIVATE_FILE });
 	renameSync(tmp, file);
+	if (before) recordHistory(before, state, join(dirname(file), HISTORY_FILE_NAME));
 	const { mtimeMs, size } = statSync(file);
 	return { mtimeMs, size };
 }

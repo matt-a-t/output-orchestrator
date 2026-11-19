@@ -84,6 +84,7 @@ export function ImportList({ board, project, threads, active, onClose, onShow }:
 			sessionId: outside.id,
 			transcriptPath: outside.transcriptPath,
 			cwd: outside.cwd,
+			origin: 'import',
 		});
 		board.setState(s => ({ ...s, threads: [...s.threads, thread] }));
 		board.showAtEnd('planned');

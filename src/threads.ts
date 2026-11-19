@@ -8,7 +8,7 @@ import { prHost, prState, retargetPr } from './prHost.js';
 import { runColumnHook, runNewThreadHook, tryHook } from './hooks.js';
 import type { Request, Response } from './requests.js';
 import { requestedTicket } from './tickets.js';
-import { COLUMN_LABELS, hidden, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
+import { COLUMN_LABELS, hidden, newThreadId, PRIORITIES, UNVERIFIED_SENDER, USER_SENDER, type Column, type Message, type Origin, type Priority, type Project, type State, type Thread, type Todo, type TodoStatus } from './state.js';
 import { killWindow, threadWindowName } from './tmux.js';
 
 /**
@@ -176,7 +176,7 @@ export function matchesSearch(thread: Thread, query: string): boolean {
 /** Add a thread to the bottom of Planned. */
 export function addThread(
 	state: State,
-	fields: Pick<Thread, 'project' | 'title'> & Partial<Omit<Thread, 'id' | 'column'>>,
+	fields: Pick<Thread, 'project' | 'title'> & { origin: Origin } & Partial<Omit<Thread, 'id' | 'column'>>,
 ): { state: State; thread: Thread } {
 	const now = new Date().toISOString();
 	// Without worktrees, the thread runs in the project directory, like an imported one.
@@ -431,7 +431,7 @@ export async function applyRequest(store: Store, request: Request): Promise<Resp
 			if (problem) return { id, ok: false, message: problem };
 		}
 		const stacked = parent && { blockedBy: [parent.id], stackedOn: parent.id, base: parent.branch };
-		const { thread } = addThread(state, { ...fields, ...stacked });
+		const { thread } = addThread(state, { ...fields, ...stacked, origin: 'cli' });
 		store.update(s => ({ ...s, threads: [...s.threads, thread] }));
 		const ran = await runNewThreadHook(project, thread);
 		const created = `Created #${thread.id}${thread.ticket ? ` for ${thread.ticket.key}` : ''}${parent ? `, building on #${parent.id}'s ${parent.branch}` : ''}`;

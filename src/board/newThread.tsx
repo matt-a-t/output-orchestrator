@@ -162,7 +162,7 @@ async function threadFromForm(board: Board, project: Project, fields: NewFields,
 type NewFields = Pick<Thread, 'title' | 'priority'> & Partial<Pick<Thread, 'ticket'>>;
 
 function createThread(board: Board, project: string, fields: NewFields) {
-	const { thread } = addThread(board.state(), { project, ...fields });
+	const { thread } = addThread(board.state(), { project, ...fields, origin: 'board' });
 	board.setState(s => ({ ...s, threads: [...s.threads, thread] }));
 	board.showAtEnd('planned');
 	const { ticket } = thread;
