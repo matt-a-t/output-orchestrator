@@ -13,8 +13,10 @@ checks its branch out here, but nothing rebuilds unless the project's hooks do i
 Leaving Local puts the checkout back on main, so rebuild and restart again to get that version back.
 
 For a project with a `container` setting, Local checks nothing out. It forwards the project's ports to the
-thread's container instead (`src/board/forward.ts`), so the steps above don't apply. `inCheckout` (threads.ts)
-is what tells the two kinds of Local apart.
+thread's container instead (`src/board/forward.ts`), and with `container.compose` runs the compose stack on the
+host from the thread's worktree and joins the container to it (`src/stack.ts`), so the steps above don't apply.
+`inCheckout` (threads.ts) is what tells the two kinds of Local apart. The stack's compose files come from the
+project checkout, never the worktree, which the container can write.
 
 ## Containers
 
