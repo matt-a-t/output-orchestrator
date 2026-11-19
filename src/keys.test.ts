@@ -9,7 +9,10 @@ const keysOf = (label: string) => label.split(/[\s/]+/).filter(Boolean);
 
 test('every thread binding is on the ? screen, alone or in a pair', () => {
 	const shown = new Set(BINDINGS.flatMap(b => (b.help ? keysOf(b.help.keys ?? b.key) : [])));
-	for (const b of BINDINGS) assert.ok(shown.has(b.key), `${b.key} has no row on the ? screen`);
+	for (const b of BINDINGS) {
+		const key = b.meta ? `M-${b.key}` : b.key;
+		assert.ok(shown.has(key), `${key} has no row on the ? screen`);
+	}
 });
 
 test('the ? screen and its sections still have the bound rows', () => {

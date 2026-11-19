@@ -144,8 +144,9 @@ async function shellCommand([id, ...rest]: string[]): Promise<number> {
 		return 1;
 	}
 	if (!rest.includes('--here')) {
+		// Printed either way, for the tmux key to show.
 		const message = await openShellTab(thread);
-		if (message.startsWith('✗')) console.error(message);
+		console.log(message);
 		return message.startsWith('✗') ? 1 : 0;
 	}
 	const project = state.projects.find(p => p.name === thread.project);
