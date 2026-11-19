@@ -4,7 +4,7 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { fixture } from './testHelpers.js';
-import { containerText, loadState, parseContainer, projectProblem, saveState, stillSaved, withHome } from './state.js';
+import { containerText, loadState, type ContainerText, parseContainer, projectProblem, saveState, stillSaved, withHome } from './state.js';
 
 test('worktrees need the project to be a git repo', async () => {
 	const { project, state } = fixture();
@@ -34,13 +34,27 @@ test('the jira site has to be on atlassian.net, so the API token goes nowhere el
 });
 
 test('a container setting is typed as text and parsed on save', () => {
-	assert.deepEqual(parseContainer({ image: ' oo-thread ', ports: '3000, 5173 3000', allow: 'registry.example.com,  pypi.org' }), {
+	const text = (t: Partial<ContainerText>): ContainerText => ({ image: '', ports: '', allow: '', compose: '', stack: '', ...t });
+	assert.deepEqual(parseContainer(text({ image: ' oo-thread ', ports: '3000, 5173 3000', allow: 'registry.example.com,  pypi.org' })), {
 		container: { image: 'oo-thread', ports: [3000, 5173], allow: ['registry.example.com', 'pypi.org'] },
 	});
-	assert.deepEqual(parseContainer({ image: '', ports: '', allow: '' }), {});
-	assert.match(parseContainer({ image: '', ports: '3000', allow: '' }).problem ?? '', /need an image/);
-	assert.match(parseContainer({ image: 'x', ports: '70000', allow: '' }).problem ?? '', /70000 isn't a port/);
-	assert.deepEqual(containerText({ image: 'x', ports: [3000, 5173], allow: ['a.com'] }), { image: 'x', ports: '3000, 5173', allow: 'a.com' });
+	assert.deepEqual(parseContainer(text({})), {});
+	assert.match(parseContainer(text({ ports: '3000' })).problem ?? '', /need an image/);
+	assert.match(parseContainer(text({ compose: 'docker-compose.yml' })).problem ?? '', /need an image/);
+	assert.match(parseContainer(text({ image: 'x', ports: '70000' })).problem ?? '', /70000 isn't a port/);
+	assert.deepEqual(containerText({ image: 'x', ports: [3000, 5173], allow: ['a.com'] }), { image: 'x', ports: '3000, 5173', allow: 'a.com', compose: '', stack: '' });
+});
+
+test('a container setting can carry a compose stack', () => {
+	const text = (t: Partial<ContainerText>): ContainerText => ({ image: 'x', ports: '', allow: '', compose: '', stack: '', ...t });
+	assert.deepEqual(parseContainer(text({ compose: 'docker-compose.yml, compose.dev.yml' })).container?.compose, { files: ['docker-compose.yml', 'compose.dev.yml'] });
+	assert.deepEqual(parseContainer(text({ compose: 'docker-compose.yml', stack: ' gpd ' })).container?.compose, { files: ['docker-compose.yml'], name: 'gpd' });
+	assert.match(parseContainer(text({ stack: 'gpd' })).problem ?? '', /needs compose files/);
+	assert.match(parseContainer(text({ compose: 'c.yml', stack: 'GPD' })).problem ?? '', /lowercase/);
+	assert.match(parseContainer(text({ compose: '/etc/c.yml' })).problem ?? '', /relative to the thread's worktree/);
+	assert.match(parseContainer(text({ compose: '../c.yml' })).problem ?? '', /relative to the thread's worktree/);
+	const compose = { files: ['a.yml', 'b.yml'], name: 'gpd' };
+	assert.deepEqual(parseContainer(containerText({ image: 'x', ports: [], allow: [], compose })).container?.compose, compose);
 });
 
 test('a container needs worktrees, since each thread mounts its own', () => {

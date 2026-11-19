@@ -8,6 +8,7 @@ import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
+import { joinStack, stackOf } from './stack.js';
 import { currentSessionId, shellQuote, threadWindowName } from './tmux.js';
 import { transcriptDir } from './transcripts.js';
 import { DATA_DIR, hidden, PRIVATE_FILE, type ContainerSetting, type Project, type Thread } from './state.js';
@@ -277,6 +278,7 @@ async function makeReady(project: ContainerProject, thread: Thread, cwd: string,
 		await removeContainer(name);
 		current = undefined;
 	}
+	const restarted = !current?.running;
 	if (!current) {
 		prepareHome(project, thread, cwd, paths);
 		const made = await docker(args, { reject: false });
@@ -285,6 +287,10 @@ async function makeReady(project: ContainerProject, thread: Thread, cwd: string,
 	} else if (!current.running) await docker(['start', name]);
 	// Every time: a container left running without it (the board quit before it was up) mustn't be used open.
 	await firewall(name, project.container.allow);
+	// Made or started again while in Local with a stack: it's off the stack's networks, or its firewall forgot them.
+	// Not worth failing over, which would stop claude starting; restoreForwards and o say what's wrong.
+	const stack = stackOf(project);
+	if (restarted && stack && thread.local && thread.forwarded) await joinStack(stack, name).catch(() => {});
 	const ports = await publishedPorts(name);
 	knownPorts.set(name, ports);
 	return ports;

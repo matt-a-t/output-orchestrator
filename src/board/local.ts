@@ -1,5 +1,6 @@
 // Moving a thread into Local (its branch checked out in the project's own checkout) and back. For a project
-// with containers, Local forwards the project's ports to the thread's container instead (see forward.ts).
+// with containers, Local forwards the project's ports to the thread's container instead (see forward.ts), and runs
+// its compose stack, if it has one, from the thread's worktree (see stack.ts).
 
 import { useEffect } from 'react';
 import { errorMessage, resultMessage, stillWorking, unknownProject } from '../errors.js';
@@ -15,6 +16,7 @@ import { closeClaude, launchClaude } from './claude.js';
 import { createWorktree } from './worktree.js';
 import { containerName, containerProject, ensureContainer, type ContainerProject } from '../container.js';
 import { forward, forwardMapping, unforward } from './forward.js';
+import { joinStack, leaveStack, stackDown, stackOf, stackUp } from '../stack.js';
 
 /** Copy the thread's transcript to where `claude --resume` looks from `cwd`. */
 function moveTranscript(thread: Thread, cwd: string): Pick<Thread, 'transcriptPath'> {
@@ -93,43 +95,75 @@ export async function enterLocal(board: Board, thread: Thread): Promise<Outcome>
 }
 
 /**
- * Local for a project with containers: forward the project's ports on the host to the thread's container (started
- * if need be), then run the enter local hook in its worktree, in the container, so a dev server it starts is the one
- * forwarded to. Claude, the worktree and the container stay as they are.
+ * Local for a project with containers: bring its compose stack up from the thread's worktree if it has one, forward
+ * the project's ports on the host to the thread's container (started if need be) and join it to the stack, then run
+ * the enter local hook in its worktree, in the container, so a dev server it starts is the one forwarded to. Claude,
+ * the worktree and the container stay as they are.
  */
 async function forwardLocal(board: Board, project: ContainerProject, thread: Thread): Promise<Outcome> {
 	if (!hasWorktree(thread)) return { ok: false, message: `#${thread.id} has no worktree yet — open it first` };
 	const cwd = worktreePath(thread);
+	const stack = stackOf(project);
 	let mapping: [number, number][];
+	let up = false;
 	try {
+		if (stack) {
+			board.setMessage(`Bringing ${project.name}'s stack up from #${thread.id}'s worktree…`);
+			await stackUp(stack, cwd);
+			up = true;
+		}
 		mapping = await forwardPorts(project, thread);
+		if (stack) await joinStack(stack, containerName(thread));
 	} catch (err) {
+		await unforward(thread.id);
+		// Down again, rather than left running from a thread that isn't in Local.
+		if (stack && up) await leaveStack(stack, containerName(thread)).then(() => stackDown(stack)).catch(() => {});
 		return { ok: false, message: `#${thread.id} can't go into Local: ${errorMessage(err)}` };
 	}
 	board.updateThread(thread.id, { local: true, forwarded: true });
-	const done = `${mapping.map(([port]) => `localhost:${port}`).join(', ')} now go${mapping.length === 1 ? 'es' : ''} to #${thread.id}'s container`;
+	const forwarded = mapping.length ? `${mapping.map(([port]) => `localhost:${port}`).join(', ')} now go${mapping.length === 1 ? 'es' : ''} to #${thread.id}'s container` : '';
+	const done = [stack && `${project.name}'s stack runs from #${thread.id}'s worktree`, forwarded].filter(Boolean).join('; ');
 	return { ok: true, message: await hook(project, 'enterLocal', { ...thread, local: true, forwarded: true }, cwd, done, { container: containerName(thread) }) };
 }
 
-/** Out of Local by port forwarding: stop forwarding, then run the leave local hook in the thread's worktree, in its container. */
+/** Out of Local by port forwarding: stop forwarding and take the stack down, then run the leave local hook in the thread's worktree, in its container. */
 async function unforwardLocal(board: Board, project: Project, thread: Thread): Promise<string> {
 	await unforward(thread.id);
+	const stack = stackOf(project);
+	let down = '';
+	if (stack) {
+		board.setMessage(`Taking ${project.name}'s stack down…`);
+		down = await leaveStack(stack, containerName(thread))
+			.then(() => stackDown(stack))
+			.then(
+				() => '; its stack is down',
+				(err: unknown) => `; ⚠ its stack didn't come down: ${errorMessage(err)}`,
+			);
+	}
 	const back: Thread = { ...thread, local: undefined, forwarded: undefined };
 	board.updateThread(thread.id, { local: undefined, forwarded: undefined });
 	// In its container, if its project still has one.
 	const options = project.container ? { container: containerName(thread) } : {};
-	return hook(project, 'leaveLocal', back, worktreePath(thread), `#${thread.id} is out of Local; its ports are no longer forwarded`, options);
+	return hook(project, 'leaveLocal', back, worktreePath(thread), `#${thread.id} is out of Local; its ports are no longer forwarded${down}`, options);
 }
 
-/** Start the thread's container if need be and forward the project's ports to it; throws if it can't. Returns host port → published port. */
+/**
+ * Start the thread's container if need be and forward the project's ports to it; throws if it can't. Returns host
+ * port → published port. A project with a stack needn't forward any: what Local serves may all be in the stack.
+ */
 async function forwardPorts(project: ContainerProject, thread: Thread): Promise<[number, number][]> {
-	const { mapping, problem } = forwardMapping(project.container.ports, await ensureContainer(project, thread, worktreePath(thread)));
+	const published = await ensureContainer(project, thread, worktreePath(thread));
+	if (!project.container.ports.length && stackOf(project)) return [];
+	const { mapping, problem } = forwardMapping(project.container.ports, published);
 	if (problem) throw new Error(problem);
 	await forward(thread.id, mapping);
 	return mapping;
 }
 
-/** As the board starts, forward the ports of each Local thread whose project has containers again: the forwarding went when the board last quit. */
+/**
+ * As the board starts, forward the ports of each Local thread whose project has containers again: the forwarding
+ * went when the board last quit. The stack kept running, but join it again in case the container was restarted meanwhile.
+ */
 export async function restoreForwards(board: Board): Promise<void> {
 	for (const thread of board.state().threads) {
 		if (!thread.local || !thread.forwarded || !hasWorktree(thread)) continue;
@@ -137,8 +171,10 @@ export async function restoreForwards(board: Board): Promise<void> {
 		try {
 			if (!project) throw new Error('its project no longer has a container — o takes it out of Local');
 			await forwardPorts(project, thread);
+			const stack = stackOf(project);
+			if (stack) await joinStack(stack, containerName(thread));
 		} catch (err) {
-			board.setMessage(`⚠ Couldn't forward #${thread.id}'s ports for Local: ${errorMessage(err)}`);
+			board.setMessage(`⚠ Couldn't set #${thread.id} up for Local again: ${errorMessage(err)}`);
 		}
 	}
 }

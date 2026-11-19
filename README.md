@@ -237,7 +237,8 @@ To set it up:
    containers through the environment, never on a command line.
 3. In the projects screen (`P`), set the project's **container** to the image, its **ports** to the ones its dev
    servers listen on (e.g. `3000, 5173`), and **egress** to any hosts beyond the defaults that its threads need
-   (e.g. `pypi.org files.pythonhosted.org`, or an IPv4 address or CIDR). The project needs worktrees on.
+   (e.g. `pypi.org files.pythonhosted.org`, or an IPv4 address or CIDR). The project needs worktrees on. If
+   Local should run a compose stack, set **compose** too (see [A compose stack for Local](#a-compose-stack-for-local)).
 
 The container is `oo-<project>-<id>`. It starts when the thread's claude first opens, and claude, `s` shells and
 the thread's project commands (`r`) all run in it with `docker exec`. tmux and the board stay on your machine, so
@@ -261,6 +262,31 @@ thread's container, in its worktree, so an enter local hook like `npm run dev` s
 forwards to. The next local hook (leaving, or another thread entering) stops whatever the last one left running
 in its container. If a port is already taken on your machine, entering Local says so. The board forwards the
 ports again when it restarts.
+
+#### A compose stack for Local
+
+A thread's container has no Docker socket, so a local hook in it can't `docker compose up` your app's database and
+web server. Set the project's **compose** (`P`) to its compose files instead (e.g. `docker-compose.yml`), and Local
+runs the stack on your machine for the thread:
+
+- Entering Local runs `docker compose up -d --build` with the thread's worktree as the project directory, so `.`
+  in a bind mount or build context is the thread's code, then joins the thread's container to the stack's networks
+  and opens its firewall to them, so claude there reaches the services by name (`mysql -h db`). The stack publishes
+  its own ports on your machine, as it does when you run it by hand.
+- Leaving Local takes the container off the networks and runs `docker compose down`. Volumes stay, so the next
+  thread in Local finds the same data. Only one thread per project is in Local at a time, so to switch threads,
+  take one out and put the other in.
+- The stack's name is **stack name**, or by default the one `docker compose` picks in the project checkout, so it's
+  the same stack (and the same volumes) as the one you run there by hand. Entering Local takes yours over.
+- The compose files and `.env` are read from the project checkout, not the thread's worktree: the container can
+  write its worktree, and a compose file it wrote could mount anything on your machine. So a thread's change to the
+  compose file applies once it's merged, while a change to a Dockerfile the stack builds applies straight away.
+  Other untracked files the stack needs in the worktree are the worktree created hook's to copy in.
+- The container's **ports** are forwarded alongside, and may be empty if the stack serves everything. A port both
+  publish can't work, so entering Local refuses it.
+- The board joins the container again when it restarts, and whenever the container is made or started again
+  while in Local. Only the board touches the stack: it runs with your Docker, outside the firewall, as the
+  thread's code.
 
 What a container sees:
 
