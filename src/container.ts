@@ -282,7 +282,7 @@ async function makeReady(project: ContainerProject, thread: Thread, cwd: string,
 	if (!current) {
 		prepareHome(project, thread, cwd, paths);
 		const made = await docker(args, { reject: false });
-		// Another oo (`oo split` from a tmux key) may have just made it.
+		// Another oo (`oo shell` from a tmux key) may have just made it.
 		if (made.exitCode !== 0 && !/Conflict/i.test(made.stderr)) throw new Error(`docker couldn't make ${name}: ${made.stderr.trim()}`);
 	} else if (!current.running) await docker(['start', name]);
 	// Every time: a container left running without it (the board quit before it was up) mustn't be used open.
@@ -310,7 +310,10 @@ export const knownPorts = new Map<string, Map<number, number>>();
 /** The project, if its threads run in containers. */
 export const containerProject = (project: Project | undefined): ContainerProject | undefined => (project?.container ? (project as ContainerProject) : undefined);
 
-/** The shell `s` opens for a thread: yours, or in a container, whose image may not have yours, bash if it has it. */
+/** The key a thread's shell tab is started under in its container: not its window's, so closing claude leaves the shell open. */
+export const shellKey = (id: string) => `${threadWindowName(id)}-shell`;
+
+/** The shell `oo shell` opens for a thread: yours, or in a container, whose image may not have yours, bash if it has it. */
 export const threadShell = (project: Project | undefined): string[] =>
 	containerProject(project) ? ['sh', '-c', 'command -v bash >/dev/null && exec bash || exec sh'] : [process.env.SHELL || 'bash'];
 
@@ -319,6 +322,7 @@ export const NO_TOKEN = `${TOKEN_ENV} isn't set: a thread's container needs it t
 /**
  * What tmux runs for `command` in the thread's window or pane: as it is, or for a project with a container, in
  * the thread's container (started first). The token reaches docker through tmux's environment, not its arguments.
+ * In the container it's started under `key` (see execCommand), which stopKeyed ends it by.
  */
 export async function forThread(
 	project: Project | undefined,
@@ -326,14 +330,14 @@ export async function forThread(
 	cwd: string,
 	command: string[],
 	env: Record<string, string>,
-	{ needsToken = false, token = process.env[TOKEN_ENV] } = {},
+	{ needsToken = false, token = process.env[TOKEN_ENV], key = threadWindowName(thread.id) } = {},
 ): Promise<{ command: string[]; env: Record<string, string> }> {
 	const withContainer = containerProject(project);
 	if (!withContainer) return { command, env };
 	if (needsToken && !token) throw new Error(NO_TOKEN);
 	if (token) await shareToken(token);
 	await ensureContainer(withContainer, thread, cwd);
-	return { command: execCommand(containerName(thread), cwd, command, env, { key: threadWindowName(thread.id) }), env };
+	return { command: execCommand(containerName(thread), cwd, command, env, { key }), env };
 }
 
 let sharedToken: string | undefined;

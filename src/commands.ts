@@ -139,17 +139,17 @@ export type TerminalLaunch = { argv: string[] } | { switchClient: true };
 export type TerminalEnv = { env: NodeJS.ProcessEnv; hasWt: boolean };
 
 /**
- * The window to watch a run in, running `attach` (tmux attaching to its session): `$OO_TERMINAL`
- * (a command it's added to the end of, e.g. `kitty -e`), a Windows Terminal window on WSL, the
- * desktop's terminal on Linux, else none.
+ * The window to run `attach` in (for a run, tmux attaching to its session): `$OO_TERMINAL`
+ * (a command it's added to the end of, e.g. `kitty -e`), a Windows Terminal window on WSL (with `tab`,
+ * a tab in its most recent window instead), the desktop's terminal on Linux, else none.
  */
-export function terminalCommand({ env, hasWt }: TerminalEnv, attach: string[], title: string): TerminalLaunch {
+export function terminalCommand({ env, hasWt }: TerminalEnv, attach: string[], title: string, { tab = false } = {}): TerminalLaunch {
 	const custom = env.OO_TERMINAL?.trim();
 	if (custom) return { argv: [...custom.split(/\s+/), ...attach] };
 	if (env.WSL_DISTRO_NAME && hasWt) {
 		// wt reads ; as the start of its next command, even in the title.
 		const safeTitle = title.replaceAll(';', ',');
-		return { argv: ['wt.exe', '-w', 'new', 'new-tab', '--title', safeTitle, 'wsl.exe', '-d', env.WSL_DISTRO_NAME, '--', ...attach] };
+		return { argv: ['wt.exe', '-w', tab ? '0' : 'new', 'new-tab', '--title', safeTitle, 'wsl.exe', '-d', env.WSL_DISTRO_NAME, '--', ...attach] };
 	}
 	if (env.DISPLAY || env.WAYLAND_DISPLAY) return { argv: [env.TERMINAL || 'x-terminal-emulator', '-e', ...attach] };
 	return { switchClient: true };
@@ -166,25 +166,31 @@ const onPath = async (program: string) => {
 	return result.exitCode === 0 ? result.stdout.trim() : undefined;
 };
 
+/** The environment terminalCommand goes on, this process's. */
+export const terminalEnv = async (): Promise<TerminalEnv> => ({ env: process.env, hasWt: Boolean(await onPath('wt.exe')) });
+
+/** Spawn `argv` as a terminal of its own, detached; what went wrong if it failed straight off. */
+export async function openTerminal(argv: string[]): Promise<string | undefined> {
+	const [program, ...args] = argv;
+	const child = spawn(program!, args, { detached: true, stdio: 'ignore' });
+	child.unref();
+	// One that fails straight off (not found, or exiting non-zero) is worth hearing about; most hand off and exit 0.
+	const problem = await new Promise<string | undefined>(resolve => {
+		child.on('error', err => resolve(err.message));
+		child.on('exit', code => resolve(code ? `exited with status ${code}` : undefined));
+		setTimeout(() => resolve(undefined), 1000);
+	});
+	return problem && `✗ Couldn't open a terminal with ${program}: ${problem}`;
+}
+
 /**
  * Open a separate terminal window on the run in `session`; closing it leaves the run going. With no
  * way to open one, the board's own tmux client switches to it (prefix b switches back). Returns what
  * to tell the user.
  */
 export async function openRun(session: string, title: string): Promise<string> {
-	const launch = terminalCommand({ env: process.env, hasWt: Boolean(await onPath('wt.exe')) }, tmuxAttach((await onPath('tmux')) ?? 'tmux', process.env, session), title);
-	if ('argv' in launch) {
-		const [program, ...args] = launch.argv;
-		const child = spawn(program!, args, { detached: true, stdio: 'ignore' });
-		child.unref();
-		// One that fails straight off (not found, or exiting non-zero) is worth hearing about; most hand off and exit 0.
-		const problem = await new Promise<string | undefined>(resolve => {
-			child.on('error', err => resolve(err.message));
-			child.on('exit', code => resolve(code ? `exited with status ${code}` : undefined));
-			setTimeout(() => resolve(undefined), 1000);
-		});
-		return problem ? `✗ Couldn't open a terminal with ${program}: ${problem}` : `Opened ${title} in a new window`;
-	}
+	const launch = terminalCommand(await terminalEnv(), tmuxAttach((await onPath('tmux')) ?? 'tmux', process.env, session), title);
+	if ('argv' in launch) return (await openTerminal(launch.argv)) ?? `Opened ${title} in a new window`;
 	await execa('tmux', ['switch-client', '-t', `=${session}`]);
 	return `Switched to ${title} (no terminal to open it in: set OO_TERMINAL); prefix b comes back`;
 }

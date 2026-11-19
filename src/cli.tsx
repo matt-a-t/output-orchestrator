@@ -12,7 +12,8 @@ import { quizFormCommand } from './quizForm.js';
 import { deltaCommand, noStyling } from './delta.js';
 import { viewCommand } from './viewer.js';
 import { OO_COMMAND, writeClaudeSettings, writeOoSkill } from './status.js';
-import { forThread, threadShell } from './container.js';
+import { forThread, shellKey, threadShell } from './container.js';
+import { openShellTab } from './shell.js';
 import { threadDir } from './threads.js';
 import {
 	BOARD_LABEL,
@@ -23,11 +24,9 @@ import {
 	insideTmux,
 	labelWindow,
 	MIN_TMUX,
-	openSplit,
 	renameCurrentWindow,
 	selectExistingBoard,
 	shellQuote,
-	threadWindowName,
 	tmuxVersionOk,
 } from './tmux.js';
 
@@ -36,6 +35,7 @@ const USAGE = `usage:
   oo project add <path> [name]
   oo project list
   oo project rm <name>
+  oo shell <id> [--here]      a shell on the thread's worktree in a new terminal tab (--here: in this one)
   oo delta                    set up delta's diff styling (shows what it adds first)
 ${THREAD_USAGE}`;
 
@@ -131,19 +131,33 @@ async function checkTools(warn: boolean): Promise<boolean> {
 	return problems.length === 0;
 }
 
-/** `oo split shell <id>`, for M-s in a thread's window: what `s` does on the board. */
-async function splitCommand([role, id]: string[]): Promise<number> {
+/**
+ * `oo shell <id>`, for M-s in a thread's window: a shell on its worktree in a new terminal tab. With `--here`
+ * (what that tab runs), the shell itself in this terminal: in the thread's container, for a container project.
+ */
+async function shellCommand([id, ...rest]: string[]): Promise<number> {
 	const state = loadState();
 	const thread = state.threads.find(t => t.id === id);
 	const cwd = thread && threadDir(state, thread);
-	if (role !== 'shell' || !thread || !cwd) {
-		console.error(thread && role === 'shell' ? `#${id} has no worktree` : 'usage: oo split shell <id>');
+	if (!thread || !cwd || rest.some(arg => arg !== '--here')) {
+		console.error(thread && !rest.length ? `#${id} has no worktree` : 'usage: oo shell <id> [--here]');
 		return 1;
 	}
+	if (!rest.includes('--here')) {
+		const message = await openShellTab(thread);
+		if (message.startsWith('✗')) console.error(message);
+		return message.startsWith('✗') ? 1 : 0;
+	}
 	const project = state.projects.find(p => p.name === thread.project);
-	const shell = await forThread(project, thread, cwd, threadShell(project), { OO_THREAD_ID: id });
-	await openSplit(threadWindowName(id), cwd, role, shell.command, shell.env);
-	return 0;
+	try {
+		const shell = await forThread(project, thread, cwd, threadShell(project), { OO_THREAD_ID: id }, { key: shellKey(id) });
+		const [program, ...shellArgs] = shell.command;
+		const result = await execa(program!, shellArgs, { cwd, env: shell.env, stdio: 'inherit', reject: false });
+		return result.exitCode ?? 1;
+	} catch (err) {
+		console.error(`oo: ${(err as Error).message}`);
+		return 1;
+	}
 }
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -151,8 +165,8 @@ if (cmd === 'project') {
 	process.exit(projectCommand(args));
 } else if (cmd === 'thread') {
 	process.exit(await threadCommand(args));
-} else if (cmd === 'split') {
-	process.exit(await splitCommand(args));
+} else if (cmd === 'shell') {
+	process.exit(await shellCommand(args));
 } else if (cmd === 'delta') {
 	process.exit(await deltaCommand());
 } else if (cmd === 'view') {
@@ -175,7 +189,7 @@ if (cmd === 'project') {
 	await renameCurrentWindow(BOARD_WINDOW);
 	await labelWindow(BOARD_WINDOW, BOARD_LABEL);
 	// Not just `oo`, so the keys don't depend on it being on tmux's PATH.
-	await bindBoardKeys([...OO_COMMAND, 'split'].map(shellQuote).join(' '));
+	await bindBoardKeys([...OO_COMMAND, 'shell'].map(shellQuote).join(' '));
 	await enableTmuxMouse();
 	writeClaudeSettings();
 	writeOoSkill();
