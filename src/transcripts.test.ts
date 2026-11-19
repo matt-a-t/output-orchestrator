@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -48,13 +48,30 @@ test('assumes the 5 minute cache when no cache write says otherwise, and nothing
 	assert.equal(readContextUse(entry({ type: 'user', message: { content: 'hi' } })), undefined);
 });
 
-test('contextUse reads the transcript again once it changes', () => {
+test('contextUse re-reads a changed transcript at most every 15s, unless asked for a fresh reading', t => {
+	t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T10:00:00Z') });
 	const file = join(mkdtempSync(join(tmpdir(), 'oo-test-')), 't.jsonl');
 	writeFileSync(file, turn('2026-01-01T10:00:00Z', { input_tokens: 10 }) + '\n');
 	assert.equal(contextUse(file)?.tokens, 10);
-	writeFileSync(file, turn('2026-01-01T10:00:00Z', { input_tokens: 10 }) + '\n' + turn('2026-01-01T10:01:00Z', { input_tokens: 2000 }) + '\n');
+	appendFileSync(file, turn('2026-01-01T10:01:00Z', { input_tokens: 2000 }) + '\n');
+	assert.equal(contextUse(file)?.tokens, 10);
+	assert.equal(contextUse(file, { fresh: true })?.tokens, 2000);
+	appendFileSync(file, turn('2026-01-01T10:02:00Z', { input_tokens: 3000 }) + '\n');
+	t.mock.timers.tick(14_999);
 	assert.equal(contextUse(file)?.tokens, 2000);
+	t.mock.timers.tick(1);
+	assert.equal(contextUse(file)?.tokens, 3000);
 	assert.equal(contextUse(join(tmpdir(), 'oo-missing.jsonl')), undefined);
+});
+
+test('contextUse keeps the turn it found when a new tail has none, rather than reading the whole transcript again', () => {
+	const file = join(mkdtempSync(join(tmpdir(), 'oo-test-')), 't.jsonl');
+	const filler = (n: number) => entry({ type: 'user', message: { content: 'x'.repeat(n) } }) + '\n';
+	writeFileSync(file, turn('2026-01-01T10:00:00Z', { input_tokens: 10 }) + '\n' + filler(1.5 * 1024 * 1024));
+	assert.equal(contextUse(file)?.tokens, 10);
+	// Another huge tool result. If the whole file were read again, this turn earlier on would win.
+	writeFileSync(file, turn('2026-01-01T10:00:00Z', { input_tokens: 10 }) + '\n' + turn('2026-01-01T10:01:00Z', { input_tokens: 99 }) + '\n' + filler(1.5 * 1024 * 1024) + filler(1.5 * 1024 * 1024));
+	assert.equal(contextUse(file, { fresh: true })?.tokens, 10);
 });
 
 test('formats context sizes and times short', () => {

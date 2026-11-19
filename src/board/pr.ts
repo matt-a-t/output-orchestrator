@@ -195,7 +195,7 @@ export async function checkPr(board: Board, thread: Thread) {
 	await applyRequest(board.store, { id: 'merged', op: 'send', thread: thread.id, from: USER_SENDER, text: followUpPrompt(todos, thread.pr) });
 	const latest = board.state().threads.find(t => t.id === thread.id);
 	if (!latest) return;
-	const fresh = !!latest.transcriptPath && worthFreshStart(contextUse(latest.transcriptPath));
+	const fresh = !!latest.transcriptPath && worthFreshStart(contextUse(latest.transcriptPath, { fresh: true }));
 	// One open and at its prompt is closed for the fresh one; one still working hears it at its turn's end as usual.
 	const quiet = ['stopped', 'idle'].includes(board.statuses()[latest.id] ?? '');
 	if (fresh && quiet && board.liveWindows().has(threadWindowName(latest.id))) await closeClaude(board, latest).catch(fail);

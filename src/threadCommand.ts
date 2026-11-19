@@ -480,7 +480,7 @@ export async function planApproved(input: any, ctx: Context): Promise<string | u
 	}
 	if (state.threads.find(t => t.id === thread)?.column !== 'planned') return;
 	const plan = approvedPlan(input);
-	const fresh = typeof input?.transcript_path === 'string' && worthFreshStart(contextUse(input.transcript_path));
+	const fresh = typeof input?.transcript_path === 'string' && worthFreshStart(contextUse(input.transcript_path, { fresh: true }));
 	const responses = [
 		...(plan ? [await change({ op: 'plan', thread, plan }, ctx)] : []),
 		await change({ op: 'move', thread, column: 'active', ...(fresh && { fresh }) }, ctx),

@@ -157,26 +157,35 @@ const CACHE_1H = 60 * 60_000;
 // The last turn is near the end, so read only this much of a long transcript, unless it isn't there.
 const TAIL_BYTES = 1024 * 1024;
 
-const contextCache = new Map<string, { mtimeMs: number; size: number; use: ContextUse | undefined }>();
+// A changing transcript is re-read at most this often: a countdown in minutes and a rough token count need nothing fresher.
+const REREAD_MS = 15_000;
 
-/** The thread's ContextUse, or undefined with no transcript or no turn in it yet. Re-read only once the transcript changes. */
-export function contextUse(transcriptPath: string): ContextUse | undefined {
+const contextCache = new Map<string, { mtimeMs: number; size: number; readAt: number; use: ContextUse | undefined }>();
+
+/**
+ * The thread's ContextUse, or undefined with no transcript or no turn in it yet. Re-read only once the transcript
+ * changes, and then at most every REREAD_MS, unless `fresh`, for callers that act on the value.
+ */
+export function contextUse(transcriptPath: string, { fresh = false }: { fresh?: boolean } = {}): ContextUse | undefined {
 	let stats;
 	try {
 		stats = statSync(transcriptPath);
 	} catch {
 		return;
 	}
+	const now = Date.now();
 	const cached = contextCache.get(transcriptPath);
 	if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached.use;
+	if (cached && !fresh && now - cached.readAt < REREAD_MS) return cached.use;
 	let use: ContextUse | undefined;
 	try {
 		use = readContextUse(readTail(transcriptPath, stats.size, TAIL_BYTES));
-		if (!use && stats.size > TAIL_BYTES) use = readContextUse(readFileSync(transcriptPath, 'utf8'));
+		// With no turn in the tail, one found earlier is still the latest, so the whole file is read only the first time.
+		if (!use) use = cached?.use ?? (stats.size > TAIL_BYTES ? readContextUse(readFileSync(transcriptPath, 'utf8')) : undefined);
 	} catch {
 		return;
 	}
-	contextCache.set(transcriptPath, { mtimeMs: stats.mtimeMs, size: stats.size, use });
+	contextCache.set(transcriptPath, { mtimeMs: stats.mtimeMs, size: stats.size, readAt: now, use });
 	return use;
 }
 
