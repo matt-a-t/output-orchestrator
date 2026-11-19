@@ -6,9 +6,6 @@ import { isJiraCloudHost, JIRA_CLOUD_ONLY, type Project, type Thread } from './s
 export type TicketRef = NonNullable<Thread['ticket']>;
 export type Ticket = TicketRef & { summary: string; description: string };
 
-/** How many tickets the new-thread picker lists. */
-const RECENT = 5;
-
 /** The ticket's key in the project's form: `AV-123` for Jira (a bare `123` gets the project's prefix), `#45` for GitHub. */
 export function normalizeKey(project: Project, input: string): string | undefined {
 	const key = input.trim();
@@ -34,35 +31,6 @@ export async function ticketUrl(project: Project, key: string): Promise<string> 
 	if (!isGithubKey(key)) return `https://${jiraHost(project)}/browse/${key}`;
 	const { stdout } = await execa('gh', ['repo', 'view', '--json', 'url', '-q', '.url'], { cwd: project.path });
 	return `${stdout.trim()}/issues/${key.slice(1)}`;
-}
-
-/** Up to five open tickets assigned to you, most recently updated first. */
-export async function recentTickets(project: Project): Promise<Ticket[]> {
-	if (project.tracker === 'github') {
-		const { stdout } = await execa(
-			'gh',
-			['issue', 'list', '--assignee', '@me', '--state', 'open', '--search', 'sort:updated-desc', '--limit', String(RECENT), '--json', 'number,title,url'],
-			{ cwd: project.path },
-		);
-		return parseUntrusted<{ number: number; title: string; url: string }[]>(stdout).map(i => ({
-			key: `#${i.number}`,
-			url: i.url,
-			summary: i.title,
-			description: '',
-		}));
-	}
-	if (project.tracker !== 'jira') return [];
-	const { issues } = (await jira(project, '/rest/api/3/search/jql', {
-		jql: recentJql(project),
-		maxResults: RECENT,
-		fields: ['summary'],
-	})) as { issues: { key: string; fields: { summary: string } }[] };
-	return issues.map(i => ({ key: i.key, url: `https://${jiraHost(project)}/browse/${i.key}`, summary: i.fields.summary, description: '' }));
-}
-
-export function recentJql(project: Project): string {
-	const scope = project.jiraProject ? `project = "${project.jiraProject}" AND ` : '';
-	return `${scope}assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC`;
 }
 
 /** The ticket's summary and description, and who wrote it. */

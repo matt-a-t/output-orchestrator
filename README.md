@@ -128,9 +128,8 @@ project's tickets come from with **tickets** in the projects screen (`P`):
   [API token](https://id.atlassian.com/manage-profile/security/api-tokens): export
   `JIRA_EMAIL` and `JIRA_API_TOKEN` in the shell you start `oo` from.
 
-The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`) after `i`, or use
-`h`/`l` to pick from your five most recently updated open tickets. The ticket's summary becomes
-the title unless you type your own. Its description is kept with the ticket, not made the plan:
+The new thread form then has a **ticket** field: type a key (`AV-123`, or just `123`) after `i`.
+The ticket's summary becomes the title unless you type your own. Its description is kept with the ticket, not made the plan:
 anyone can file an issue on a public repo, so `oo thread show` quotes it to claude as the ticket's
 content, not instructions, and the board warns when a GitHub issue's author isn't a collaborator.
 Leave the field empty for no ticket.

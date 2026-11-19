@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import type { Project } from './state.js';
 import { fakeGh, mockJira } from './testHelpers.js';
-import { adfDoc, adfText, createTicket, githubIssue, jiraErrors, normalizeKey, recentJql, ticketBranchPart, ticketContent, type GithubIssue } from './tickets.js';
+import { adfDoc, adfText, createTicket, githubIssue, jiraErrors, normalizeKey, ticketBranchPart, ticketContent, type GithubIssue } from './tickets.js';
 
 const project = (p: Partial<Project>): Project => ({
 	name: 'p',
@@ -39,11 +39,6 @@ test('normalizes GitHub issue numbers', () => {
 test('branch part is the lowercased key without the #', () => {
 	assert.equal(ticketBranchPart({ key: 'AV-123', url: '' }), 'av-123');
 	assert.equal(ticketBranchPart({ key: '#45', url: '' }), '45');
-});
-
-test('recent JQL is scoped to the project when it has a prefix', () => {
-	assert.equal(recentJql(jira), 'project = "AV" AND assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC');
-	assert.equal(recentJql(project({ tracker: 'jira' })), 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC');
 });
 
 test('flattens ADF to plain text', () => {

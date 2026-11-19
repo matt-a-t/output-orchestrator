@@ -60,7 +60,7 @@ const FIELD_HINTS: Partial<Record<Field, string>> = {
 	closeIdleAfter: "close a thread's claude window once it's sat stopped this long (not one you're in, with a split open or a shell still running); w or ⏎ resumes it  ",
 	tracker: 'where new threads get tickets: github issues (via gh) or jira  ',
 	jiraSite: 'e.g. yourco.atlassian.net; JIRA_EMAIL and JIRA_API_TOKEN come from the environment  ',
-	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123, and recent tickets come from this project  ',
+	jiraProject: 'key prefix, e.g. AV: 123 becomes AV-123  ',
 	image: "docker image each thread's claude runs in, one container per thread (see docker/thread.Dockerfile); empty runs claude on the host  ",
 	ports: "container ports to publish, e.g. 3000, 5173; Local forwards them to the same ports on the host  ",
 	allow: 'hosts the container may reach besides the firewall defaults (anthropic, github, npm), e.g. pypi.org  ',
