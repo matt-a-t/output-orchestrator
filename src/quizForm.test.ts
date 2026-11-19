@@ -59,15 +59,12 @@ test("the form's replies are read back, with anything malformed taken as cancell
 	assert.equal(parseResultsReply(''), false);
 });
 
-test('the results go on with ⏎ or a when passed, ask y or n when not, and review only closes', () => {
-	assert.equal(resultsKey('results', true, '', key({ return: true })), true);
-	assert.equal(resultsKey('results', true, 'a', key()), true);
-	assert.equal(resultsKey('results', true, 'y', key()), undefined);
-	assert.equal(resultsKey('results', false, 'a', key()), undefined);
-	assert.equal(resultsKey('results', false, 'y', key()), true);
-	assert.equal(resultsKey('results', false, 'n', key()), false);
-	assert.equal(resultsKey('results', false, 'q', key()), false);
-	assert.equal(resultsKey('review', true, '', key({ return: true })), undefined);
-	assert.equal(resultsKey('review', true, 'z', key()), false);
-	assert.equal(resultsKey('review', false, '', key({ escape: true })), false);
+test('the results go on with ⏎ or a when passed, and ask y or n when not', () => {
+	assert.equal(resultsKey(true, '', key({ return: true })), true);
+	assert.equal(resultsKey(true, 'a', key()), true);
+	assert.equal(resultsKey(true, 'y', key()), undefined);
+	assert.equal(resultsKey(false, 'a', key()), undefined);
+	assert.equal(resultsKey(false, 'y', key()), true);
+	assert.equal(resultsKey(false, 'n', key()), false);
+	assert.equal(resultsKey(false, 'q', key()), false);
 });

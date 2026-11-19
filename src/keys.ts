@@ -19,8 +19,8 @@ export const KEY_SECTIONS: KeySection[] = [
 			['J/K', 'reorder within its column (among threads of its priority)'],
 			['n', 'new thread (form)'],
 			['N', 'import a thread started outside oo'],
-			['e', 'edit the thread'],
-			['t', 'every todo on the thread (j/k scroll)'],
+			['e', "the thread's details, on its fields to edit"],
+			['t', "the thread's details, on its steps"],
 			['B', 'blocked by another thread (move to it, ⏎ picks)'],
 			['!', 'cycle its priority (normal, high, low); high sorts to the top of its column, low to the bottom'],
 			['p', 'filter by project'],
@@ -47,7 +47,18 @@ export const KEY_SECTIONS: KeySection[] = [
 	},
 	{
 		title: 'Reviewing',
-		keys: bindingRows('Reviewing'),
+		keys: [...bindingRows('Reviewing'), ['z', "the thread's details, on its last pop quiz: your answers and how they were graded"]],
+	},
+	{
+		title: 'Thread details (e, t, z)',
+		keys: [
+			['h/l 1-6', 'tabs: overview / plan / steps / messages / quiz / info'],
+			['j/k', 'overview: move between fields; the rest: scroll (space/b page, g/G ends)'],
+			['←/→ space', 'overview: change a choice (project, colour, priority)'],
+			['i ⏎ dd a', 'overview: edit a field, as in a form; a saves'],
+			['⏎', 'plan: edit it in $EDITOR'],
+			['q / esc', 'close (unsaved changes are dropped)'],
+		],
 	},
 	{
 		title: 'In a diff',
@@ -68,7 +79,7 @@ export const KEY_SECTIONS: KeySection[] = [
 		],
 	},
 	{
-		title: 'In a form (n, e, P, commit)',
+		title: 'In a form (n, P, commit, the overview in e)',
 		keys: [
 			['j/k ↑/↓ tab', 'move between fields'],
 			['h/l ←/→ space', 'change a choice (project, colour, priority, recent ticket…)'],

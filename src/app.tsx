@@ -5,10 +5,10 @@ import type { PrStatus } from './prHost.js';
 import { loop } from './input.js';
 import { ProjectsView } from './projects.js';
 import { SearchBox, useSearch } from './search.js';
-import { ThreadView } from './thread.js';
 import type { Board } from './board/board.js';
 import { runBinding } from './board/bindings.js';
 import { Columns, newColumnsLayout } from './board/columns.js';
+import { Details, type DetailTab } from './board/details.js';
 import { Footer } from './board/footer.js';
 import { useIdleClose } from './board/idle.js';
 import { useContainerSweep } from './board/containers.js';
@@ -19,7 +19,6 @@ import { jobsWarning, useJobs } from './board/jobs.js';
 import { usePendingLocal } from './board/local.js';
 import { useMessageDelivery } from './board/messages.js';
 import { NewThread } from './board/newThread.js';
-import { TodoView } from './board/todoView.js';
 import { checkPr } from './board/pr.js';
 import { useRequests } from './board/requests.js';
 import { RunPicker, runTarget, type RunTarget } from './board/runPicker.js';
@@ -35,8 +34,7 @@ type Screen =
 	| { kind: 'board' }
 	| { kind: 'projects' } // P
 	| { kind: 'keys' } // ?
-	| { kind: 'edit'; threadId: string } // e, the thread form
-	| { kind: 'todos'; threadId: string } // t, every todo of the thread
+	| { kind: 'details'; threadId: string; tab: DetailTab } // e, t and z: the thread's details, on its fields, steps or quiz
 	| { kind: 'importProject' } // N with no filter: which project to import from
 	| { kind: 'import'; project: string; threads: OutsideThread[] }; // N, the threads to import
 
@@ -81,15 +79,15 @@ export function App() {
 	const pendingLocal = useRef(new Map<string, boolean>());
 	// The merge status of open PRs, from the PR poll; not saved, since the poll refills it on startup.
 	const [merge, setMerge] = useState<Record<string, PrStatus>>({});
-	const todosThread = screen.kind === 'todos' ? state.threads.find(t => t.id === screen.threadId) : undefined;
-	// The screen as shown: the board again if the thread whose todos were open has gone.
-	const shown: Screen = screen.kind === 'todos' && !todosThread ? BOARD : screen;
+	const detailsThread = screen.kind === 'details' ? state.threads.find(t => t.id === screen.threadId) : undefined;
+	// The screen as shown: the board again if the thread whose details were open has gone.
+	const shown: Screen = screen.kind === 'details' && !detailsThread ? BOARD : screen;
 	// Every view but the keys screen takes its own keys, as do the overlays.
 	const ownKeys = (shown.kind !== 'board' && shown.kind !== 'keys') || !!overlay;
 	// Lists in place of the columns, under which the footer has no highlighted card to describe.
-	const coversCards = shown.kind === 'todos' || shown.kind === 'importProject' || shown.kind === 'import';
+	const coversCards = shown.kind === 'importProject' || shown.kind === 'import';
 	// Views that take the whole window, footer and all.
-	const fullScreen = shown.kind === 'projects' || shown.kind === 'keys' || shown.kind === 'edit';
+	const fullScreen = shown.kind === 'projects' || shown.kind === 'keys' || shown.kind === 'details';
 	// The columns' measured height and scroll positions, kept while another screen covers them.
 	const columnsLayout = useRef(newColumnsLayout());
 	// The thread B is picking a blocker for, while the cursor moves to the one it waits on.
@@ -353,8 +351,9 @@ export function App() {
 		if (!selected) return;
 		if (input === 'K') return reorder(selected, -1);
 		if (input === 'J') return reorder(selected, 1);
-		if (input === 'e') return setScreen({ kind: 'edit', threadId: selected.id });
-		if (input === 't') return selected.todos?.length ? setScreen({ kind: 'todos', threadId: selected.id }) : setMessage(`⚠ #${selected.id} has no todos`);
+		if (input === 'e') return setScreen({ kind: 'details', threadId: selected.id, tab: 'overview' });
+		if (input === 't') return setScreen({ kind: 'details', threadId: selected.id, tab: 'steps' });
+		if (input === 'z') return setScreen({ kind: 'details', threadId: selected.id, tab: 'quiz' });
 		if (input === 'B') {
 			if (selected.column === 'done' || selected.column === 'archived') return setMessage(`⚠ #${selected.id} is finished, so nothing blocks it`);
 			return setPicking(selected.id);
@@ -367,13 +366,17 @@ export function App() {
 		switch (shown.kind) {
 			case 'projects':
 				return <ProjectsView state={state} setState={setState} onClose={toBoard} />;
-			case 'edit':
+			case 'details':
 				return (
-					<ThreadView
+					<Details
 						key={shown.threadId}
+						board={board}
 						state={state}
-						threadId={shown.threadId}
-						updateThread={updateThread}
+						thread={detailsThread!}
+						tab={shown.tab}
+						setTab={tab => setScreen({ ...shown, tab })}
+						merge={merge[shown.threadId]}
+						active={!busy}
 						onClose={closing => {
 							toBoard();
 							setMessage(closing);
@@ -382,8 +385,6 @@ export function App() {
 				);
 			case 'keys':
 				return <KeysView active={!busy} />;
-			case 'todos':
-				return <TodoView thread={todosThread!} active={!busy} onClose={toBoard} />;
 			case 'importProject':
 				return <ImportProject board={board} active={!busy} onPick={openPicker} onClose={toBoard} />;
 			case 'import':

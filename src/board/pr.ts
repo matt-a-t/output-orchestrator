@@ -1,22 +1,19 @@
 // A thread's pull request: opening it, keeping up with its merge status, and showing it.
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { EDITOR, parsePr, prText } from '../editor.js';
 import { errorMessage, resultMessage, unknownProject } from '../errors.js';
 import { currentRef, defaultBranch, isDirty, pushBranch, pushState, stackStart } from '../git.js';
 import { createPr, draftPr, findPr, mergePr, openPrInBrowser, prStatus, submitReview, withTicket } from '../prHost.js';
 import { runColumnHook } from '../hooks.js';
-import { popQuiz, type Quiz, type QuizOutcome } from '../quiz.js';
-import { QUIZ_FORM, type QuizFormInput } from '../quizForm.js';
+import { popQuiz, type QuizOutcome } from '../quiz.js';
 import { showPr } from '../review.js';
 import { USER_SENDER, type Thread } from '../state.js';
 import { followUpPrompt } from '../threadCommand.js';
 import { threadWindowName } from '../tmux.js';
 import { contextUse, worthFreshStart } from '../transcripts.js';
 import { applyRequest, followUps, inCheckout, unblockedNote, unstackChildren, withDrafts } from '../threads.js';
-import { CLOSED, popup as tmuxPopup, progressPopup, shellQuote, type ProgressPopup } from '../tmux.js';
+import { CLOSED, progressPopup, type ProgressPopup } from '../tmux.js';
 import type { Binding } from './bindings.js';
 import { closeClaude } from './claude.js';
 import { onThread, type Board, type Outcome } from './board.js';
@@ -243,25 +240,7 @@ export function browsePr(board: Board, thread: Thread) {
 	}, 'opening PR in the browser');
 }
 
-/** Show the thread's last pop quiz, with your answers and how they were graded, in the quiz form. */
-export function showLastQuiz(board: Board, thread: Thread) {
-	const { quiz } = thread;
-	if (!quiz) return board.setMessage(`No pop quiz on #${thread.id} yet — one runs when its PR opens from the board`);
-	const dir = mkdtempSync(join(tmpdir(), 'oo-quiz-'));
-	const file = join(dir, 'quiz.json');
-	const input: QuizFormInput = { mode: 'review', title: `#${thread.id} ${thread.title}`, quiz: quiz.questions as Quiz, answers: quiz.answers, grades: quiz.grades };
-	writeFileSync(file, JSON.stringify(input));
-	return board.run(async () => {
-		try {
-			await tmuxPopup(`${QUIZ_FORM} ${shellQuote(file)}`, { title: ` pop quiz ${quiz.score} ` });
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	}, 'showing the pop quiz');
-}
-
 export const prKeys: Binding[] = [
 	{ key: 'v', run: onThread(viewThreadPr), help: { section: 'Reviewing', what: 'view the PR (m merges it)' } },
 	{ key: 'b', run: onThread(browsePr, { hidden: true }), help: { section: 'Reviewing', what: 'open the PR in your browser' } },
-	{ key: 'z', run: onThread(showLastQuiz), help: { section: 'Reviewing', what: 'its last pop quiz: your answers and how they were graded' } },
 ];

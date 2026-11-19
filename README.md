@@ -107,10 +107,12 @@ Compacting is cheap only while the cache is warm, so when the board is about to 
 minutes if it never does). Threads in Done are closed without compacting: nothing will resume them.
 A compacted thread's card shows a rough size (`~40k`) until its next turn gives the real one.
 
-`e` opens a thread's own screen. Its title,
-ticket, project, colour, priority and diff base are edited in place and its plan in `$EDITOR`, and the rest of what
-the board knows about it (branch, worktree, session, PR, …) is shown beneath. A thread that
-already has a branch or directory can't change project.
+`e` opens a thread's details in place of the columns, in tabs (`h`/`l` or `1`–`6`). The overview edits its title,
+ticket, project, colour, priority and diff base, and shows where it is beneath them: its column and Local, its
+claude, ticket, PR and merge state, what it waits on or is stacked on, its container's ports and its age. Then its
+plan (`⏎` edits it in `$EDITOR`), its steps (`t` opens the details here), the messages other threads sent it, its
+last pop quiz (`z`), and where its work lives (branch, worktree, session, context, the drafted commit and PR
+messages). A thread that already has a branch or directory can't change project.
 
 Card badges: ● working, ‖ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
@@ -260,8 +262,8 @@ Tickets work as usual from a container: `oo thread ticket` and `oo thread add --
 was asked for, and the board looks the ticket up or files it with its own `JIRA_EMAIL`/`JIRA_API_TOKEN` or `gh`
 sign-in. Containers never get those credentials, and their firewall doesn't need to let the tracker through.
 
-Each configured port is published on your machine's loopback at a port docker picks. The card shows a ⇄, and
-`oo thread show` lists them as `3000→49153`.
+Each configured port is published on your machine's loopback at a port docker picks. The card shows a ⇄, and the
+thread's details (`e`) and `oo thread show` list them as `3000→49153`.
 
 **Local** doesn't move anything for these projects. Instead, the board forwards the project's own ports on your
 machine to the thread's container, so `localhost:3000` reaches that thread's dev server. Its branch stays in its
@@ -429,7 +431,7 @@ claude grades the written answer. If you get any wrong, the results show the rig
 isn't opened unless you press `y` to open it anyway. `s` skips the quiz, while claude is writing it or in
 the form, and a change of under 30 lines (added plus removed) skips it on its own. `q` while claude is
 writing or grading, or in the form, cancels the whole move. The thread keeps its last quiz, passed
-or not, and `z` on its card shows it again. Only opening a new PR from the
+or not, and `z` on its card shows it again in the thread's details. Only opening a new PR from the
 board quizzes you: a thread whose PR is already open just pushes, and `oo thread pr` skips it.
 A thread in Local opens its PR from the project's checkout and stays in Local.
 `oo thread pr [--title <title>] [--body-file <path>|-]` does the same from the shell (with the board
