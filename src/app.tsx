@@ -26,7 +26,7 @@ import { usePrPoll, useRestoreCarried, useStateFile, useStatuses, useTmux, useUn
 import { killRunSessions } from './commands.js';
 import { COLUMNS, PRIORITIES, type Column, type Project, type Thread } from './state.js';
 import { listOutsideThreads, type OutsideThread } from './transcripts.js';
-import { applyRequest, blockers, byPriority, matchesSearch, priorityOf, setColumn as moveTo, withPriority } from './threads.js';
+import { applyRequest, byPriority, matchesSearch, priorityOf, setColumn as moveTo, withPriority } from './threads.js';
 import { closeOoWindows, ooWindows, threadWindowName } from './tmux.js';
 
 /** What fills the space between the title and the footer: the columns, or a view in their place. */
@@ -84,8 +84,6 @@ export function App() {
 	const shown: Screen = screen.kind === 'details' && !detailsThread ? BOARD : screen;
 	// Every view but the keys screen takes its own keys, as do the overlays.
 	const ownKeys = (shown.kind !== 'board' && shown.kind !== 'keys') || !!overlay;
-	// Lists in place of the columns, under which the footer has no highlighted card to describe.
-	const coversCards = shown.kind === 'importProject' || shown.kind === 'import';
 	// Views that take the whole window, footer and all.
 	const fullScreen = shown.kind === 'projects' || shown.kind === 'keys' || shown.kind === 'details';
 	// The columns' measured height and scroll positions, kept while another screen covers them.
@@ -425,10 +423,6 @@ export function App() {
 			{/* Grows to fill the window, which keeps the info below at the bottom. */}
 			{renderScreen()}
 			<Footer
-				// About the highlighted card, so not while a list covers the board.
-				thread={coversCards ? undefined : selected}
-				merge={selected && merge[selected.id]}
-				blockers={selected && !coversCards ? blockers(state, selected) : []}
 				busy={busy}
 				message={
 					pickingThread

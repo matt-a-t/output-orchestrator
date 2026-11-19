@@ -30,7 +30,7 @@ tables here list every bound key, so keep the two in step.
 | `A` | show / hide an ARCHIVED column after Done (archived cards take only `H`, `e`, `b`, `J`/`K` and `!`) |
 | `r` | run one of the project's commands (dev server, tests, migrations…) in a new terminal window (see below) |
 | `P` | projects (their hooks, commands, wake prompt and when idle claudes close) |
-| `?` | all keys |
+| `?` | all keys, and a Legend tab (`h`/`l`) on what the cards' marks mean |
 | `q` | quit, leaving thread windows open |
 | `Q` | quit, closing every thread window (claude resumes next time) and stopping every run (`r`) |
 

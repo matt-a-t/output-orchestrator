@@ -114,7 +114,7 @@ plan (`⏎` edits it in `$EDITOR`), its steps (`t` opens the details here), the 
 last pop quiz (`z`), and where its work lives (branch, worktree, session, context, the drafted commit and PR
 messages). A thread that already has a branch or directory can't change project.
 
-Card badges: ● working, ‖ needs you (permission prompt), ✓ stopped, ○ window open with no
+Card badges (`?`, then `l`, lists them on the board): ● working, ‖ needs you (permission prompt), ✓ stopped, ○ window open with no
 activity yet, ↻ no window but resumable (red if it was closed mid-work, for `w` / `W`), ± uncommitted changes waiting to be reviewed and
 approved, ✎ messages from other threads its claude hasn't heard yet, ⧗ blocked by other threads (`B`), ⤳ after-merge checkpoints left (in Follow-up),
 ↺ a rebase pending since what it was stacked on merged (`u`), and a green → once it's ready for the next column. They follow the
@@ -333,7 +333,7 @@ Two gaps remain:
 ### Blocked threads
 
 When a thread can't go on until another one lands, `B` records that: move the cursor to the thread it waits on and
-press `⏎` (`esc` cancels). The card gets a red ⧗1 (how many it waits on) and a dimmed title, and the details below it list the blockers.
+press `⏎` (`esc` cancels). The card gets a red ⧗1 (how many it waits on) and a dimmed title, and the thread's details (`e`) list the blockers.
 A thread can wait on several. Picking one again takes it off, and `⏎` on the thread itself clears them all. A
 block goes away by itself once its blocker merges (reaching Follow-up or Done) or is archived, and the move's
 message says which threads it unblocked. Moving a blocked thread into Active warns, but doesn't stop you.

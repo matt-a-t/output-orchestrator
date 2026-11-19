@@ -157,15 +157,6 @@ export function todoWindow(todos: Todo[], max: number): { start: number; end: nu
 	return { start, end: Math.min(todos.length, start + max) };
 }
 
-/** Like `todoWindow`, but the "↑/↓ N more" rows count towards `rows` too, so the list fits in that many. */
-export function todoRows(todos: Todo[], rows: number): { start: number; end: number } {
-	for (let shown = rows; ; shown--) {
-		const window = todoWindow(todos, Math.max(1, shown));
-		const arrows = (window.start > 0 ? 1 : 0) + (window.end < todos.length ? 1 : 0);
-		if (shown <= 1 || window.end - window.start + arrows <= rows) return window;
-	}
-}
-
 /** The thread's priority, normal when it has none. */
 export const priorityOf = (t: Thread): Priority => t.priority ?? 'normal';
 

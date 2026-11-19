@@ -38,3 +38,9 @@ test('KEYS.md lists every bound key in the same section', () => {
 		}
 	}
 });
+
+test('KEYS.md says ? has the legend', () => {
+	const doc = readFileSync(new URL('../KEYS.md', import.meta.url), 'utf8');
+	assert.match(doc, /^\| `\?` \|.*Legend tab/m);
+	assert.ok(KEY_SECTIONS[0]!.keys.some(([k, what]) => k === '?' && what.includes('marks mean')));
+});

@@ -30,7 +30,7 @@ export const KEY_SECTIONS: KeySection[] = [
 			['A', 'show / hide archived threads'],
 			['r', "run one of the project's commands (dev server, tests…) in the thread's worktree, in a new terminal window"],
 			['P', 'projects (their hooks, commands, wake prompt and when idle claudes close)'],
-			['?', 'these keys'],
+			['?', 'these keys, and a tab (h/l) on what the cards\' marks mean'],
 			['q', 'quit, leaving thread windows open'],
 			['Q', 'quit, closing every thread window and stopping every run (r)'],
 		],
