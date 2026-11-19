@@ -10,7 +10,7 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
-import type { ComposeSetting, Project } from '../state.js';
+import type { ComposeSetting, Project } from './state.js';
 
 type ComposeProject = Project & { container: { compose: ComposeSetting } };
 

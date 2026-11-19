@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Project } from '../state.js';
+import type { Project } from './state.js';
 import { composeArgs, portClash, ruleScript, stackOf, stackPorts } from './stack.js';
 
 const project = (compose?: { files: string[]; name?: string }): Project => ({
