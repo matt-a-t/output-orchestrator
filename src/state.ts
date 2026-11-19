@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { execaSync } from 'execa';
 import { z } from 'zod';
 
@@ -47,6 +47,17 @@ const CommandSchema = z.object({ name: z.string(), command: z.string() });
 export type ProjectCommand = z.infer<typeof CommandSchema>;
 
 /**
+ * A docker compose stack Local runs on the host from the thread's worktree, joining the thread's container to its
+ * network (see board/stack.ts). `files` are relative to the worktree; `name` is the compose project name, which by
+ * default is what `docker compose` would pick in the project checkout, so it's the same stack as one run by hand.
+ */
+const ComposeSchema = z.object({
+	files: z.array(z.string()).min(1),
+	name: z.string().optional(),
+});
+export type ComposeSetting = z.infer<typeof ComposeSchema>;
+
+/**
  * Where a project's threads run claude when it has one (see container.ts): one long-lived container per thread
  * from `image`, with egress only to the reference firewall's hosts plus `allow`, and `ports` published to the host.
  */
@@ -54,6 +65,7 @@ const ContainerSchema = z.object({
 	image: z.string(),
 	allow: z.array(z.string()).default([]),
 	ports: z.array(z.number().int().min(1).max(65535)).default([]),
+	compose: ComposeSchema.optional(),
 });
 export type ContainerSetting = z.infer<typeof ContainerSchema>;
 
@@ -281,27 +293,39 @@ export function projectProblem(state: State, project: Project, original?: string
 	if (project.jiraSite && !isJiraCloudHost(project.jiraSite)) return JIRA_CLOUD_ONLY;
 }
 
-/** The container fields as the projects screen edits them: ports and allowed hosts are comma or space separated. */
-export type ContainerText = { image: string; ports: string; allow: string };
+/**
+ * The container fields as the projects screen edits them: ports, allowed hosts and compose files are comma or space
+ * separated, and `stack` is the compose project name.
+ */
+export type ContainerText = { image: string; ports: string; allow: string; compose: string; stack: string };
 
 export const containerText = (container: ContainerSetting | undefined): ContainerText => ({
 	image: container?.image ?? '',
 	ports: container?.ports.join(', ') ?? '',
 	allow: container?.allow.join(', ') ?? '',
+	compose: container?.compose?.files.join(', ') ?? '',
+	stack: container?.compose?.name ?? '',
 });
 
 /** The setting `text` describes (undefined with no image), or why it can't be saved. */
 export function parseContainer(text: ContainerText): { container?: ContainerSetting; problem?: string } {
 	const list = (s: string) => s.split(/[\s,]+/).filter(Boolean);
 	const image = text.image.trim();
-	if (!image) return list(text.ports).length || list(text.allow).length ? { problem: 'Container ports and hosts need an image' } : {};
+	const files = [...new Set(list(text.compose))];
+	const name = text.stack.trim();
+	if (!image) return list(text.ports).length || list(text.allow).length || files.length || name ? { problem: 'Container ports, hosts and compose need an image' } : {};
 	const ports: number[] = [];
 	for (const p of list(text.ports)) {
 		const n = Number(p);
 		if (!Number.isInteger(n) || n < 1 || n > 65535) return { problem: `Container port ${p} isn't a port number` };
 		if (!ports.includes(n)) ports.push(n);
 	}
-	return { container: { image, ports, allow: [...new Set(list(text.allow))] } };
+	if (name && !files.length) return { problem: 'A stack name needs compose files' };
+	// What docker compose accepts as a project name.
+	if (name && !/^[a-z0-9][a-z0-9_-]*$/.test(name)) return { problem: `Stack name ${name} needs lowercase letters, digits, - and _` };
+	if (files.some(f => isAbsolute(f) || f.split('/').includes('..'))) return { problem: "Compose files are relative to the thread's worktree, inside it" };
+	const compose = files.length ? { files, ...(name ? { name } : {}) } : undefined;
+	return { container: { image, ports, allow: [...new Set(list(text.allow))], ...(compose ? { compose } : {}) } };
 }
 
 export function newThreadId(state: State): string {

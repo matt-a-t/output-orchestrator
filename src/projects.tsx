@@ -11,7 +11,7 @@ import { choiceStep, fieldKey, fieldStep, isBack, isSubmit, loop, nextField, typ
 import { scrollWindow } from './scroll.js';
 import { COLORS, containerText, DEFAULT_CLOSE_IDLE_AFTER, DEFAULT_WAKE_PROMPT, HOOK_EVENTS, HOOK_LABELS, isHome, parseContainer, projectProblem, TRACKERS, type ContainerText, type Project, type ProjectHook, type State } from './state.js';
 
-const CONTAINER_FIELDS = ['image', 'ports', 'allow'] as const;
+const CONTAINER_FIELDS = ['image', 'ports', 'allow', 'compose', 'stack'] as const;
 type ContainerField = (typeof CONTAINER_FIELDS)[number];
 const FIELDS = ['name', 'abbrev', 'color', 'path', 'worktrees', 'wakePrompt', 'closeIdleAfter', 'tracker', 'jiraSite', 'jiraProject', ...HOOK_EVENTS, 'commands', ...CONTAINER_FIELDS] as const;
 type Field = (typeof FIELDS)[number];
@@ -31,6 +31,8 @@ const FIELD_LABELS: Record<Field, string> = {
 	image: 'container',
 	ports: 'ports',
 	allow: 'egress',
+	compose: 'compose',
+	stack: 'stack name',
 };
 // Changed with ←/→ through a fixed list rather than typed.
 type Choice = 'color' | 'worktrees' | 'closeIdleAfter' | 'tracker';
@@ -62,6 +64,8 @@ const FIELD_HINTS: Partial<Record<Field, string>> = {
 	image: "docker image each thread's claude runs in, one container per thread (see docker/thread.Dockerfile); empty runs claude on the host  ",
 	ports: "container ports to publish, e.g. 3000, 5173; Local forwards them to the same ports on the host  ",
 	allow: 'hosts the container may reach besides the firewall defaults (anthropic, github, npm), e.g. pypi.org  ',
+	compose: "compose files in the worktree, e.g. docker-compose.yml; Local runs the stack on the host from the thread's worktree and joins its container to the stack's network  ",
+	stack: 'compose project name for the stack; empty uses the one docker compose picks in the project checkout, so a stack you run by hand there is the same one  ',
 	commands: "⏎ edits them in $EDITOR, one name: command a line; r on the board runs one in the thread's worktree, in a new terminal window  ",
 	...Object.fromEntries(HOOK_EVENTS.map(e => [e, `shell command run ${HOOK_WHERE[e]} (OO_THREAD_ID, OO_THREAD_TITLE, OO_PROJECT, OO_BRANCH set${e === 'newThread' ? ', and OO_PROMPT' : ''})  `])),
 };
