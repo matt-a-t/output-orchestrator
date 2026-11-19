@@ -13,6 +13,9 @@ export const CLAUDE_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.json');
 export const CONTAINER_SETTINGS_FILE = join(DATA_DIR, 'claude-settings.container.json');
 /** `oo` for a container's claude, which has DATA_DIR/bin on its PATH (see execCommand) but not oo's install. */
 export const OO_WRAPPER = join(DATA_DIR, 'bin', 'oo');
+/** The oo skill without its frontmatter, appended to every thread claude's system prompt (see launchClaude), so a claude
+ * follows it without first choosing to load the skill. In DATA_DIR so a container's claude can read it at the same path. */
+export const SKILL_PROMPT_FILE = join(DATA_DIR, 'oo-skill.md');
 
 // Run from source (tsx) we point at hook.ts and let Node strip the types.
 const fromSource = import.meta.url.endsWith('.ts');
@@ -190,10 +193,18 @@ Join them on the thread id, and on the session id to reach a transcript. The con
 Say how many threads an answer rests on, and which ones you left out and why.
 `;
 
-/** Install the skill that tells claude about \`oo thread\` (see threadCommand.ts). */
+/** The skill's text without its frontmatter, for a system prompt. */
+export function skillPrompt(skill = SKILL): string {
+	return skill.replace(/^---\n[\s\S]*?\n---\n+/, '');
+}
+
+/** Install the skill that tells claude about \`oo thread\` (see threadCommand.ts): as a skill for claudes started
+ * outside the board, and as the prompt file the board's thread claudes get in their system prompt. */
 export function writeOoSkill(): void {
 	mkdirSync(dirname(SKILL_FILE), { recursive: true });
 	writeFileSync(SKILL_FILE, SKILL);
+	ensureDataDir();
+	writeFileSync(SKILL_PROMPT_FILE, skillPrompt());
 }
 
 export type HookEvent = {

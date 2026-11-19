@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { stillWorking, unknownProject } from '../errors.js';
 import { DEFAULT_WAKE_PROMPT, hidden, type State, type Thread } from '../state.js';
-import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE, type Status } from '../status.js';
+import { CLAUDE_SETTINGS_FILE, CONTAINER_SETTINGS_FILE, SKILL_PROMPT_FILE, type Status } from '../status.js';
 import { containerName, containerProject, forThread, stopKeyed, threadShell } from '../container.js';
 import { inCheckout, threadDir } from '../threads.js';
 import { killWindow, openSplit, openWindow, pasteInto, threadWindowLabel, threadWindowName, windowNames } from '../tmux.js';
@@ -99,6 +99,9 @@ export async function launchClaude(
 		'claude',
 		'--settings',
 		containerProject(project) ? CONTAINER_SETTINGS_FILE : CLAUDE_SETTINGS_FILE,
+		// The oo skill, so it's followed without being loaded. Kept on --resume, where claude reuses the prompt it started with.
+		'--append-system-prompt-file',
+		SKILL_PROMPT_FILE,
 		...(sessionId ? ['--resume', sessionId] : []),
 		...(mode ? ['--permission-mode', mode] : []),
 		// After `--` so a prompt starting with `-` isn't taken for an option.
